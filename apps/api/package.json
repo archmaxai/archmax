@@ -1,0 +1,31 @@
+{
+  "name": "@semlayer/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts",
+    "./mcp/semlayer-server": "./src/mcp/semlayer-server.ts"
+  },
+  "scripts": {
+    "dev": "node --watch --import tsx src/index.ts",
+    "build": "tsc --build",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1",
+    "@hono/zod-validator": "^0.7.6",
+    "@semlayer/core": "workspace:*",
+    "better-auth": "^1.5.6",
+    "dotenv": "^17.3.1",
+    "hono": "^4",
+    "mongodb": "^7.1.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3"
+  }
+}
