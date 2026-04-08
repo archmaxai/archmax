@@ -9,7 +9,7 @@ describe("ValidatingFilesystemBackend", () => {
   let backend: ValidatingFilesystemBackend;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "semlayer-test-"));
+    dir = await mkdtemp(join(tmpdir(), "archsem-test-"));
     backend = new ValidatingFilesystemBackend({ rootDir: dir });
   });
 
@@ -201,6 +201,72 @@ describe("ValidatingFilesystemBackend", () => {
       });
       await writeFile(join(dir, "file.txt"), "content");
       const result = await vBackend.rename("/file.txt", "/../../../tmp/stolen.txt");
+      expect(result.error).toMatch(/traversal/i);
+    });
+  });
+
+  describe("copy()", () => {
+    it("copies a file", async () => {
+      await writeFile(join(dir, "src.yaml"), "name: test\n");
+      const result = await backend.copy(join(dir, "src.yaml"), join(dir, "dest.yaml"));
+      expect(result.error).toBeUndefined();
+      expect(result.srcPath).toBe(join(dir, "src.yaml"));
+      expect(result.destPath).toBe(join(dir, "dest.yaml"));
+      const srcContent = await readFile(join(dir, "src.yaml"), "utf-8");
+      const destContent = await readFile(join(dir, "dest.yaml"), "utf-8");
+      expect(srcContent).toBe("name: test\n");
+      expect(destContent).toBe("name: test\n");
+    });
+
+    it("copies a directory recursively", async () => {
+      await mkdir(join(dir, "model"));
+      await writeFile(join(dir, "model", "orders.yaml"), "name: orders\n");
+      await writeFile(join(dir, "model", "items.yaml"), "name: items\n");
+      const result = await backend.copy(join(dir, "model"), join(dir, "model_v2"), true);
+      expect(result.error).toBeUndefined();
+      const orig = await readFile(join(dir, "model", "orders.yaml"), "utf-8");
+      expect(orig).toBe("name: orders\n");
+      const copied = await readFile(join(dir, "model_v2", "orders.yaml"), "utf-8");
+      expect(copied).toBe("name: orders\n");
+      const copiedItems = await readFile(join(dir, "model_v2", "items.yaml"), "utf-8");
+      expect(copiedItems).toBe("name: items\n");
+    });
+
+    it("returns error when copying directory without recursive", async () => {
+      await mkdir(join(dir, "mydir"));
+      await writeFile(join(dir, "mydir", "file.txt"), "content");
+      const result = await backend.copy(join(dir, "mydir"), join(dir, "mydir2"));
+      expect(result.error).toMatch(/directory/i);
+    });
+
+    it("returns error when source does not exist", async () => {
+      const result = await backend.copy(join(dir, "nope.yaml"), join(dir, "dest.yaml"));
+      expect(result.error).toMatch(/not found/);
+    });
+
+    it("returns error when target already exists", async () => {
+      await writeFile(join(dir, "a.yaml"), "name: a\n");
+      await writeFile(join(dir, "b.yaml"), "name: b\n");
+      const result = await backend.copy(join(dir, "a.yaml"), join(dir, "b.yaml"));
+      expect(result.error).toMatch(/Target already exists/);
+      const contentB = await readFile(join(dir, "b.yaml"), "utf-8");
+      expect(contentB).toBe("name: b\n");
+    });
+
+    it("rejects symlinks", async () => {
+      await writeFile(join(dir, "real.txt"), "content");
+      await symlink(join(dir, "real.txt"), join(dir, "link.txt"));
+      const result = await backend.copy(join(dir, "link.txt"), join(dir, "copied.txt"));
+      expect(result.error).toMatch(/Symlinks/i);
+    });
+
+    it("blocks path traversal in virtual mode", async () => {
+      const vBackend = new ValidatingFilesystemBackend({
+        rootDir: dir,
+        virtualMode: true,
+      });
+      await writeFile(join(dir, "file.txt"), "content");
+      const result = await vBackend.copy("/file.txt", "/../../../tmp/stolen.txt");
       expect(result.error).toMatch(/traversal/i);
     });
   });

@@ -1,0 +1,45 @@
+---
+title: archsem
+description: Manage semantic descriptions of your databases and expose them to AI agents via MCP.
+template: splash
+hero:
+  tagline: A semantic layer for your databases — describe your data once, let AI agents query it intelligently.
+  actions:
+    - text: Get Started
+      link: /getting-started/installation/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/archmaxai/archsem
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## What is archsem?
+
+archsem helps you create semantic descriptions of your database schemas — tables, columns, relationships, and metrics — and expose them to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Instead of giving AI agents raw database access, you give them a curated, documented view of your data.
+
+<CardGrid>
+  <Card title="Semantic Models" icon="pencil">
+    Describe your tables as datasets with fields, relationships, and metrics using YAML files following the [Open Semantic Interchange](https://github.com/open-semantic-interchange/OSI) spec.
+  </Card>
+  <Card title="MCP Server" icon="rocket">
+    Expose your semantic layer to AI agents via MCP tools. Agents discover models, understand field meanings, and run scoped SQL queries.
+  </Card>
+  <Card title="Data Federation" icon="random">
+    Query across Postgres, MySQL, MSSQL, SQLite, and DuckDB databases from a single project using DuckDB's federation engine.
+  </Card>
+  <Card title="Admin UI" icon="setting">
+    Manage projects, connections, and semantic models through a modern web interface with an AI-assisted model builder.
+  </Card>
+</CardGrid>
+
+## Key Features
+
+- **Project-based organization** — group related database connections and their semantic models
+- **AI-assisted model building** — an agent helps discover schemas, map fields, detect enums, and infer relationships
+- **Scoped query execution** — AI agents run read-only SQL against sandboxed VIEWs, not raw tables
+- **Token-based access control** — MCP tokens with configurable scopes and expiry
+- **Self-hosted** — deploy with Docker in minutes

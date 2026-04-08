@@ -30,7 +30,7 @@ const tabsListVariants = cva(
       variant: {
         default: "bg-muted",
         line: "gap-1 bg-transparent",
-        pill: "gap-1 rounded-lg bg-muted p-1 h-auto",
+        pill: "gap-1 bg-transparent p-0 h-auto",
       },
     },
     defaultVariants: {
@@ -68,7 +68,7 @@ function TabsTrigger({
         "data-[state=active]:bg-background dark:data-[state=active]:text-foreground dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 data-[state=active]:text-foreground",
         "after:bg-foreground after:absolute after:opacity-0 after:transition-opacity group-data-[orientation=horizontal]/tabs:after:inset-x-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-5px] group-data-[orientation=horizontal]/tabs:after:h-0.5 group-data-[orientation=vertical]/tabs:after:inset-y-0 group-data-[orientation=vertical]/tabs:after:-right-1 group-data-[orientation=vertical]/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100",
         "group-data-[variant=pill]/tabs-list:rounded-full group-data-[variant=pill]/tabs-list:h-auto group-data-[variant=pill]/tabs-list:px-3 group-data-[variant=pill]/tabs-list:py-1.5 group-data-[variant=pill]/tabs-list:!border-none group-data-[variant=pill]/tabs-list:!shadow-none group-data-[variant=pill]/tabs-list:!outline-none",
-        "group-data-[variant=pill]/tabs-list:data-[state=active]:!bg-card group-data-[variant=pill]/tabs-list:data-[state=active]:text-foreground group-data-[variant=pill]/tabs-list:data-[state=active]:shadow-none dark:group-data-[variant=pill]/tabs-list:data-[state=active]:!bg-card dark:group-data-[variant=pill]/tabs-list:data-[state=active]:shadow-none",
+        "group-data-[variant=pill]/tabs-list:data-[state=active]:!bg-muted group-data-[variant=pill]/tabs-list:data-[state=active]:text-foreground group-data-[variant=pill]/tabs-list:data-[state=active]:shadow-none dark:group-data-[variant=pill]/tabs-list:data-[state=active]:!bg-muted dark:group-data-[variant=pill]/tabs-list:data-[state=active]:shadow-none",
         "group-data-[variant=pill]/tabs-list:data-[state=inactive]:bg-transparent group-data-[variant=pill]/tabs-list:data-[state=inactive]:text-muted-foreground",
         className
       )}

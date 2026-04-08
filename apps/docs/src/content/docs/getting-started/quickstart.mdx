@@ -1,0 +1,58 @@
+---
+title: Quickstart
+description: Create your first project, connect a database, and build a semantic model.
+---
+
+import { Steps } from "@astrojs/starlight/components";
+
+This guide walks you through creating your first project, connecting a database, and building a semantic model that AI agents can query.
+
+<Steps>
+
+1. **Create a Project**
+
+   After logging in, click **New Project** on the dashboard. Give it a name and an optional description.
+
+2. **Add a Connection**
+
+   Navigate to **Data Federation** in the sidebar and click **New Connection**. Fill in:
+   - **Name** — a friendly label (e.g., "Production Postgres")
+   - **Type** — select your database type (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck)
+   - **Connection details** — host, port, database, user, and password (or paste a URI)
+
+   Click **Test Connection** to verify, then save.
+
+3. **Build a Semantic Model**
+
+   Go to **Semantic Models** and click **New Model**. The AI-assisted builder will:
+   - Discover schemas and tables from your connection
+   - Map columns to typed fields with expressions
+   - Detect enum values and time dimensions
+   - Infer relationships between datasets
+   - Define metrics
+
+   Review the generated model, adjust as needed, and save.
+
+4. **Publish the Model**
+
+   Click **Publish** to make the model available to MCP clients. Publishing assembles the source YAML files into a single optimized build.
+
+5. **Create an MCP Token**
+
+   Go to **MCP Access** and create a token. Choose which semantic models the token can access (scopes) and set an optional expiry.
+
+6. **Connect an AI Agent**
+
+   Configure your AI agent's MCP client to use:
+   - **Endpoint**: `http://your-server:8080/mcp/your-project-slug/mcp`
+   - **Auth**: `Bearer <your-token>`
+
+   The agent can now discover your semantic models and run queries.
+
+</Steps>
+
+## What's Next?
+
+- Learn how to [author semantic models](/guides/semantic-models/) in detail
+- Set up [MCP integration](/guides/mcp-integration/) for your AI tools
+- Explore [data federation](/guides/data-federation/) across multiple databases

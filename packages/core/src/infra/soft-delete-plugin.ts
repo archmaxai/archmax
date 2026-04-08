@@ -10,7 +10,7 @@ export interface SoftDeleteMethods {
   restore(): Promise<this>;
 }
 
-export type SoftDeleteDocument = HydratedDocument<SoftDeleteFields, SoftDeleteMethods>;
+type SoftDeleteDocument = HydratedDocument<SoftDeleteFields, SoftDeleteMethods>;
 
 const FILTERED_OPERATIONS = [
   "find",

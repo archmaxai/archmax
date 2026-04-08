@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/project-context";
 import { CreateProjectDialog } from "@/components/create-project-dialog";

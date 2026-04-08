@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState, type ReactNode } from "react";
 import { ArrowUp, Square, Paperclip, X, Loader2, ChevronDown } from "lucide-react";
-import { cn, Textarea } from "@semlayer/ui";
+import { cn, Textarea } from "@archsem/ui";
 
 export interface UploadedFile {
   filename: string;
@@ -238,11 +238,13 @@ export function InputPill({
   value,
   onChange,
   placeholder = "Select...",
+  emptyLabel = "No options available",
 }: {
   options: InputPillOption[];
   value: string;
   onChange: (id: string) => void;
   placeholder?: string;
+  emptyLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -299,7 +301,7 @@ export function InputPill({
             </button>
           ))}
           {options.length === 0 && (
-            <p className="px-3 py-4 text-sm text-muted-foreground text-center">No options available</p>
+            <p className="px-3 py-4 text-sm text-muted-foreground text-center">{emptyLabel}</p>
           )}
         </div>
       )}

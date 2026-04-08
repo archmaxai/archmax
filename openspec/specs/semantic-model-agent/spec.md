@@ -51,9 +51,9 @@ The Semantic Models page SHALL render a chat interface where the user can conver
 
 #### Scenario: Filesystem tool visualization
 
-- **WHEN** the agent invokes a filesystem tool (`ls`, `read_file`, `write_file`, `find`, or `rename`)
-- **THEN** the collapsed card shows an appropriate file icon, a human-readable label (e.g., "Read orders.yaml", "Listed files", "Renamed sales.yaml → retail_sales.yaml"), and status indicator
-- **AND** expanding the card reveals tool-specific content: file list for `ls`, content preview for `read_file`/`write_file`, matching paths for `find`, old and new paths for `rename`
+- **WHEN** the agent invokes a filesystem tool (`ls`, `read_file`, `write_file`, `find`, `mv`, or `cp`)
+- **THEN** the collapsed card shows an appropriate file icon, a human-readable label (e.g., "Read orders.yaml", "Listed files", "Copied sales.yaml → sales_backup.yaml"), and status indicator
+- **AND** expanding the card reveals tool-specific content: file list for `ls`, content preview for `read_file`/`write_file`, matching paths for `find`, source and destination paths for `mv` and `cp`
 
 #### Scenario: write_todos tool visualization
 
@@ -83,7 +83,7 @@ The Semantic Models page SHALL render a chat interface where the user can conver
 
 ### Requirement: Deep Agent Backend
 
-The API SHALL expose a streaming endpoint for the semantic model agent. The agent uses LangChain Deep Agents with `FilesystemBackend({ rootDir: "<SEMLAYER_DATA_DIR>/<projectId>", virtualMode: true })`, giving it sandboxed filesystem access to the project's YAML files. The agent system prompt SHALL document the OSI-compliant YAML schema including: snake_case keys (`ai_context`, `primary_key`, `unique_keys`, `from_columns`, `to_columns`), the OSI Expression object format (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), `custom_extensions` for project-specific field metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`), and the `dimension` property with `is_time` for temporal fields. The agent SHALL also have access to a `read_document` tool that reads uploaded documents from the project's `uploads/` directory and returns their content as markdown, enabling the agent to reference data dictionaries, ERDs, business glossaries, and other supplementary documentation when building semantic models.
+The API SHALL expose a streaming endpoint for the semantic model agent. The agent uses LangChain Deep Agents with `FilesystemBackend({ rootDir: "<ARCHSEM_DATA_DIR>/<projectId>", virtualMode: true })`, giving it sandboxed filesystem access to the project's YAML files. The agent system prompt SHALL document the OSI-compliant YAML schema including: snake_case keys (`ai_context`, `primary_key`, `unique_keys`, `from_columns`, `to_columns`), the OSI Expression object format (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), `custom_extensions` for project-specific field metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`), and the `dimension` property with `is_time` for temporal fields. The agent SHALL also have access to a `read_document` tool that reads uploaded documents from the project's `uploads/` directory and returns their content as markdown, enabling the agent to reference data dictionaries, ERDs, business glossaries, and other supplementary documentation when building semantic models.
 
 #### Scenario: Agent lists semantic models
 - **WHEN** the user asks "What semantic models exist?"
@@ -93,7 +93,7 @@ The API SHALL expose a streaming endpoint for the semantic model agent. The agen
 #### Scenario: Agent creates a new semantic model
 - **WHEN** the user asks "Create a model for the orders schema"
 - **THEN** the agent uses `write_file` to create a new YAML file conforming to the OSI schema with snake_case keys and Expression objects
-- **AND** the file is written to `<SEMLAYER_DATA_DIR>/<projectId>/<model-name>.yaml`
+- **AND** the file is written to `<ARCHSEM_DATA_DIR>/<projectId>/<model-name>.yaml`
 
 #### Scenario: Agent writes fields with extensions
 - **WHEN** the agent creates a dataset with fields that have data types and example data
@@ -257,36 +257,36 @@ The agent's filesystem backend SHALL validate YAML syntax before persisting any 
 - **THEN** no YAML validation is performed
 - **AND** the file is written or edited as normal
 
-### Requirement: Rename Tool
+### Requirement: Move Tool
 
-The deep agent SHALL have access to a `rename` tool that moves or renames a file or directory within the project's sandboxed filesystem. The tool accepts `oldPath` (the current virtual path) and `newPath` (the desired virtual path). Both paths MUST resolve within the project root directory; path traversal attempts SHALL be rejected. Renaming onto an existing target SHALL be rejected to prevent accidental overwrites. Symlinks SHALL be rejected.
+The deep agent SHALL have access to a `mv` tool that moves a file or directory within the project's sandboxed filesystem. The tool accepts `oldPath` (the current virtual path) and `newPath` (the desired virtual path). Both paths MUST resolve within the project root directory; path traversal attempts SHALL be rejected. Moving onto an existing target SHALL be rejected to prevent accidental overwrites. Symlinks SHALL be rejected.
 
-#### Scenario: Agent renames a semantic model file
-- **WHEN** the agent invokes `rename` with `{ "oldPath": "/sales.yaml", "newPath": "/retail_sales.yaml" }`
-- **THEN** the file is moved from `sales.yaml` to `retail_sales.yaml` within the project directory
+#### Scenario: Agent moves a semantic model file
+- **WHEN** the agent invokes `mv` with `{ "oldPath": "/sales.yaml", "newPath": "/retail/sales.yaml" }`
+- **THEN** the file is moved from `sales.yaml` to `retail/sales.yaml` within the project directory
 - **AND** the tool returns a success result with both paths
 
-#### Scenario: Agent renames a dataset file
-- **WHEN** the agent invokes `rename` with `{ "oldPath": "/sales/orders.yaml", "newPath": "/sales/customer_orders.yaml" }`
-- **THEN** the dataset file is renamed within the model subdirectory
+#### Scenario: Agent moves a dataset file
+- **WHEN** the agent invokes `mv` with `{ "oldPath": "/sales/orders.yaml", "newPath": "/sales/customer_orders.yaml" }`
+- **THEN** the dataset file is moved to the new path
 - **AND** the tool returns a success result
 
 #### Scenario: Path traversal rejected
-- **WHEN** the agent invokes `rename` with a path containing `..` that would escape the project root
+- **WHEN** the agent invokes `mv` with a path containing `..` that would escape the project root
 - **THEN** the tool returns an error and no file system changes occur
 
 #### Scenario: Target already exists
-- **WHEN** the agent invokes `rename` and `newPath` already exists on disk
+- **WHEN** the agent invokes `mv` and `newPath` already exists on disk
 - **THEN** the tool returns an error indicating the target already exists
 - **AND** the original file remains untouched
 
 #### Scenario: Source not found
-- **WHEN** the agent invokes `rename` with an `oldPath` that does not exist
+- **WHEN** the agent invokes `mv` with an `oldPath` that does not exist
 - **THEN** the tool returns a descriptive error
 
 #### Scenario: Symlink rejected
-- **WHEN** the agent invokes `rename` on a path that is a symbolic link
-- **THEN** the tool returns an error and no rename occurs
+- **WHEN** the agent invokes `mv` on a path that is a symbolic link
+- **THEN** the tool returns an error and no move occurs
 
 ### Requirement: Semantic Model Visualization Tabs
 
@@ -405,4 +405,40 @@ The agent SHALL skip query generation if the user explicitly opts out or if no c
 
 - **WHEN** the user says "skip queries" or "don't generate queries"
 - **THEN** the agent writes the model without validated_queries entries
+
+### Requirement: Copy Tool
+
+The deep agent SHALL have access to a `cp` tool that copies a file or directory within the project's sandboxed filesystem. The tool accepts `srcPath` (the source virtual path) and `destPath` (the destination virtual path), and an optional `recursive` flag for directory copies. Both paths MUST resolve within the project root directory; path traversal attempts SHALL be rejected. Copying onto an existing target SHALL be rejected to prevent accidental overwrites. Symlinks SHALL be rejected.
+
+#### Scenario: Agent copies a semantic model file
+- **WHEN** the agent invokes `cp` with `{ "srcPath": "/sales.yaml", "destPath": "/sales_backup.yaml" }`
+- **THEN** the file is copied from `sales.yaml` to `sales_backup.yaml` within the project directory
+- **AND** the original file remains unchanged
+- **AND** the tool returns a success result with both paths
+
+#### Scenario: Agent copies a dataset directory
+- **WHEN** the agent invokes `cp` with `{ "srcPath": "/sales", "destPath": "/sales_v2", "recursive": true }`
+- **THEN** the directory and all its contents are copied to the new path
+- **AND** the original directory remains unchanged
+
+#### Scenario: Directory copy without recursive flag rejected
+- **WHEN** the agent invokes `cp` on a directory without setting `recursive` to true
+- **THEN** the tool returns an error indicating the source is a directory and recursive must be set
+
+#### Scenario: Path traversal rejected
+- **WHEN** the agent invokes `cp` with a path containing `..` that would escape the project root
+- **THEN** the tool returns an error and no file system changes occur
+
+#### Scenario: Target already exists
+- **WHEN** the agent invokes `cp` and `destPath` already exists on disk
+- **THEN** the tool returns an error indicating the target already exists
+- **AND** no files are modified
+
+#### Scenario: Source not found
+- **WHEN** the agent invokes `cp` with a `srcPath` that does not exist
+- **THEN** the tool returns a descriptive error
+
+#### Scenario: Symlink rejected
+- **WHEN** the agent invokes `cp` on a path that is a symbolic link
+- **THEN** the tool returns an error and no copy occurs
 

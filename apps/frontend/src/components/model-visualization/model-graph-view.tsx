@@ -10,7 +10,7 @@ import {
   type Node,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { cn } from "@semlayer/ui";
+import { cn } from "@archsem/ui";
 import { api } from "@/lib/api";
 import { DatasetNode, type DatasetNodeType, type DatasetNodeData, type FieldPreview } from "./dataset-node";
 import type { SemanticModelFull, ModelDiff, CustomExtension } from "./types";

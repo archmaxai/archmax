@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@semlayer/core/infra/db";
-import { TestRun, TestCase, TestAgent } from "@semlayer/core/models/index";
-import { isRedisConfigured } from "@semlayer/core/infra/redis";
-import { enqueueTestRunJob } from "@semlayer/core/queue/producer";
-import { processTestCase } from "@semlayer/core/services/test-runner";
+import { connectDB } from "@archsem/core/infra/db";
+import { TestRun, TestCase, TestAgent } from "@archsem/core/models/index";
+import { isRedisConfigured } from "@archsem/core/infra/redis";
+import { enqueueTestRunJob } from "@archsem/core/queue/producer";
+import { processTestCase } from "@archsem/core/services/test-runner";
 import { AppError } from "../utils/errors";
 
 const createSchema = z.object({

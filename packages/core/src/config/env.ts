@@ -3,13 +3,14 @@ import { z } from "zod/v4";
 const envSchema = z.object({
   NODE_ENV: z.string().optional(),
 
-  MONGODB_URI: z.string(),
+  // Optional — the Docker image embeds MongoDB when unset (entrypoint sets the URI)
+  MONGODB_URI: z.string().optional(),
 
   PORT: z.string().optional().default("3000"),
 
   CORS_ORIGINS: z.string().optional().default("http://localhost:5173"),
 
-  SEMLAYER_DATA_DIR: z.string().optional().default("data/projects"),
+  ARCHSEM_DATA_DIR: z.string().optional().default("data/projects"),
 
   MCP_RATE_LIMIT_MAX: z.string().optional().default("120"),
 

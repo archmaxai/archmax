@@ -1,0 +1,5 @@
+# Astro build output
+dist/
+
+# Auto-generated spec pages (synced from openspec/specs/ at build time)
+src/content/docs/reference/specs/

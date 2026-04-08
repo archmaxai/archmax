@@ -32,7 +32,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 

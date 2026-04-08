@@ -5,12 +5,12 @@ File-based semantic layer models that map database tables as datasets with field
 ## Requirements
 ### Requirement: Semantic Model YAML Structure
 
-A semantic model SHALL be stored as a YAML root file at `<SEMLAYER_DATA_DIR>/<projectId>/src/<modelName>.yaml` containing: `name` (string, required), `description` (string), `ai_context` (string or object with optional `instructions`, `synonyms`, `examples`), `relationships` (array), `metrics` (array), and `custom_extensions` (optional array of `{ vendor_name, data }` objects). Datasets SHALL NOT be stored in the root file when a per-dataset directory exists.
+A semantic model SHALL be stored as a YAML root file at `<ARCHSEM_DATA_DIR>/<projectId>/src/<modelName>.yaml` containing: `name` (string, required), `description` (string), `ai_context` (string or object with optional `instructions`, `synonyms`, `examples`), `relationships` (array), `metrics` (array), and `custom_extensions` (optional array of `{ vendor_name, data }` objects). Datasets SHALL NOT be stored in the root file when a per-dataset directory exists.
 
 #### Scenario: Root file contains model-level data
 
 - **WHEN** a semantic model is written to disk
-- **THEN** the root YAML file is stored at `<SEMLAYER_DATA_DIR>/<projectId>/src/<modelName>.yaml`
+- **THEN** the root YAML file is stored at `<ARCHSEM_DATA_DIR>/<projectId>/src/<modelName>.yaml`
 - **AND** the file contains name, description, ai_context, relationships, metrics, and custom_extensions
 - **AND** datasets are stored as individual files in a `src/<modelName>/` subdirectory
 
@@ -21,7 +21,7 @@ A semantic model SHALL be stored as a YAML root file at `<SEMLAYER_DATA_DIR>/<pr
 
 ### Requirement: Dataset Files
 
-Each dataset SHALL be stored as a separate YAML file at `<SEMLAYER_DATA_DIR>/<projectId>/src/<modelName>/<datasetName>.yaml` containing: `name` (string, required), `source` (string, e.g. `<connection>.<schema>.<table>`), `primary_key` (string array), `unique_keys` (array of string arrays), `description`, `ai_context`, `fields` (array of inline field objects), and `custom_extensions` (optional array of `{ vendor_name, data }` objects).
+Each dataset SHALL be stored as a separate YAML file at `<ARCHSEM_DATA_DIR>/<projectId>/src/<modelName>/<datasetName>.yaml` containing: `name` (string, required), `source` (string, e.g. `<connection>.<schema>.<table>`), `primary_key` (string array), `unique_keys` (array of string arrays), `description`, `ai_context`, `fields` (array of inline field objects), and `custom_extensions` (optional array of `{ vendor_name, data }` objects).
 
 #### Scenario: Dataset with composite primary key
 
@@ -92,12 +92,12 @@ A metric SHALL be stored in the model root file, containing: `name` (string, req
 
 ### Requirement: SemanticModelFileService
 
-The system SHALL provide a `SemanticModelFileService` class that manages all YAML file I/O for semantic models. Source files live under `<SEMLAYER_DATA_DIR>/<projectId>/src/`. It SHALL expose: `list(projectId)` — read all models in a project, `get(projectId, name)` — assemble a full model from root + dataset files, `getDataset(projectId, modelName, datasetName)` — read a single dataset file, `write(projectId, model)` — split and write root + dataset files with atomic writes (temp file + rename), `delete(projectId, name)` — remove root file and dataset directory, `exists(projectId, name)`. The service SHALL check for the `src/` subdirectory first and fall back to the legacy root-level layout for backward compatibility during migration.
+The system SHALL provide a `SemanticModelFileService` class that manages all YAML file I/O for semantic models. Source files live under `<ARCHSEM_DATA_DIR>/<projectId>/src/`. It SHALL expose: `list(projectId)` — read all models in a project, `get(projectId, name)` — assemble a full model from root + dataset files, `getDataset(projectId, modelName, datasetName)` — read a single dataset file, `write(projectId, model)` — split and write root + dataset files with atomic writes (temp file + rename), `delete(projectId, name)` — remove root file and dataset directory, `exists(projectId, name)`. The service SHALL check for the `src/` subdirectory first and fall back to the legacy root-level layout for backward compatibility during migration.
 
 #### Scenario: List models reads YAML files from src directory
 
 - **WHEN** `list("proj1")` is called
-- **THEN** all `.yaml` files in `<SEMLAYER_DATA_DIR>/proj1/src/` are read, parsed, and returned as assembled models
+- **THEN** all `.yaml` files in `<ARCHSEM_DATA_DIR>/proj1/src/` are read, parsed, and returned as assembled models
 
 #### Scenario: Get assembles from split files
 
@@ -113,8 +113,8 @@ The system SHALL provide a `SemanticModelFileService` class that manages all YAM
 
 #### Scenario: Legacy layout fallback
 
-- **WHEN** `list("proj1")` is called and `<SEMLAYER_DATA_DIR>/proj1/src/` does not exist
-- **AND** YAML files exist directly under `<SEMLAYER_DATA_DIR>/proj1/`
+- **WHEN** `list("proj1")` is called and `<ARCHSEM_DATA_DIR>/proj1/src/` does not exist
+- **AND** YAML files exist directly under `<ARCHSEM_DATA_DIR>/proj1/`
 - **THEN** the service reads from the legacy root-level location
 
 #### Scenario: Write splits model into files under src
@@ -152,12 +152,12 @@ All YAML files SHALL be validated against Zod schemas on read. Invalid files SHA
 
 ### Requirement: AGENTS.md Auto-Generation
 
-After every `write()` or `delete()` operation, the file service SHALL regenerate an `AGENTS.md` file in the project root directory (`<SEMLAYER_DATA_DIR>/<projectId>/AGENTS.md`) summarizing all semantic models, their datasets, and metrics for AI assistant discovery.
+After every `write()` or `delete()` operation, the file service SHALL regenerate an `AGENTS.md` file in the project root directory (`<ARCHSEM_DATA_DIR>/<projectId>/AGENTS.md`) summarizing all semantic models, their datasets, and metrics for AI assistant discovery.
 
 #### Scenario: AGENTS.md regenerated after write
 
 - **WHEN** a semantic model is written
-- **THEN** `<SEMLAYER_DATA_DIR>/<projectId>/AGENTS.md` is regenerated at the project root
+- **THEN** `<ARCHSEM_DATA_DIR>/<projectId>/AGENTS.md` is regenerated at the project root
 - **AND** it lists all models with their datasets and metrics
 
 ### Requirement: Path Safety
@@ -377,7 +377,7 @@ The `SemanticModelDigest.overview()` method SHALL include a "Validated Queries" 
 
 ### Requirement: Semantic Model Digest Service
 
-The system SHALL provide a `SemanticModelDigest` class in `@semlayer/core` that compiles parsed `SemanticModel` and `Dataset` objects into compact markdown text optimized for LLM consumption. The digest is a read-only view — the YAML files remain the authoritative source of truth. The class SHALL expose two static methods:
+The system SHALL provide a `SemanticModelDigest` class in `@archsem/core` that compiles parsed `SemanticModel` and `Dataset` objects into compact markdown text optimized for LLM consumption. The digest is a read-only view — the YAML files remain the authoritative source of truth. The class SHALL expose two static methods:
 
 - `overview(model)` — Returns a markdown string containing: model name and description, ai_context instructions as a blockquote, a dataset summary table (name, source, field count, description), relationship join paths (`from.column → to.column`), and a metrics table (name, expression, description).
 - `dataset(dataset, page?)` — Returns a paginated markdown string (default page size: 25 fields) containing: dataset name, source, description, primary key, ai_context (synonyms as aliases, instructions as blockquote), and a field list where each field is a single compact line with: name, data type, description, example data, and optional segments for enum values, computed expressions, synonyms, and instructions.
@@ -418,16 +418,16 @@ The system SHALL provide a migration script at `apps/api/src/scripts/migrate-src
 
 #### Scenario: Migration moves files to src subdirectory
 
-- **WHEN** the migration detects YAML files at `<SEMLAYER_DATA_DIR>/<projectId>/model.yaml`
-- **AND** no `<SEMLAYER_DATA_DIR>/<projectId>/src/` directory exists
-- **THEN** `model.yaml` is moved to `<SEMLAYER_DATA_DIR>/<projectId>/src/model.yaml`
-- **AND** the `model/` dataset directory (if present) is moved to `<SEMLAYER_DATA_DIR>/<projectId>/src/model/`
-- **AND** `AGENTS.md` remains at `<SEMLAYER_DATA_DIR>/<projectId>/AGENTS.md` (project root)
+- **WHEN** the migration detects YAML files at `<ARCHSEM_DATA_DIR>/<projectId>/model.yaml`
+- **AND** no `<ARCHSEM_DATA_DIR>/<projectId>/src/` directory exists
+- **THEN** `model.yaml` is moved to `<ARCHSEM_DATA_DIR>/<projectId>/src/model.yaml`
+- **AND** the `model/` dataset directory (if present) is moved to `<ARCHSEM_DATA_DIR>/<projectId>/src/model/`
+- **AND** `AGENTS.md` remains at `<ARCHSEM_DATA_DIR>/<projectId>/AGENTS.md` (project root)
 
 #### Scenario: Migration preserves uploads directory
 
 - **WHEN** the migration runs on a project with an existing `uploads/` directory
-- **THEN** the `uploads/` directory remains at `<SEMLAYER_DATA_DIR>/<projectId>/uploads/` (not moved)
+- **THEN** the `uploads/` directory remains at `<ARCHSEM_DATA_DIR>/<projectId>/uploads/` (not moved)
 
 #### Scenario: Migration is idempotent
 
@@ -441,8 +441,8 @@ The system SHALL provide a `PublishService` with an `assemble(projectId, targetD
 #### Scenario: Assemble creates single-file YAMLs in build directory
 
 - **WHEN** `assemble("proj1")` is called for a project with models `shopify` and `datev` in `src/`
-- **THEN** `<SEMLAYER_DATA_DIR>/proj1/build/shopify.yaml` contains the fully assembled model with inline datasets
-- **AND** `<SEMLAYER_DATA_DIR>/proj1/build/datev.yaml` contains the fully assembled model with inline datasets
+- **THEN** `<ARCHSEM_DATA_DIR>/proj1/build/shopify.yaml` contains the fully assembled model with inline datasets
+- **AND** `<ARCHSEM_DATA_DIR>/proj1/build/datev.yaml` contains the fully assembled model with inline datasets
 
 #### Scenario: Assemble to a custom target directory
 
@@ -459,4 +459,93 @@ The system SHALL provide a `PublishService` with an `assemble(projectId, targetD
 
 - **WHEN** `assemble("proj1")` is called for the first time
 - **THEN** the target directory is created if it does not exist
+
+### Requirement: Improvement Model
+
+The system SHALL provide an `Improvement` Mongoose model stored in MongoDB for tracking improvement suggestions submitted via MCP. Each document SHALL contain: `project` (ObjectId reference to Project, required), `modelName` (string, required — the semantic model the suggestion targets), `title` (string, required, max 200 characters), `description` (string, required, max 2000 characters), `status` (enum: `pending` | `implemented`, default `pending`), `implementedAt` (Date, optional — set when status transitions to `implemented`), and `createdVia` (string — the MCP token name that submitted the suggestion). The model SHALL use the shared `softDeletePlugin` and Mongoose timestamps.
+
+#### Scenario: Improvement created via MCP
+
+- **WHEN** an MCP client submits a suggestion for model `ecommerce`
+- **THEN** an `Improvement` document is created with `status: "pending"`, `modelName: "ecommerce"`, timestamps, and `createdVia` set to the token name
+
+#### Scenario: Improvement marked as implemented
+
+- **WHEN** an admin clicks "Implement" in the frontend
+- **THEN** the improvement's `status` is set to `implemented` and `implementedAt` is set to the current timestamp
+
+#### Scenario: Soft delete
+
+- **WHEN** an improvement is soft-deleted
+- **THEN** it no longer appears in default queries but remains in the database
+
+### Requirement: Improvement API Endpoints
+
+The API SHALL expose endpoints under `/api/projects/:projectId/improvements` for managing improvement suggestions. The endpoints SHALL be protected by session-based admin auth (consistent with other project-scoped routes).
+
+- `GET /` — List improvements for the project, with optional `modelName` and `status` query filters, sorted by `createdAt` descending
+- `GET /:id` — Get a single improvement by ID
+- `PATCH /:id/implement` — Transition an improvement to `implemented` status, setting `implementedAt` to the current time
+
+#### Scenario: List improvements filtered by model
+
+- **WHEN** `GET /improvements?modelName=ecommerce` is called
+- **THEN** only improvements targeting the `ecommerce` model are returned, sorted newest first
+
+#### Scenario: List improvements filtered by status
+
+- **WHEN** `GET /improvements?status=pending` is called
+- **THEN** only pending improvements are returned
+
+#### Scenario: Mark improvement as implemented
+
+- **WHEN** `PATCH /improvements/:id/implement` is called for a pending improvement
+- **THEN** the improvement's status becomes `implemented` and `implementedAt` is set
+- **AND** the updated document is returned
+
+#### Scenario: Get improvement not found
+
+- **WHEN** `GET /improvements/:id` is called with a non-existent ID
+- **THEN** a 404 error is returned
+
+### Requirement: Improvements UI in Semantic Models Sidebar
+
+The Semantic Models page sidebar SHALL include an "Improvements" accordion section below the "History" section. The section SHALL display all improvement suggestions for the project, grouped or filterable by model. Each item SHALL show a lightbulb icon, the truncated title, and a checkmark overlay if the improvement has been implemented. Clicking an improvement SHALL navigate to a detail view in the main content area.
+
+#### Scenario: Sidebar shows pending improvements
+
+- **WHEN** the user views the Semantic Models page and there are 3 pending improvements
+- **THEN** the "Improvements" accordion section shows 3 items with lightbulb icons and no checkmarks
+
+#### Scenario: Sidebar shows implemented improvements
+
+- **WHEN** an improvement has status `implemented`
+- **THEN** it appears in the sidebar with a checkmark icon overlay
+
+#### Scenario: Empty state
+
+- **WHEN** there are no improvements for the project
+- **THEN** the "Improvements" section shows a message: "No improvement suggestions yet"
+
+### Requirement: Improvement Detail View
+
+When an improvement is selected from the sidebar, the main content area SHALL display the improvement's title, description, target model name, creation date, and the MCP token name that submitted it (`createdVia`). A prominent "Implement" button SHALL appear at the top of the view. Clicking "Implement" SHALL mark the improvement as implemented (via `PATCH /implement`) and navigate to a new chat with the improvement's description pre-filled in the message input textarea. The user still needs to manually submit the message.
+
+#### Scenario: View improvement detail
+
+- **WHEN** the user clicks on an improvement titled "Missing shipping_address field"
+- **THEN** the main content area displays the title, full description, model name "ecommerce", creation date, and token name
+
+#### Scenario: Implement improvement
+
+- **WHEN** the user clicks "Implement" on a pending improvement
+- **THEN** the improvement is marked as `implemented` (API call)
+- **AND** the user is navigated to a new chat at `/$projectId/models/chat/new`
+- **AND** the chat message input is pre-filled with the improvement's description
+- **AND** the user must still click send to submit
+
+#### Scenario: Already implemented
+
+- **WHEN** the user views an improvement that is already `implemented`
+- **THEN** the "Implement" button is replaced with a "Implemented" badge showing the implementation date
 

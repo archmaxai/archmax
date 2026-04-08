@@ -1,5 +1,5 @@
 {
-  "name": "@semlayer/worker",
+  "name": "@archsem/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@langchain/core": "^1.1.39",
-    "@semlayer/core": "workspace:*",
+    "@archsem/core": "workspace:*",
     "bullmq": "^5",
     "dotenv": "^17.3.1",
     "ioredis": "^5",
@@ -22,6 +22,6 @@
     "@types/node": "^20",
     "tsx": "^4.19.2",
     "typescript": "5.9.3",
-    "vitest": "^4"
+    "vitest": "^4.1.3"
   }
 }

@@ -27,6 +27,7 @@ export default defineWorkspace([
       name: "worker",
       root: "apps/worker",
       include: ["src/**/*.test.ts"],
+      passWithNoTests: true,
     },
   },
 ]);

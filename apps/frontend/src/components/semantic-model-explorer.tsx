@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Database, Loader2 } from "lucide-react";
-import { cn } from "@semlayer/ui";
+import { cn } from "@archsem/ui";
 import { api } from "@/lib/api";
 
 interface SemanticModelSummary {
@@ -42,9 +42,8 @@ export function SemanticModelExplorer({
         )}
 
         {!isLoading && !models?.length && (
-          <p className="px-3 py-6 text-xs text-muted-foreground text-center">
-            No models yet. Use the chat to create semantic models from your
-            database schemas.
+          <p className="px-3 py-3 text-[11px] text-muted-foreground/50 text-center">
+            Use the chat to create your first semantic model
           </p>
         )}
 

@@ -1,111 +1,25 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import {
-  Loader2,
-  Bot,
-} from "lucide-react";
-import { cn, Button, ScrollArea } from "@semlayer/ui";
+import { Loader2 } from "lucide-react";
+import { cn, Button, ScrollArea } from "@archsem/ui";
 import { toast } from "sonner";
 import { MarkdownContent } from "./markdown-components";
 import { ToolCallCard } from "./tool-call-card";
 import { ChatInput, type UploadedFile } from "./chat-input";
 import {
-  toSegments,
   getTextContent,
+  appendToken,
+  appendToolCallStart,
+  updateToolCall,
+  normalizeMessage,
+  shouldSyncMessages,
   type ChatMessage,
   type ContentSegment,
   type ToolCallInfo,
 } from "../../lib/chat-types";
+import { consumeSSEStream } from "../../lib/sse";
 import { api } from "@/lib/api";
 
-const EXAMPLE_PROMPTS = [
-  "Explore my database schemas and list all available tables",
-  "Create a semantic model for the orders data",
-  "Add customer lifetime value as a metric to the customers model",
-  "Check the relationships between the orders and products datasets",
-];
-
-function ExamplePromptButton({
-  prompt,
-  onClick,
-}: {
-  prompt: string;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      onClick={onClick}
-      className="group h-auto justify-start rounded-xl bg-transparent px-3 py-2 text-left text-sm font-normal whitespace-normal transition-colors hover:bg-white/40 hover:text-foreground dark:hover:bg-white/10"
-    >
-      <span className="flex items-start">
-        <span
-          className="mr-2 mt-[1px] select-none text-muted-foreground transition-colors group-hover:text-accent-foreground"
-          aria-hidden="true"
-        >
-          &rarr;
-        </span>
-        <span>{prompt}</span>
-      </span>
-    </Button>
-  );
-}
-
-export function shouldSyncMessages(
-  prevConversationId: string | null,
-  conversationId: string | null,
-  isStreaming: boolean,
-): boolean {
-  if (prevConversationId === null && conversationId !== null && isStreaming) {
-    return false;
-  }
-  return true;
-}
-
-export function parseSSEChunk(
-  chunk: string,
-): Array<{ event: string; data: string }> {
-  const events: Array<{ event: string; data: string }> = [];
-  let currentEvent = "message";
-  let currentData = "";
-
-  for (const line of chunk.split("\n")) {
-    if (line.startsWith("event:")) {
-      currentEvent = line.slice(6).trim();
-    } else if (line.startsWith("data:")) {
-      currentData = line.slice(5).trim();
-    } else if (line === "" && currentData) {
-      events.push({ event: currentEvent, data: currentData });
-      currentEvent = "message";
-      currentData = "";
-    }
-  }
-
-  return events;
-}
-
-export function normalizeMessage(msg: ChatMessage): ChatMessage {
-  if (msg.segments?.length) {
-    return {
-      role: msg.role,
-      isStreaming: msg.isStreaming,
-      segments: msg.segments.map((s) =>
-        s.type === "tool_call"
-          ? { type: "tool_call" as const, toolCall: { ...s.toolCall, status: s.toolCall.status ?? ("completed" as const) } }
-          : s,
-      ),
-    };
-  }
-  const raw = msg as unknown as { content?: string; toolCalls?: ToolCallInfo[]; segments?: ContentSegment[] };
-  return {
-    role: msg.role,
-    segments: toSegments(raw.content ?? "", raw.toolCalls, raw.segments),
-    isStreaming: msg.isStreaming,
-  };
-}
-
-export function MessageSegments({ segments }: { segments: ContentSegment[] }) {
+function MessageSegments({ segments }: { segments: ContentSegment[] }) {
   return (
     <>
       {segments.map((seg, i) => {
@@ -119,34 +33,6 @@ export function MessageSegments({ segments }: { segments: ContentSegment[] }) {
       })}
     </>
   );
-}
-
-export function appendToken(segments: ContentSegment[], content: string): ContentSegment[] {
-  const next = [...segments];
-  const last = next[next.length - 1];
-  if (last?.type === "text") {
-    next[next.length - 1] = { type: "text", content: last.content + content };
-  } else {
-    next.push({ type: "text", content });
-  }
-  return next;
-}
-
-export function appendToolCallStart(segments: ContentSegment[], tc: ToolCallInfo): ContentSegment[] {
-  return [...segments, { type: "tool_call", toolCall: tc }];
-}
-
-export function updateToolCall(
-  segments: ContentSegment[],
-  id: string,
-  update: Partial<ToolCallInfo>,
-): ContentSegment[] {
-  return segments.map((seg) => {
-    if (seg.type === "tool_call" && seg.toolCall.id === id) {
-      return { type: "tool_call", toolCall: { ...seg.toolCall, ...update } };
-    }
-    return seg;
-  });
 }
 
 export type ChatRequestFn = (params: {
@@ -174,6 +60,10 @@ interface AgentChatProps {
   cancelRequest?: CancelRequestFn;
   disableFileUpload?: boolean;
   emptyState?: React.ReactNode;
+  /** Title shown on the start page (default: "Semantic Model Builder") */
+  emptyStateTitle?: string;
+  /** Description shown below the title on the start page */
+  emptyStateDescription?: string;
   /** Render content in the bottom-left of the input (e.g. agent selector pills) */
   inputBottomLeft?: React.ReactNode;
   /** Custom placeholder text for the input */
@@ -182,6 +72,8 @@ interface AgentChatProps {
   subscribeUrlPrefix?: string;
   /** Disable sending while still showing the input */
   disableSend?: boolean;
+  /** Pre-fill the input textarea with this text (e.g. from an improvement suggestion) */
+  initialInput?: string;
 }
 
 export function AgentChat({
@@ -197,15 +89,18 @@ export function AgentChat({
   cancelRequest,
   disableFileUpload,
   emptyState,
+  emptyStateTitle,
+  emptyStateDescription,
   inputBottomLeft,
   inputPlaceholder,
   subscribeUrlPrefix,
   disableSend,
+  initialInput,
 }: AgentChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map(normalizeMessage),
   );
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming] = useState(false);
   const [focusRequestId, setFocusRequestId] = useState(0);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -270,27 +165,9 @@ export function AgentChat({
         const reader = res.body?.getReader();
         if (!reader) { setIsStreaming(false); return; }
 
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lastDoubleNewline = buffer.lastIndexOf("\n\n");
-          if (lastDoubleNewline === -1) continue;
-
-          const complete = buffer.slice(0, lastDoubleNewline + 2);
-          buffer = buffer.slice(lastDoubleNewline + 2);
-
-          for (const { event, data } of parseSSEChunk(complete)) {
-            try {
-              const parsed = JSON.parse(data);
-              handleSSEEventRef.current(event, parsed);
-            } catch { /* ignore */ }
-          }
-        }
+        await consumeSSEStream(reader, (event, parsed) => {
+          handleSSEEventRef.current(event, parsed);
+        });
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           console.error("[agent-chat] Stream reconnection failed:", err);
@@ -440,30 +317,7 @@ export function AgentChat({
         return;
       }
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        const lastDoubleNewline = buffer.lastIndexOf("\n\n");
-        if (lastDoubleNewline === -1) continue;
-
-        const complete = buffer.slice(0, lastDoubleNewline + 2);
-        buffer = buffer.slice(lastDoubleNewline + 2);
-
-        for (const { event, data } of parseSSEChunk(complete)) {
-          try {
-            const parsed = JSON.parse(data);
-            handleSSEEvent(event, parsed);
-          } catch {
-            // ignore malformed JSON
-          }
-        }
-      }
+      await consumeSSEStream(reader, handleSSEEvent);
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         updateLastAssistant((m) => {
@@ -570,33 +424,15 @@ export function AgentChat({
             <ScrollArea className="h-full">
               <div className="pt-16 pb-40 space-y-4">
                 {!hasMessages && (emptyState ?? (
-                  <div className="flex flex-col items-center justify-center py-24 text-center content-tight">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white dark:bg-white/10 backdrop-blur-sm">
-                      <Bot className="h-6 w-6 text-foreground/70" />
-                    </div>
-                    <h3 className="text-heading text-lg mt-4">
-                      Semantic Model Builder
-                    </h3>
-                    <p className="text-foreground/60 text-sm max-w-md">
-                      Ask me to explore your database schemas and create
-                      semantic models. I can read tables, run queries, and
-                      write model definitions.
-                    </p>
-                    <div className="mt-5 w-full max-w-3xl px-6">
-                      <div className="mx-auto max-w-2xl">
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {EXAMPLE_PROMPTS.map((prompt, idx) => (
-                            <ExamplePromptButton
-                              key={idx}
-                              prompt={prompt}
-                              onClick={() => {
-                                setInput(prompt);
-                                setFocusRequestId(Date.now());
-                              }}
-                            />
-                          ))}
-                        </div>
-                      </div>
+                  <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 pt-6 content-tight">
+                    <div className="text-center max-w-lg">
+                      <h3 className="text-heading text-lg">
+                        {emptyStateTitle ?? "Semantic Model Builder"}
+                      </h3>
+                      <p className="text-foreground/60 text-sm mt-1.5">
+                        {emptyStateDescription ??
+                          "Ask me to explore your database schemas and create semantic models. I can read tables, run queries, and write model definitions."}
+                      </p>
                     </div>
                   </div>
                 ))}

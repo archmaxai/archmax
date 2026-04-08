@@ -1,13 +1,14 @@
 import { describe, it, expect } from "vitest";
+import { parseSSEChunk } from "../../lib/sse";
 import {
-  parseSSEChunk,
   shouldSyncMessages,
   appendToken,
   appendToolCallStart,
   updateToolCall,
   normalizeMessage,
-} from "./agent-chat";
-import type { ContentSegment, ToolCallInfo } from "../../lib/chat-types";
+  type ContentSegment,
+  type ToolCallInfo,
+} from "../../lib/chat-types";
 
 describe("parseSSEChunk", () => {
   it("parses a single event", () => {

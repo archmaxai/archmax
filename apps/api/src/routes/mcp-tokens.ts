@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@semlayer/core/infra/db";
-import { McpToken, generateMcpToken, Project } from "@semlayer/core/models/index";
-import { SemanticModelFileService } from "@semlayer/core/services/semantic-model-files";
-import { getEnv } from "@semlayer/core/config/env";
+import { connectDB } from "@archsem/core/infra/db";
+import { McpToken, generateMcpToken, Project } from "@archsem/core/models/index";
+import { SemanticModelFileService } from "@archsem/core/services/semantic-model-files";
+import { getEnv } from "@archsem/core/config/env";
 import { AppError } from "../utils/errors";
 
 const createSchema = z.object({
@@ -14,7 +14,7 @@ const createSchema = z.object({
 });
 
 function getFileService(): SemanticModelFileService {
-  return new SemanticModelFileService(getEnv().SEMLAYER_DATA_DIR);
+  return new SemanticModelFileService(getEnv().ARCHSEM_DATA_DIR);
 }
 
 const app = new Hono()

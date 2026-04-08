@@ -60,13 +60,3 @@ export async function enqueueTestRunJob(
   });
 }
 
-export async function closeQueue(): Promise<void> {
-  if (queue) {
-    await queue.close();
-    queue = null;
-  }
-  if (testQueue) {
-    await testQueue.close();
-    testQueue = null;
-  }
-}

@@ -1,20 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
-vi.mock("../infra/db", () => ({
-  connectDB: vi.fn(),
-}));
-
+vi.mock("../infra/db", () => ({ connectDB: vi.fn() }));
 vi.mock("../models/index", () => ({
   Connection: { find: vi.fn(() => ({ lean: vi.fn(() => []) })) },
 }));
-
 vi.mock("./duckdb", () => ({
   getProjectInstance: vi.fn(),
   createScopedViews: vi.fn(),
   getAttachedCatalogSlugs: vi.fn(() => []),
   hardenConnection: vi.fn(),
 }));
-
 vi.mock("./sql-validation", () => ({
   validateReadOnlySQL: vi.fn(() => null),
   validateScopedSQL: vi.fn(() => null),

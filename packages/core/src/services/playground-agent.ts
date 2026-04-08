@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 import { connectDB } from "../infra/db";
 import { decrypt } from "../infra/crypto";
 import { getEnv } from "../config/env";
-import { TestAgent, type ITestAgentDocument } from "../models/index";
+import { TestAgent, Improvement, type ITestAgentDocument } from "../models/index";
 import { SemanticModelFileService } from "./semantic-model-files";
 import {
   listSemanticModels,
@@ -101,6 +101,34 @@ function makeExecuteQueryTool(fileSvc: SemanticModelFileService, projectId: stri
   );
 }
 
+function makeSuggestImprovementTool(fileSvc: SemanticModelFileService, projectId: string, scopes: string[], tokenName: string) {
+  return tool(
+    async ({ modelName, title, description }) => {
+      if (!scopes.includes(modelName)) {
+        return `Access denied: model "${modelName}" is not in your scope`;
+      }
+      const models = await fileSvc.list(projectId);
+      if (!models.some((m: { name: string }) => m.name === modelName)) {
+        return `Model "${modelName}" not found in this project`;
+      }
+      await connectDB();
+      await Improvement.create({ project: projectId, modelName, title, description, createdVia: tokenName });
+      return "Improvement suggestion submitted successfully";
+    },
+    {
+      name: "suggest_improvement",
+      description:
+        "Submit an improvement suggestion for a semantic model. " +
+        "Use when you or a user discover issues like missing fields, incorrect descriptions, or wrong relationships.",
+      schema: z.object({
+        modelName: z.string().describe("The semantic model this improvement applies to"),
+        title: z.string().max(200).describe("Short summary of the improvement (max 200 chars)"),
+        description: z.string().max(2000).describe("Detailed description of the issue or suggested change (max 2000 chars)"),
+      }),
+    },
+  );
+}
+
 const DEFAULT_MAX_ITERATIONS = 100;
 
 export function getTestAgentRecursionLimit(): number {
@@ -109,7 +137,32 @@ export function getTestAgentRecursionLimit(): number {
   return configured > 0 ? configured : DEFAULT_MAX_ITERATIONS;
 }
 
-export async function createPlaygroundAgent(testAgentId: string): Promise<ReturnType<typeof createDeepAgent>> {
+type AnyTool = ReturnType<typeof tool>;
+
+function withToolBudget(tools: AnyTool[], maxCalls: number): AnyTool[] {
+  const counter = { value: 0 };
+  return tools.map((t) =>
+    tool(
+      async (input: any) => {
+        counter.value++;
+        if (counter.value > maxCalls) {
+          return `Tool call budget of ${maxCalls} reached. You MUST provide your final answer now using the information already gathered. Do NOT call any more tools.`;
+        }
+        return t.invoke(input);
+      },
+      { name: t.name, description: t.description, schema: t.schema },
+    ),
+  );
+}
+
+export interface PlaygroundAgentOptions {
+  maxToolCalls?: number;
+}
+
+export async function createPlaygroundAgent(
+  testAgentId: string,
+  options?: PlaygroundAgentOptions,
+): Promise<ReturnType<typeof createDeepAgent>> {
   await connectDB();
   const agent = await TestAgent.findById(testAgentId).lean() as ITestAgentDocument | null;
   if (!agent) throw new Error("Test agent not found");
@@ -123,16 +176,21 @@ export async function createPlaygroundAgent(testAgentId: string): Promise<Return
     configuration: { baseURL: agent.llmBaseUrl },
   });
 
-  const fileSvc = new SemanticModelFileService(env.SEMLAYER_DATA_DIR);
+  const fileSvc = new SemanticModelFileService(env.ARCHSEM_DATA_DIR);
   const projectId = agent.project.toString();
   const scopes = agent.semanticModels;
 
-  const tools = [
+  let tools: AnyTool[] = [
     makeListModelsTool(fileSvc, projectId, scopes),
     makeGetOverviewTool(fileSvc, projectId, scopes),
     makeGetDatasetsTool(fileSvc, projectId, scopes),
     makeExecuteQueryTool(fileSvc, projectId, scopes),
+    makeSuggestImprovementTool(fileSvc, projectId, scopes, agent.name),
   ];
+
+  if (options?.maxToolCalls) {
+    tools = withToolBudget(tools, options.maxToolCalls);
+  }
 
   return createDeepAgent({
     model: llm,

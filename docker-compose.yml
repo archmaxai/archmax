@@ -1,0 +1,39 @@
+# Production deployment with separate MongoDB and Redis services.
+# Copy .env.example to .env and fill in the required values, then run:
+#   docker compose up -d
+
+services:
+  archsem:
+    image: archsem/archsem:latest
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/archsem
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD}
+      AGENT_API_BASE_URL: ${AGENT_API_BASE_URL:-https://openrouter.ai/api/v1}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-anthropic/claude-sonnet-4}
+    volumes:
+      - archsem-data:/app/data
+    depends_on:
+      - mongo
+      - redis
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  archsem-data:
+  mongo-data:

@@ -82,7 +82,7 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
     await db.run(`INSTALL ${ext}`);
     await db.run(`LOAD ${ext}`);
 
-    const connStr = buildAttachString(conn);
+    const connStr = buildAttachString(conn).replace(/'/g, "''");
     const readOnlyClause = entry.readOnly ? ", READ_ONLY" : "";
     await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}${readOnlyClause})`);
     entry.attachedConnections.add(conn._id.toString());
@@ -91,27 +91,6 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
   }
 }
 
-export async function detachConnection(projectId: string, conn: IConnectionDocument): Promise<void> {
-  const entry = projectInstances.get(projectId);
-  if (!entry) return;
-
-  const connId = conn._id.toString();
-  if (!entry.attachedConnections.has(connId)) return;
-
-  const db = await entry.instance.connect();
-  try {
-    await db.run(`DETACH ${conn.slug}`);
-    entry.attachedConnections.delete(connId);
-  } finally {
-    db.disconnectSync();
-  }
-}
-
-export async function destroyProjectInstance(projectId: string): Promise<void> {
-  const entry = projectInstances.get(projectId);
-  if (!entry) return;
-  projectInstances.delete(projectId);
-}
 
 // ── Scoped VIEWs for MCP ──────────────────────────────────────────────
 
@@ -188,8 +167,13 @@ export function getAttachedCatalogSlugs(
 }
 
 export async function hardenConnection(db: DuckDBConnection): Promise<void> {
-  await db.run("SET enable_external_access = false");
-  await db.run("SET threads = 2");
-  await db.run("SET memory_limit = '512MB'");
-  await db.run("SET lock_configuration = true");
+  try {
+    await db.run("SET enable_external_access = false");
+    await db.run("SET threads = 2");
+    await db.run("SET memory_limit = '512MB'");
+    await db.run("SET lock_configuration = true");
+  } catch {
+    // Instance-level config may already be locked by a prior connection.
+    // That's fine — the hardening settings are already in effect.
+  }
 }

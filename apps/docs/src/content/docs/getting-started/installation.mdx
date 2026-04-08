@@ -1,0 +1,86 @@
+---
+title: Installation
+description: How to install and run archsem using Docker or local development.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Docker (Recommended)
+
+The fastest way to run archsem is with Docker. The image bundles the API, worker, admin UI, nginx reverse proxy, and embedded MongoDB and Redis — no external services required.
+
+### Prerequisites
+
+- Docker (20.10+)
+
+### Quick Start
+
+```bash
+docker run -d \
+  --name archsem \
+  -p 8080:8080 \
+  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_PASSWORD=changeme \
+  -v archsem-data:/app/data \
+  archsem/archsem:latest
+```
+
+Open `http://localhost:8080` and log in with username `admin` and the password you set.
+
+<Aside type="tip">
+MongoDB and Redis are embedded inside the image and start automatically. All persistent data (projects and database) is stored under `/app/data`, so the single volume mount above is all you need for backups.
+</Aside>
+
+### Docker Compose (Production)
+
+For production deployments, use Docker Compose with separate MongoDB and Redis services. The repository includes a ready-to-use `docker-compose.yml`:
+
+```bash
+git clone https://github.com/archmaxai/archsem.git
+cd archsem
+cp .env.example .env
+```
+
+Edit `.env` and set the required values:
+
+```bash
+BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+UI_PASSWORD=your-secure-password
+AGENT_API_KEY=your-api-key
+```
+
+Then start the stack:
+
+```bash
+docker compose up -d
+```
+
+This starts archsem with dedicated MongoDB and Redis containers. The embedded services inside the archsem image are automatically skipped when `MONGODB_URI` and `REDIS_URL` are provided.
+
+### Using External Services
+
+If you already have MongoDB or Redis running, pass their connection strings directly:
+
+```bash
+docker run -d \
+  --name archsem \
+  -p 8080:8080 \
+  -e MONGODB_URI=mongodb://your-mongo-host:27017/archsem \
+  -e REDIS_URL=redis://your-redis-host:6379 \
+  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_PASSWORD=changeme \
+  -v archsem-data:/app/data \
+  archsem/archsem:latest
+```
+
+You can mix and match — for example, use an external MongoDB but the embedded Redis, or vice versa. Any service whose environment variable is omitted will use the embedded fallback.
+
+## Local Development
+
+For contributing or local development, see the [Development Setup](/contributing/development/) guide.
+
+## Next Steps
+
+- See the full [Configuration](/reference/configuration/) reference for all environment variables
+- Read the [Docker Reference](/reference/docker/) for volumes, entrypoint behavior, and troubleshooting
+- Check the [Self-Hosting Guide](/guides/self-hosting/) for backup, upgrade, and production tips

@@ -1,0 +1,53 @@
+---
+title: Data Federation
+description: Query across multiple databases from a single project using DuckDB.
+---
+
+archsem uses [DuckDB](https://duckdb.org/) as an in-process query engine that can federate queries across multiple database connections. Each project gets its own DuckDB instance with connections attached as named schemas.
+
+## How It Works
+
+When you add a connection to a project and mark it as active, archsem attaches it to the project's DuckDB instance using DuckDB's extension system:
+
+| Database Type | DuckDB Extension |
+|---------------|-----------------|
+| PostgreSQL | `postgres` |
+| MySQL | `mysql` |
+| SQL Server | `mssql` (community) |
+| SQLite | `sqlite` |
+| DuckDB | Native |
+| MotherDuck | `motherduck` |
+
+Each connection's slug becomes the DuckDB schema alias. For example, a connection with slug `shopify` attached from a Postgres database makes its tables available as `shopify.<schema>.<table>`.
+
+## Cross-Connection Queries
+
+Once multiple connections are attached, you can query across them in a single SQL statement:
+
+```sql
+SELECT
+  s.order_id,
+  s.total_amount,
+  d.invoice_number
+FROM shopify.public.orders s
+JOIN datev.dbo.invoices d
+  ON s.order_id = d.external_order_id
+WHERE s.created_at > '2024-01-01'
+```
+
+This is used internally by:
+- The **Data Browser** for exploring connection schemas
+- The **Semantic Model Agent** for discovering and mapping tables
+- The **MCP `execute_query` tool** for AI agent queries (through scoped VIEWs)
+
+## Scoped VIEWs
+
+When AI agents use `execute_query`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs in a `_scope_<modelName>` schema. These VIEWs expose only the fields defined in the semantic model, acting as a curated and safe access layer.
+
+## Connection Lifecycle
+
+- **Active connections** are attached to DuckDB and available for querying
+- **Inactive connections** are detached from DuckDB but their configuration is preserved
+- **Deleted connections** are soft-deleted and fully detached
+
+DuckDB instances are created lazily per project and cached in memory for the lifetime of the server process.

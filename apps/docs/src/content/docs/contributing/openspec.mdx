@@ -1,0 +1,118 @@
+---
+title: OpenSpec Workflow
+description: How to use the spec-driven development workflow for contributing changes.
+---
+
+archsem uses **[OpenSpec](https://github.com/nicholasgriffintn/openspec)** for spec-driven development. **Every feature PR must include a corresponding spec change** — this is a hard requirement, not optional. A proposal with spec deltas gets reviewed first, and implementation only begins after approval.
+
+## Install OpenSpec
+
+Install the CLI globally so it's available in your terminal:
+
+```bash
+npm install -g openspec-cli
+```
+
+Verify the installation:
+
+```bash
+openspec --version
+```
+
+## PR Requirements
+
+Every pull request that introduces or modifies user-facing behavior **must** include:
+
+1. An OpenSpec change proposal (under `openspec/changes/<change-id>/`)
+2. Spec deltas that describe the new or modified requirements
+3. A validated proposal (`openspec validate <change-id> --strict` passes)
+
+PRs without spec changes will be rejected during review. Bug fixes, typo corrections, and non-breaking dependency updates are the only exceptions.
+
+## When to Create a Proposal
+
+**Requires a proposal:**
+- New features or capabilities
+- Breaking changes (API, schema, behavior)
+- Architecture changes
+- Performance optimizations that change behavior
+
+**Skip proposals for:**
+- Bug fixes that restore intended behavior
+- Typos, formatting, comments
+- Non-breaking dependency updates
+- Configuration-only changes
+
+## Directory Structure
+
+```
+openspec/
+├── project.md          # Project conventions and context
+├── specs/              # Current truth — what IS built
+│   └── <capability>/
+│       └── spec.md     # Requirements and scenarios
+├── changes/            # Active proposals
+│   └── <change-id>/
+│       ├── proposal.md # Why and what changes
+│       ├── tasks.md    # Implementation checklist
+│       ├── design.md   # Technical decisions (optional)
+│       └── specs/      # Delta changes to capabilities
+│           └── <capability>/
+│               └── spec.md
+└── AGENTS.md           # AI assistant instructions
+```
+
+## Creating a Proposal
+
+Proposals should be generated using AI assistants with the OpenSpec skill, not hand-written. The project includes an `openspec-proposal` Cursor command that scaffolds all required files with correct formatting, validates the result, and avoids common mistakes like missing scenarios or malformed headers.
+
+**Using the Cursor command (recommended):**
+
+Describe your change and invoke the `/openspec-proposal` command. The assistant will:
+1. Review existing specs and active changes for conflicts
+2. Pick a unique change ID
+3. Scaffold `proposal.md`, `tasks.md`, `design.md` (if needed), and spec deltas
+4. Validate with `openspec validate <change-id> --strict`
+
+**Manual creation (if not using Cursor):**
+
+1. **Pick a change ID** — kebab-case, verb-led (e.g., `add-two-factor-auth`, `update-mcp-tools`)
+
+2. **Scaffold the files** — create `proposal.md`, `tasks.md`, and spec deltas under `openspec/changes/<change-id>/`
+
+3. **Write spec deltas** — use `## ADDED`, `## MODIFIED`, or `## REMOVED Requirements` headers with `#### Scenario:` blocks:
+
+   ```markdown
+   ## ADDED Requirements
+   ### Requirement: Two-Factor Authentication
+   Users MUST provide a second factor during login.
+
+   #### Scenario: OTP required
+   - **WHEN** valid credentials are provided
+   - **THEN** an OTP challenge is required
+   ```
+
+4. **Validate** — run `openspec validate <change-id> --strict` and fix any issues before opening a PR
+
+## Documentation Sync
+
+When your change affects user-facing behavior, include a documentation update task in `tasks.md`. Spec content from `openspec/specs/` is synced to the docs automatically at build time, but guides and reference pages need manual updates.
+
+## Useful Commands
+
+```bash
+openspec list              # List active changes
+openspec list --specs      # List all specifications
+openspec show <item>       # View change or spec details
+openspec validate --strict # Validate all changes
+```
+
+## After Deployment
+
+Once a change is deployed, it gets archived:
+
+```bash
+openspec archive <change-id> --yes
+```
+
+This moves the change to `changes/archive/` and updates the specs to reflect the new state.

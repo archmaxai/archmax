@@ -1,25 +1,20 @@
 import { UnrecoverableError, type Job } from "bullmq";
 import Redis from "ioredis";
-import { connectDB } from "@semlayer/core/infra/db";
-import { Conversation } from "@semlayer/core/models/index";
-import { createSemlayerAgent } from "@semlayer/core/services/agent";
-import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@semlayer/core/services/playground-agent";
+import { connectDB } from "@archsem/core/infra/db";
+import { Conversation } from "@archsem/core/models/index";
+import { createSemlayerAgent } from "@archsem/core/services/agent";
+import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archsem/core/services/playground-agent";
+import { processAgentStream } from "@archsem/core/services/agent-stream";
 import {
   getRedis,
   isCancelFlagSet,
   clearCancelFlag,
-} from "@semlayer/core/infra/redis";
-import { JOB_CANCEL_CHANNEL_PREFIX } from "@semlayer/core/queue/constants";
-import { publishStreamEvent, clearStreamBuffer } from "@semlayer/core/streaming/stream-bridge";
-import type { AgentJobData, AgentJobResult } from "@semlayer/core/queue/types";
-import type { IMessage, IContentSegment, IToolCallRecord } from "@semlayer/core/models/Conversation";
+} from "@archsem/core/infra/redis";
+import { JOB_CANCEL_CHANNEL_PREFIX } from "@archsem/core/queue/constants";
+import { publishStreamEvent, clearStreamBuffer } from "@archsem/core/streaming/stream-bridge";
+import type { AgentJobData, AgentJobResult } from "@archsem/core/queue/types";
+import type { IToolCallRecord, IContentSegment } from "@archsem/core/models/Conversation";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
-
-const RESULT_TRUNCATE = 500;
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "…" : s;
-}
 
 async function publishDone(
   conversationId: string,
@@ -167,18 +162,6 @@ export async function processAgentJob(
           : new AIMessage(m.content),
       );
 
-    let fullResponse = "";
-    let textBuffer = "";
-    const collectedToolCalls: IToolCallRecord[] = [];
-    const orderedSegments: IContentSegment[] = [];
-
-    const flushText = () => {
-      if (textBuffer) {
-        orderedSegments.push({ type: "text", content: textBuffer });
-        textBuffer = "";
-      }
-    };
-
     const streamOptions: Record<string, unknown> = {
       version: "v2",
       signal: abortController.signal,
@@ -192,87 +175,14 @@ export async function processAgentJob(
       streamOptions,
     );
 
-    for await (const event of events) {
-      if (event.event === "on_chat_model_stream") {
-        const chunk = event.data?.chunk;
-        if (!chunk) continue;
+    const { fullResponse, toolCalls, segments } = await processAgentStream(
+      events,
+      (event, data) => publishStreamEvent(conversationId, { event, data }),
+    );
 
-        const content = chunk.content;
-        if (typeof content === "string" && content) {
-          fullResponse += content;
-          textBuffer += content;
-          await publishStreamEvent(conversationId, {
-            event: "token",
-            data: JSON.stringify({ content }),
-          });
-        } else if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              block.type === "text" &&
-              typeof block.text === "string" &&
-              block.text
-            ) {
-              fullResponse += block.text;
-              textBuffer += block.text;
-              await publishStreamEvent(conversationId, {
-                event: "token",
-                data: JSON.stringify({ content: block.text }),
-              });
-            }
-          }
-        }
-      } else if (event.event === "on_tool_start") {
-        flushText();
-        const inputData = event.data?.input;
-        const args =
-          typeof inputData === "string"
-            ? inputData
-            : JSON.stringify(inputData ?? {});
-        const truncatedArgs = truncate(args, RESULT_TRUNCATE);
-        const tc: IToolCallRecord = {
-          id: event.run_id,
-          name: event.name,
-          args: truncatedArgs,
-        };
-        collectedToolCalls.push(tc);
-        orderedSegments.push({ type: "tool_call", toolCall: tc });
-        await publishStreamEvent(conversationId, {
-          event: "tool_call_start",
-          data: JSON.stringify({
-            id: event.run_id,
-            name: event.name,
-            args: truncatedArgs,
-          }),
-        });
-      } else if (event.event === "on_tool_end") {
-        const output = event.data?.output;
-        const result =
-          typeof output === "string"
-            ? output
-            : typeof output?.content === "string"
-              ? output.content
-              : JSON.stringify(output ?? {});
-        const truncatedResult = truncate(result, RESULT_TRUNCATE);
-        const existing = collectedToolCalls.find((tc) => tc.id === event.run_id);
-        if (existing) {
-          existing.result = truncatedResult;
-          existing.status = "completed";
-        }
-        await publishStreamEvent(conversationId, {
-          event: "tool_call_end",
-          data: JSON.stringify({
-            id: event.run_id,
-            name: event.name,
-            result: truncatedResult,
-          }),
-        });
-      }
-    }
-
-    flushText();
     cleanup();
 
-    await saveAssistantMessage(conversationId, fullResponse, collectedToolCalls, orderedSegments);
+    await saveAssistantMessage(conversationId, fullResponse, toolCalls, segments);
     await publishDone(conversationId);
     await clearStreamBuffer(conversationId);
 

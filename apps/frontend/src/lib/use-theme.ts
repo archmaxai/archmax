@@ -15,13 +15,13 @@ function applyTheme(theme: Theme) {
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem("semlayer-theme") as Theme | null;
+    const stored = localStorage.getItem("archsem-theme") as Theme | null;
     return stored ?? "dark";
   });
 
   const setTheme = useCallback((next: Theme) => {
     setThemeState(next);
-    localStorage.setItem("semlayer-theme", next);
+    localStorage.setItem("archsem-theme", next);
     applyTheme(next);
   }, []);
 

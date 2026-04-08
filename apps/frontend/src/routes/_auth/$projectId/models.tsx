@@ -1,21 +1,31 @@
 import { createFileRoute, Outlet, Link, useMatch, useNavigate } from "@tanstack/react-router";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   MessageSquare,
   Trash2,
   MoreHorizontal,
   Loader2,
+  Lightbulb,
+  Check,
 } from "lucide-react";
 
-import { cn, Button, ScrollArea, Skeleton } from "@semlayer/ui";
+import { cn, Button, ScrollArea, Skeleton } from "@archsem/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 import { SemanticModelExplorer } from "@/components/semantic-model-explorer";
+import { PublishButton } from "@/components/publish-toolbar";
 import { ModelsLayoutProvider } from "@/components/model-visualization/models-layout-context";
 import { useResizablePanel, PanelResizeHandle } from "@/components/layout/panel-resize-handle";
 import { AccordionSection } from "@/components/layout/accordion-section";
 import type { ConversationListResponse } from "@/lib/chat-types";
+
+interface ImprovementItem {
+  _id: string;
+  modelName: string;
+  title: string;
+  status: "pending" | "implemented";
+}
 
 export const Route = createFileRoute("/_auth/$projectId/models")({
   component: ModelsLayout,
@@ -25,7 +35,7 @@ function ModelsLayout() {
   const { project } = useProject();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("semlayer-models-panel-width", 256);
+  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("archsem-models-panel-width", 256);
 
   const modelMatch = useMatch({
     from: "/_auth/$projectId/models/$modelName",
@@ -38,6 +48,12 @@ function ModelsLayout() {
     shouldThrow: false,
   });
   const activeConvId = convMatch?.params.conversationId;
+
+  const improvementMatch = useMatch({
+    from: "/_auth/$projectId/models/improvement/$improvementId",
+    shouldThrow: false,
+  });
+  const activeImprovementId = improvementMatch?.params.improvementId ?? null;
 
   const PAGE_SIZE = 10;
   const {
@@ -64,6 +80,20 @@ function ModelsLayout() {
   });
 
   const conversations = convPages?.pages.flatMap((p) => p.items);
+
+  const { data: improvements = [], isLoading: improvementsLoading } = useQuery<ImprovementItem[]>({
+    queryKey: ["improvements", project._id],
+    queryFn: async () => {
+      const res = await api.api.projects[":projectId"].improvements.$get({
+        param: { projectId: project._id },
+      });
+      if (!res.ok) throw new Error("Failed to fetch improvements");
+      return res.json() as unknown as Promise<ImprovementItem[]>;
+    },
+    refetchInterval: 30_000,
+  });
+
+  const pendingCount = improvements.filter((i) => i.status === "pending").length;
 
   async function handleDelete(id: string) {
     await api.api.projects[":projectId"].conversations[":id"].$delete({
@@ -97,12 +127,15 @@ function ModelsLayout() {
                 projectId={project._id}
                 selectedModel={selectedModelName}
               />
+              <div className="px-1 pb-1">
+                <PublishButton />
+              </div>
             </AccordionSection>
 
             <div className="divider-subtle mx-3" />
 
             <AccordionSection
-              title="History"
+              title="Chat"
               action={
                 <Button
                   variant="ghost"
@@ -169,8 +202,50 @@ function ModelsLayout() {
                   </button>
                 )}
                 {!listLoading && !conversations?.length && (
-                  <p className="px-3 py-4 text-xs text-muted-foreground text-center">
-                    No conversations yet
+                  <p className="px-3 py-3 text-[11px] text-muted-foreground/50 text-center">
+                    Start building semantic models
+                  </p>
+                )}
+              </div>
+            </AccordionSection>
+
+            <div className="divider-subtle mx-3" />
+
+            <AccordionSection
+              title={`Improvements${pendingCount > 0 ? ` (${pendingCount})` : ""}`}
+              defaultOpen={pendingCount > 0}
+            >
+              <div className="flex flex-col gap-0.5 px-1.5 pb-2">
+                {improvementsLoading &&
+                  Array.from({ length: 2 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 w-full rounded-lg" />
+                  ))}
+                {improvements.map((imp) => (
+                  <Link
+                    key={imp._id}
+                    to="/$projectId/models/improvement/$improvementId"
+                    params={{ projectId: project._id, improvementId: imp._id }}
+                    className={cn(
+                      "flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors",
+                      activeImprovementId === imp._id
+                        ? "bg-foreground/[0.08] text-foreground font-medium"
+                        : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
+                    )}
+                  >
+                    <span className="relative shrink-0">
+                      <Lightbulb className="h-3.5 w-3.5" />
+                      {imp.status === "implemented" && (
+                        <Check className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-green-600 dark:text-green-400" />
+                      )}
+                    </span>
+                    <span className="flex-1 truncate">
+                      {imp.title.length > 25 ? imp.title.slice(0, 25) + "…" : imp.title}
+                    </span>
+                  </Link>
+                ))}
+                {!improvementsLoading && !improvements.length && (
+                  <p className="px-3 py-3 text-[11px] text-muted-foreground/50 text-center">
+                    Improvements are suggested by MCP clients
                   </p>
                 )}
               </div>

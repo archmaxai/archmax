@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Code, TreePine, Network, Loader2 } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@semlayer/ui";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@archsem/ui";
 import { ModelYamlView } from "./model-yaml-view";
 import { ModelTreeView } from "./model-tree-view";
 import { ModelGraphView } from "./model-graph-view";
 import { useModelDiff } from "./use-model-diff";
-import { PublishButton } from "../publish-toolbar";
 import type { SemanticModelFull } from "./types";
 import { api } from "@/lib/api";
 
@@ -85,7 +84,6 @@ export function ModelVisualization({
               YAML
             </TabsTrigger>
           </TabsList>
-          <PublishButton />
         </div>
 
         <TabsContent value="graph" className="flex-1 min-h-0">

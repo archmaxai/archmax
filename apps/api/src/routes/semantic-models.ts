@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { getEnv } from "@semlayer/core/config/env";
-import { semanticModelSchema, customExtensionSchema } from "@semlayer/core/services/semantic-model-schema";
-import { SemanticModelFileService } from "@semlayer/core/services/semantic-model-files";
+import { getEnv } from "@archsem/core/config/env";
+import { semanticModelSchema, customExtensionSchema } from "@archsem/core/services/semantic-model-schema";
+import { SemanticModelFileService } from "@archsem/core/services/semantic-model-files";
 import { AppError } from "../utils/errors";
 
 function getFileService(): SemanticModelFileService {
-  return new SemanticModelFileService(getEnv().SEMLAYER_DATA_DIR);
+  return new SemanticModelFileService(getEnv().ARCHSEM_DATA_DIR);
 }
 
 function param(c: { req: { param: (name: string) => string | undefined } }, name: string): string {

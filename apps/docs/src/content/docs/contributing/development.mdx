@@ -1,0 +1,100 @@
+---
+title: Development Setup
+description: Set up a local development environment for contributing to archsem.
+---
+
+import { Steps } from "@astrojs/starlight/components";
+
+## Prerequisites
+
+- **Node.js** 22+ (check with `node -v`)
+- **pnpm** 10+ (enabled via corepack: `corepack enable`)
+- **MongoDB** running locally or accessible remotely
+- **Git**
+
+## Setup
+
+<Steps>
+
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/archmaxai/archsem.git
+   cd archsem
+   ```
+
+2. **Install dependencies**
+
+   ```bash
+   pnpm install
+   ```
+
+3. **Configure environment**
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   Edit `.env.local` with your MongoDB URI and other settings. See [Configuration](/reference/configuration/) for all options.
+
+4. **Start development servers**
+
+   ```bash
+   pnpm dev
+   ```
+
+   This starts all workspaces via Turborepo:
+   - **API** at `http://localhost:3000`
+   - **Frontend** at `http://localhost:5173`
+   - **Docs** at `http://localhost:4321`
+
+</Steps>
+
+## Monorepo Structure
+
+```
+archsem/
+├── apps/
+│   ├── api/          # Hono API server
+│   ├── frontend/     # React SPA (Vite + TanStack Router)
+│   ├── worker/       # BullMQ worker for agent jobs
+│   └── docs/         # Documentation site (Astro Starlight)
+├── packages/
+│   ├── core/         # Shared models, services, config (@archsem/core)
+│   └── ui/           # React UI components (@archsem/ui)
+├── openspec/         # Specifications and change proposals
+└── turbo.json        # Turborepo pipeline config
+```
+
+## Tech Stack
+
+- **TypeScript** 5.9, strict mode, ESM-only
+- **Hono** 4 for the API
+- **React** 19 with Vite 6 for the frontend
+- **Mongoose** 9 for MongoDB
+- **DuckDB** for query federation
+- **Vitest** for testing
+
+## Running Tests
+
+```bash
+pnpm test              # Run all tests
+pnpm test --filter @archsem/core   # Run core package tests only
+```
+
+Tests are colocated with source files or in `__tests__/` directories.
+
+## Building
+
+```bash
+pnpm build             # Build all workspaces
+pnpm typecheck         # Type-check all workspaces
+```
+
+## Code Conventions
+
+- Strict TypeScript (`strict: true`) everywhere
+- Functional React components only
+- `cn()` utility for Tailwind class composition
+- No comments that narrate what the code does
+- CVA for component variants in `@archsem/ui`

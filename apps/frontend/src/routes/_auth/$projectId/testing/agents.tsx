@@ -25,7 +25,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import { Check } from "lucide-react";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";

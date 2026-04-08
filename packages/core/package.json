@@ -1,5 +1,5 @@
 {
-  "name": "@semlayer/core",
+  "name": "@archsem/core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -17,6 +17,7 @@
     "@langchain/openai": "^1.4.2",
     "bullmq": "^5",
     "deepagents": "^1.8.8",
+    "dotenv": "^17.4.0",
     "ioredis": "^5",
     "js-yaml": "^4.1.1",
     "markitdown-ts": "^0.0.10",

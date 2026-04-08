@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateReadOnlySQL } from "./agent";
+import { validateReadOnlySQL } from "@archsem/core/services/agent";
 
 describe("validateReadOnlySQL", () => {
   describe("allowed queries", () => {

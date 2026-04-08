@@ -1,0 +1,44 @@
+---
+title: Testing
+description: Test your semantic models with AI agents using the built-in testing suite.
+---
+
+archsem includes a testing suite for validating that AI agents can successfully use your semantic models to answer questions. You can create test agents, define test cases, and run them individually or in batches.
+
+## Test Agents
+
+A test agent represents an AI configuration used for testing. Each agent has:
+- **Name** — descriptive label
+- **Model** — the LLM model to use (e.g., `anthropic/claude-sonnet-4`)
+- **System prompt** — optional custom instructions
+- **Max iterations** — tool call limit per test run
+
+Create test agents under **Testing > Test Agents** in the admin UI.
+
+## Test Cases
+
+Test cases define questions that an AI agent should be able to answer using your semantic models:
+
+- **Title** — short description of what's being tested
+- **Prompt** — the question to ask the agent (e.g., "What was total revenue last quarter?")
+- **Semantic model** — which model the test targets
+- **Expected behavior** — optional notes on what a correct answer looks like
+
+Create test cases under **Testing > Test Cases**.
+
+## Running Tests
+
+### Playground
+
+The **Playground** lets you run individual test cases interactively. Select a test agent and a test case, then watch the agent work through the MCP tools in real time. You can see each tool call, its input and output, and the final response.
+
+### Batch Runs
+
+Select multiple test cases and run them against a test agent in batch. Results are collected and displayed in a summary view showing pass/fail status and agent responses.
+
+## What to Test
+
+- **Discovery** — Can the agent find the right semantic model and datasets?
+- **Field understanding** — Does the agent use correct field names and understand their meaning?
+- **Query correctness** — Do the generated SQL queries return accurate results?
+- **Edge cases** — How does the agent handle ambiguous questions or missing data?

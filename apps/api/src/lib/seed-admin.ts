@@ -1,7 +1,7 @@
 import { auth } from "./auth";
-import { getEnv } from "@semlayer/core/config/env";
+import { getEnv } from "@archsem/core/config/env";
 
-const ADMIN_EMAIL = "admin@semlayer.local";
+const ADMIN_EMAIL = "admin@archsem.local";
 
 export async function seedAdmin(): Promise<void> {
   const env = getEnv();

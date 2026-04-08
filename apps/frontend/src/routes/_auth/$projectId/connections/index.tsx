@@ -28,7 +28,7 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import {
   Dialog,
   DialogContent,
@@ -36,20 +36,20 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 

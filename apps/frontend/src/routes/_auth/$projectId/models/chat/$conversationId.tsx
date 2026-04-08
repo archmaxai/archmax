@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { AgentChat } from "@/components/chat/agent-chat";
-import { PublishButton } from "@/components/publish-toolbar";
 import { useModelsLayout } from "@/components/model-visualization/models-layout-context";
 import type { ChatMessage, ConversationFull } from "@/lib/chat-types";
 
@@ -14,10 +13,14 @@ export const Route = createFileRoute(
   "/_auth/$projectId/models/chat/$conversationId",
 )({
   component: ModelsChat,
+  validateSearch: (search: Record<string, unknown>) => ({
+    prefill: typeof search.prefill === "string" ? search.prefill : undefined,
+  }),
 });
 
 function ModelsChat() {
   const { projectId, conversationId } = Route.useParams();
+  const { prefill } = Route.useSearch();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isNew = conversationId === "new";
@@ -71,9 +74,6 @@ function ModelsChat() {
 
   return (
     <div className="relative flex h-full flex-col">
-      <div className="absolute right-4 top-3 z-10">
-        <PublishButton />
-      </div>
       <AgentChat
         projectId={projectId}
         conversationId={isNew ? null : conversationId}
@@ -81,6 +81,7 @@ function ModelsChat() {
         onConversationCreated={handleConversationCreated}
         onStreamEnd={onStreamEnd}
         activeStreamConversationId={activeStreamId}
+        initialInput={isNew ? prefill : undefined}
         inputBottomLeft={
           <span className="inline-flex items-center rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
             Semantic Model Builder

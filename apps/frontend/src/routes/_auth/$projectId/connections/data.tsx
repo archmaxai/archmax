@@ -25,7 +25,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 import { useResizablePanel, PanelResizeHandle } from "@/components/layout/panel-resize-handle";
@@ -69,7 +69,7 @@ function DataBrowserPage() {
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel(
-    "semlayer-data-browser-panel-width",
+    "archsem-data-browser-panel-width",
     256,
   );
 

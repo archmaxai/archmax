@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@semlayer/core/infra/db";
-import { TestCase, TestAgent } from "@semlayer/core/models/index";
+import { connectDB } from "@archsem/core/infra/db";
+import { TestCase, TestAgent } from "@archsem/core/models/index";
 import { AppError } from "../utils/errors";
 
 const createSchema = z.object({
   title: z.string().min(1),
-  testAgentId: z.string().min(1),
+  testAgentId: z.string().min(1).optional(),
   semanticModel: z.string().min(1),
   inputMessage: z.string().min(1),
   expectedFacts: z.array(z.string().min(1)).min(1),
@@ -58,10 +58,14 @@ const app = new Hono()
     const projectId = c.req.param("projectId")!;
     const { testAgentId, ...body } = c.req.valid("json");
 
-    const agent = await TestAgent.findOne({ _id: testAgentId, project: projectId }).lean();
-    if (!agent) throw AppError.notFound("Test agent not found");
+    let testAgent: string | null = null;
+    if (testAgentId) {
+      const agent = await TestAgent.findOne({ _id: testAgentId, project: projectId }).lean();
+      if (!agent) throw AppError.notFound("Test agent not found");
+      testAgent = testAgentId;
+    }
 
-    const tc = await TestCase.create({ ...body, testAgent: testAgentId, project: projectId });
+    const tc = await TestCase.create({ ...body, testAgent, project: projectId });
     return c.json(tc.toObject(), 201);
   })
   .put("/:caseId", zValidator("json", updateSchema), async (c) => {

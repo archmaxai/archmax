@@ -5,16 +5,16 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { Octokit } from "octokit";
-import { getEnv } from "@semlayer/core/config/env";
-import { connectDB } from "@semlayer/core/infra/db";
-import { Project, PublishEvent } from "@semlayer/core/models/index";
-import { PublishService } from "@semlayer/core/services/publish";
-import { decrypt } from "@semlayer/core/infra/crypto";
-import { invalidateScopedViews } from "@semlayer/core/services/duckdb";
+import { getEnv } from "@archsem/core/config/env";
+import { connectDB } from "@archsem/core/infra/db";
+import { Project, PublishEvent } from "@archsem/core/models/index";
+import { PublishService } from "@archsem/core/services/publish";
+import { decrypt } from "@archsem/core/infra/crypto";
+import { invalidateScopedViews } from "@archsem/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
 function getPublishService(): PublishService {
-  return new PublishService(getEnv().SEMLAYER_DATA_DIR);
+  return new PublishService(getEnv().ARCHSEM_DATA_DIR);
 }
 
 function param(c: { req: { param: (name: string) => string | undefined } }, name: string): string {
@@ -61,7 +61,7 @@ async function pushToGitHub(projectId: string, message: string): Promise<void> {
     : [project.github.owner, project.github.repo];
   const branch = project.github.branch || "main";
 
-  const dataDir = env.SEMLAYER_DATA_DIR;
+  const dataDir = env.ARCHSEM_DATA_DIR;
   const projectDir = join(dataDir, projectId);
   const allFiles = await collectFiles(projectDir, projectDir);
   if (allFiles.length === 0) return;

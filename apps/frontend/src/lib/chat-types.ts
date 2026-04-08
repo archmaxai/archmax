@@ -76,3 +76,62 @@ export function getTextContent(segments: ContentSegment[]): string {
     .map((s) => s.content)
     .join("");
 }
+
+export function appendToken(segments: ContentSegment[], content: string): ContentSegment[] {
+  const next = [...segments];
+  const last = next[next.length - 1];
+  if (last?.type === "text") {
+    next[next.length - 1] = { type: "text", content: last.content + content };
+  } else {
+    next.push({ type: "text", content });
+  }
+  return next;
+}
+
+export function appendToolCallStart(segments: ContentSegment[], tc: ToolCallInfo): ContentSegment[] {
+  return [...segments, { type: "tool_call", toolCall: tc }];
+}
+
+export function updateToolCall(
+  segments: ContentSegment[],
+  id: string,
+  update: Partial<ToolCallInfo>,
+): ContentSegment[] {
+  return segments.map((seg) => {
+    if (seg.type === "tool_call" && seg.toolCall.id === id) {
+      return { type: "tool_call", toolCall: { ...seg.toolCall, ...update } };
+    }
+    return seg;
+  });
+}
+
+export function normalizeMessage(msg: ChatMessage): ChatMessage {
+  if (msg.segments?.length) {
+    return {
+      role: msg.role,
+      isStreaming: msg.isStreaming,
+      segments: msg.segments.map((s) =>
+        s.type === "tool_call"
+          ? { type: "tool_call" as const, toolCall: { ...s.toolCall, status: s.toolCall.status ?? ("completed" as const) } }
+          : s,
+      ),
+    };
+  }
+  const raw = msg as unknown as { content?: string; toolCalls?: ToolCallInfo[]; segments?: ContentSegment[] };
+  return {
+    role: msg.role,
+    segments: toSegments(raw.content ?? "", raw.toolCalls, raw.segments),
+    isStreaming: msg.isStreaming,
+  };
+}
+
+export function shouldSyncMessages(
+  prevConversationId: string | null,
+  conversationId: string | null,
+  isStreaming: boolean,
+): boolean {
+  if (prevConversationId === null && conversationId !== null && isStreaming) {
+    return false;
+  }
+  return true;
+}

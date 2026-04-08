@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@semlayer/core/infra/db";
-import { TestAgent } from "@semlayer/core/models/index";
-import { encrypt, decrypt } from "@semlayer/core/infra/crypto";
-import { getEnv } from "@semlayer/core/config/env";
+import { connectDB } from "@archsem/core/infra/db";
+import { TestAgent } from "@archsem/core/models/index";
+import { encrypt, decrypt } from "@archsem/core/infra/crypto";
+import { getEnv } from "@archsem/core/config/env";
 import { AppError } from "../utils/errors";
 
 export function maskApiKey(encryptedKey: string): string {

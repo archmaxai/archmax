@@ -1,0 +1,22 @@
+:root {
+  --sl-color-accent-low: #e0e7ff;
+  --sl-color-accent: #4f46e5;
+  --sl-color-accent-high: #312e81;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #eeeef2;
+  --sl-color-gray-2: #c1c1c9;
+  --sl-color-gray-3: #8b8b96;
+  --sl-color-gray-4: #58585f;
+  --sl-color-gray-5: #383840;
+  --sl-color-gray-6: #25252b;
+  --sl-color-black: #17171c;
+  --sl-font: "Geist Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --sl-font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    monospace;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #1e1b4b;
+  --sl-color-accent: #818cf8;
+  --sl-color-accent-high: #e0e7ff;
+}

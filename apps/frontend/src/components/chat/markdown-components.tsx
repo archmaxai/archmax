@@ -2,7 +2,7 @@ import { useState, type ComponentPropsWithoutRef } from "react";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { cn, Button } from "@semlayer/ui";
+import { cn, Button } from "@archsem/ui";
 import { Check, Copy } from "lucide-react";
 
 const remarkPlugins = [remarkGfm];
@@ -51,16 +51,20 @@ export const markdownComponents: Components = {
     <h4 className="mb-1 mt-2 text-sm font-bold first:mt-0">{children}</h4>
   ),
 
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex max-w-full items-center rounded-full bg-foreground/[0.06] px-2 py-0.5 align-middle no-underline whitespace-normal break-words text-muted-foreground transition-colors hover:bg-foreground/[0.10] hover:text-foreground/90"
-    >
-      <span className="min-w-0 text-xs leading-snug">{children}</span>
-    </a>
-  ),
+  a: ({ children, href }) => {
+    const safeHref =
+      href && /^https?:\/\//i.test(href) ? href : undefined;
+    return (
+      <a
+        href={safeHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex max-w-full items-center rounded-full bg-foreground/[0.06] px-2 py-0.5 align-middle no-underline whitespace-normal break-words text-muted-foreground transition-colors hover:bg-foreground/[0.10] hover:text-foreground/90"
+      >
+        <span className="min-w-0 text-xs leading-snug">{children}</span>
+      </a>
+    );
+  },
 
   blockquote: ({ children }) => (
     <blockquote className="my-2 border-l-2 border-muted-foreground/50 pl-3 italic">

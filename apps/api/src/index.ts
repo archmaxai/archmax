@@ -1,7 +1,7 @@
 import "./env";
 import { serve } from "@hono/node-server";
 import app from "./app";
-import { getEnv } from "@semlayer/core/config/env";
+import { getEnv } from "@archsem/core/config/env";
 import { seedAdmin } from "./lib/seed-admin";
 import { migrateSrcLayout } from "./scripts/migrate-src-layout";
 

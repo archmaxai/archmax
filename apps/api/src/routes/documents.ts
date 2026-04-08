@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { getEnv } from "@semlayer/core/config/env";
-import { DocumentFileService, FileTooLargeError } from "@semlayer/core/services/document-files";
+import { getEnv } from "@archsem/core/config/env";
+import { DocumentFileService, FileTooLargeError } from "@archsem/core/services/document-files";
 import { AppError } from "../utils/errors";
 
 function getDocService(): DocumentFileService {
-  return new DocumentFileService(getEnv().SEMLAYER_DATA_DIR);
+  return new DocumentFileService(getEnv().ARCHSEM_DATA_DIR);
 }
 
 function param(c: { req: { param: (name: string) => string | undefined } }, name: string): string {

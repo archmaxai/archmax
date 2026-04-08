@@ -221,7 +221,7 @@ describe("SemanticModelDigest.overview", () => {
     expect(content).toContain("> Use orders as central table");
   });
 
-  it("renders dataset summary table", () => {
+  it("renders dataset summary table with VIEW column by default", () => {
     const model = makeModel({
       name: "test",
       datasets: [
@@ -235,7 +235,27 @@ describe("SemanticModelDigest.overview", () => {
     });
     const { content } = SemanticModelDigest.overview(model);
     expect(content).toContain("## Datasets (1)");
+    expect(content).toContain("| Dataset | Source | Fields | VIEW | Description |");
+    expect(content).toContain('| orders | shop.public.orders | 2 | `_scope_test."orders"` | Order data |');
+  });
+
+  it("renders dataset summary table without VIEW column when showViewNames is false", () => {
+    const model = makeModel({
+      name: "test",
+      datasets: [
+        makeDataset({
+          name: "orders",
+          source: "shop.public.orders",
+          description: "Order data",
+          fields: [makeField({ name: "id" }), makeField({ name: "total" })],
+        }),
+      ],
+    });
+    const { content } = SemanticModelDigest.overview(model, { showViewNames: false });
+    expect(content).toContain("## Datasets (1)");
+    expect(content).toContain("| Dataset | Source | Fields | Description |");
     expect(content).toContain("| orders | shop.public.orders | 2 | Order data |");
+    expect(content).not.toContain("VIEW");
   });
 
   it("renders relationships as join paths", () => {

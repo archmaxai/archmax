@@ -1,0 +1,84 @@
+---
+title: Configuration
+description: Environment variables and configuration options for archsem.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+archsem is configured through environment variables. Set them in your shell, `.env` file, or Docker Compose config.
+
+## Required Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `BETTER_AUTH_SECRET` | Session encryption secret (min 32 chars) | Generate with `openssl rand -base64 32` |
+| `UI_PASSWORD` | Initial admin password | `changeme` |
+
+## Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MONGODB_URI` | _(embedded)_ | MongoDB connection string. **Optional in Docker** — when omitted, the container starts an embedded MongoDB instance automatically. Required for local development. |
+
+<Aside type="tip">
+When running via Docker without `MONGODB_URI`, an embedded MongoDB stores data at `/app/data/mongodb`. This is suitable for evaluation and small-team use. For production, use an external MongoDB instance or the Docker Compose setup.
+</Aside>
+
+## Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | API server port |
+| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins |
+| `AUTH_BASE_URL` | `http://localhost:PORT` | Public URL for auth callbacks (set in production) |
+
+## Admin Credentials
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UI_USERNAME` | `admin` | Initial admin username (used to seed on first run) |
+| `UI_PASSWORD` | — | Initial admin password |
+
+## Data Directory
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARCHSEM_DATA_DIR` | `/app/data/projects` (Docker) or `data/projects` (local) | Base directory for project data (YAML files) |
+
+Inside the Docker image, all persistent data lives under `/app/data/`:
+
+| Path | Contents | Persistent? |
+|------|----------|-------------|
+| `/app/data/projects/` | Semantic model YAML files | Yes |
+| `/app/data/mongodb/` | Embedded MongoDB data files | Yes |
+| `/tmp/redis/` | Embedded Redis data | No (ephemeral) |
+
+A single volume mount (`-v archsem-data:/app/data`) captures all persistent state. See the [Docker Reference](/reference/docker/) for details.
+
+## MCP Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_RATE_LIMIT_MAX` | `120` | Max requests per IP per 60-second window |
+
+## AI Agent
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API endpoint (OpenRouter, OpenAI, Ollama, etc.) |
+| `AGENT_API_KEY` | — | API key for the agent endpoint |
+| `AGENT_MODEL` | `anthropic/claude-sonnet-4` | Model identifier |
+| `AGENT_TITLE_MODEL` | — | Cheap/fast model for conversation title generation |
+
+## Worker Queue
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | _(embedded)_ | Redis connection URL for BullMQ worker queue. **Optional in Docker** — when omitted, the container starts an embedded Redis instance. Without Redis (local dev), the agent runs in-process. |
+| `WORKER_CONCURRENCY` | `5` | Number of concurrent agent jobs per worker |
+
+## Testing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEST_AGENT_MAX_ITERATIONS` | `100` | Max tool call iterations for playground and batch test agents |

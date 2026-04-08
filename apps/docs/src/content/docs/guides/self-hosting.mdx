@@ -1,0 +1,173 @@
+---
+title: Self-Hosting
+description: Deploy, back up, and maintain your archsem instance.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components";
+
+## Deployment Modes
+
+archsem supports two deployment modes depending on your needs.
+
+### Single Image (Evaluation / Small Teams)
+
+The simplest option — one container, no external dependencies:
+
+```bash
+docker run -d \
+  --name archsem \
+  -p 8080:8080 \
+  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_PASSWORD=changeme \
+  -v archsem-data:/app/data \
+  archsem/archsem:latest
+```
+
+MongoDB and Redis are embedded and start automatically. All persistent data lives under `/app/data`.
+
+**Best for**: evaluation, personal use, small teams (1–5 users).
+
+### Docker Compose (Production)
+
+For production, use separate MongoDB and Redis services for reliability and independent scaling:
+
+```bash
+git clone https://github.com/archmaxai/archsem.git
+cd archsem
+cp .env.example .env
+# Edit .env with your values
+docker compose up -d
+```
+
+The included `docker-compose.yml` runs archsem with dedicated MongoDB 7 and Redis 7 containers.
+
+**Best for**: teams, production workloads, when you need MongoDB backups/replication.
+
+### When to Use External MongoDB
+
+Use the embedded MongoDB when:
+- Evaluating archsem or running a personal instance
+- You don't need database replication or authentication
+- Simplicity matters more than operational flexibility
+
+Switch to external MongoDB when:
+- You need replication for high availability
+- You require database-level authentication
+- You want to use a managed service (MongoDB Atlas, AWS DocumentDB, etc.)
+- You need independent database backups and monitoring
+
+## Data Backup
+
+All persistent state lives under `/app/data/`:
+
+| Path | Contents |
+|------|----------|
+| `/app/data/projects/` | Semantic model YAML files |
+| `/app/data/mongodb/` | Embedded MongoDB data (single-image mode only) |
+
+<Aside type="caution">
+When using Docker Compose with external MongoDB, the MongoDB data lives in its own volume (`mongo-data`), not under `/app/data`. Back up both volumes separately.
+</Aside>
+
+### Backing Up (Single Image)
+
+<Steps>
+
+1. **Stop the container** to ensure data consistency:
+
+   ```bash
+   docker stop archsem
+   ```
+
+2. **Copy the volume** to a backup location:
+
+   ```bash
+   docker run --rm \
+     -v archsem-data:/data \
+     -v $(pwd):/backup \
+     alpine tar czf /backup/archsem-backup-$(date +%Y%m%d).tar.gz -C /data .
+   ```
+
+3. **Restart the container**:
+
+   ```bash
+   docker start archsem
+   ```
+
+</Steps>
+
+### Backing Up (Docker Compose)
+
+```bash
+docker compose stop
+# Back up project data
+docker run --rm -v archsem_archsem-data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/archsem-projects-$(date +%Y%m%d).tar.gz -C /data .
+# Back up MongoDB
+docker run --rm -v archsem_mongo-data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/archsem-mongo-$(date +%Y%m%d).tar.gz -C /data .
+docker compose start
+```
+
+### Restoring
+
+```bash
+docker stop archsem
+docker run --rm \
+  -v archsem-data:/data \
+  -v $(pwd):/backup \
+  alpine sh -c "rm -rf /data/* && tar xzf /backup/archsem-backup-20260408.tar.gz -C /data"
+docker start archsem
+```
+
+## Upgrading
+
+<Steps>
+
+1. **Pull the latest image**:
+
+   ```bash
+   docker pull archsem/archsem:latest
+   ```
+
+2. **Back up your data** (see above)
+
+3. **Recreate the container**:
+
+   ```bash
+   # Single image
+   docker stop archsem && docker rm archsem
+   docker run -d --name archsem -p 8080:8080 \
+     -e BETTER_AUTH_SECRET=your-existing-secret \
+     -e UI_PASSWORD=your-password \
+     -v archsem-data:/app/data \
+     archsem/archsem:latest
+
+   # Docker Compose
+   docker compose pull
+   docker compose up -d
+   ```
+
+</Steps>
+
+<Aside type="tip">
+Keep your `BETTER_AUTH_SECRET` the same across upgrades — changing it invalidates all existing sessions.
+</Aside>
+
+## Resource Recommendations
+
+| Deployment | RAM | Disk | CPU |
+|-----------|-----|------|-----|
+| Single image (small) | 1 GB | 2 GB | 1 vCPU |
+| Single image (medium) | 2 GB | 10 GB | 2 vCPU |
+| Docker Compose (production) | 4 GB total | 20 GB | 2 vCPU |
+
+The AI agent's resource usage depends on your configured model provider (OpenRouter, OpenAI, etc.) — it runs as API calls, not locally.
+
+## Security Considerations
+
+- The embedded MongoDB has **no authentication** and binds to `127.0.0.1` only (container-internal). It is not exposed outside the container.
+- The embedded Redis similarly binds to `127.0.0.1` only.
+- Always set a strong `BETTER_AUTH_SECRET` (at least 32 characters).
+- Change `UI_PASSWORD` from the default `changeme` before exposing to users.
+- Place a reverse proxy (nginx, Caddy, Traefik) with TLS in front of port 8080 for HTTPS.

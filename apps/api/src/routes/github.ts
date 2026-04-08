@@ -1,10 +1,11 @@
+import { createHmac, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { OAuthApp } from "@octokit/oauth-app";
 import { Octokit } from "octokit";
-import { connectDB } from "@semlayer/core/infra/db";
-import { Project } from "@semlayer/core/models/index";
-import { getEnv } from "@semlayer/core/config/env";
-import { encrypt, decrypt } from "@semlayer/core/infra/crypto";
+import { connectDB } from "@archsem/core/infra/db";
+import { Project } from "@archsem/core/models/index";
+import { getEnv } from "@archsem/core/config/env";
+import { encrypt, decrypt } from "@archsem/core/infra/crypto";
 import { AppError } from "../utils/errors";
 
 function getOAuthApp() {
@@ -27,6 +28,41 @@ function param(c: { req: { param: (name: string) => string | undefined } }, name
   return val;
 }
 
+const STATE_TTL_MS = 10 * 60 * 1000;
+
+function signOAuthState(payload: Record<string, string>): string {
+  const nonce = randomBytes(16).toString("hex");
+  const ts = Date.now().toString();
+  const data = JSON.stringify({ ...payload, nonce, ts });
+  const sig = createHmac("sha256", getEnv().BETTER_AUTH_SECRET)
+    .update(data)
+    .digest("hex");
+  return Buffer.from(JSON.stringify({ data, sig })).toString("base64url");
+}
+
+function verifyOAuthState(raw: string): Record<string, string> {
+  let outer: { data: string; sig: string };
+  try {
+    outer = JSON.parse(Buffer.from(raw, "base64url").toString());
+  } catch {
+    throw AppError.badRequest("Invalid state parameter");
+  }
+
+  const expected = createHmac("sha256", getEnv().BETTER_AUTH_SECRET)
+    .update(outer.data)
+    .digest("hex");
+
+  if (expected.length !== outer.sig.length) throw AppError.badRequest("Invalid state signature");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(outer.sig);
+  if (!a.equals(b)) throw AppError.badRequest("Invalid state signature");
+
+  const parsed = JSON.parse(outer.data);
+  const age = Date.now() - Number(parsed.ts);
+  if (age > STATE_TTL_MS) throw AppError.badRequest("OAuth state expired");
+  return parsed;
+}
+
 /**
  * Mounted before auth middleware — handles the GitHub OAuth redirect.
  */
@@ -35,12 +71,9 @@ export const githubCallback = new Hono().get("/callback", async (c) => {
   const stateRaw = c.req.query("state");
   if (!code || !stateRaw) throw AppError.badRequest("Missing code or state");
 
-  let projectId: string;
-  try {
-    projectId = JSON.parse(stateRaw).projectId;
-  } catch {
-    throw AppError.badRequest("Invalid state parameter");
-  }
+  const statePayload = verifyOAuthState(stateRaw);
+  const projectId = statePayload.projectId;
+  if (!projectId) throw AppError.badRequest("Missing projectId in state");
 
   const oauthApp = getOAuthApp();
   const { authentication } = await oauthApp.createToken({ code });
@@ -82,7 +115,7 @@ const app = new Hono()
     const origin = new URL(c.req.url).origin;
     const { url } = oauthApp.getWebFlowAuthorizationUrl({
       scopes: ["repo"],
-      state: JSON.stringify({ projectId }),
+      state: signOAuthState({ projectId }),
       redirectUrl: `${origin}/api/github/callback`,
     });
 

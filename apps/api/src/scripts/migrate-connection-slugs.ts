@@ -1,5 +1,5 @@
-import { connectDB } from "@semlayer/core/infra/db";
-import { Connection, slugifyConnectionName } from "@semlayer/core/models/index";
+import { connectDB } from "@archsem/core/infra/db";
+import { Connection, slugifyConnectionName } from "@archsem/core/models/index";
 
 async function migrate() {
   await connectDB();

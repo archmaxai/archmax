@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ListOrdered, FolderPen, Github, Loader2 } from "lucide-react";
-import { Label, Card, Input, Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@semlayer/ui";
+import { ListOrdered, FolderPen, Github, Loader2, Trash2 } from "lucide-react";
+import {
+  Label, Card, Input, Button,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@archsem/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 
@@ -150,22 +154,20 @@ function SettingsPage() {
                     The project name and URL-safe slug used in MCP endpoints.
                   </p>
                 </div>
-                <div className="flex flex-col gap-3">
+                <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+                  <Label htmlFor="project-title" className="text-sm">
+                    Name
+                  </Label>
+                  <Input
+                    id="project-title"
+                    value={titleInput}
+                    disabled={saveMutation.isPending}
+                    onChange={(e) => handleTitleChange(e.target.value)}
+                  />
+                  <Label htmlFor="project-slug" className="text-sm">
+                    Slug
+                  </Label>
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="project-title" className="text-sm">
-                      Name
-                    </Label>
-                    <Input
-                      id="project-title"
-                      value={titleInput}
-                      disabled={saveMutation.isPending}
-                      onChange={(e) => handleTitleChange(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="project-slug" className="text-sm">
-                      Slug
-                    </Label>
                     <Input
                       id="project-slug"
                       value={slugInput}
@@ -182,36 +184,42 @@ function SettingsPage() {
           </Card>
 
           <Card className="p-6">
-            <div className="flex items-start justify-between gap-6">
-              <div className="flex gap-3">
-                <ListOrdered className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+            <div className="flex gap-3">
+              <ListOrdered className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <div className="flex flex-1 flex-col gap-4">
                 <div className="content-tight">
-                  <Label htmlFor="mcp-page-size" className="text-base font-medium">
-                    MCP Items Per Page
+                  <Label className="text-base font-medium">
+                    MCP Configuration
                   </Label>
                   <p className="text-muted-foreground text-sm">
                     Number of items returned per page in MCP tool responses
                     (semantic model overviews and dataset fields). Range: 10–200.
                   </p>
                 </div>
+                <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+                  <Label htmlFor="mcp-page-size" className="text-sm">
+                    Items per page
+                  </Label>
+                  <Input
+                    id="mcp-page-size"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    className="w-20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    value={pageSizeInput}
+                    disabled={saveMutation.isPending}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "" || /^\d+$/.test(v)) setPageSizeInput(v);
+                    }}
+                  />
+                </div>
               </div>
-              <Input
-                id="mcp-page-size"
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                className="w-20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                value={pageSizeInput}
-                disabled={saveMutation.isPending}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "" || /^\d+$/.test(v)) setPageSizeInput(v);
-                }}
-              />
             </div>
           </Card>
 
           <GitHubCard />
+          <DeleteProjectCard />
         </div>
       </div>
     </div>
@@ -307,7 +315,7 @@ function GitHubCard() {
                 Connected as <span className="font-medium">{gh.owner}</span>
               </p>
 
-              <div className="flex flex-col gap-1.5">
+              <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
                 <Label htmlFor="github-repo" className="text-sm">Repository</Label>
                 <Select
                   value={gh.repo || undefined}
@@ -324,9 +332,6 @@ function GitHubCard() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="github-branch" className="text-sm">Branch</Label>
                 <Input
                   id="github-branch"
@@ -359,5 +364,121 @@ function GitHubCard() {
         </div>
       </div>
     </Card>
+  );
+}
+
+function DeleteProjectCard() {
+  const { project } = useProject();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [confirmInput, setConfirmInput] = useState("");
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.api.projects[":id"].$delete({
+        param: { id: project._id },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(
+          (data as { message?: string } | null)?.message ??
+            "Failed to delete project",
+        );
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project deleted");
+      navigate({ to: "/" });
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const canConfirm = confirmInput === project.title;
+
+  return (
+    <>
+      <Card className="border-destructive/40 p-6">
+        <div className="flex gap-3">
+          <Trash2 className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+          <div className="flex flex-1 flex-col gap-3">
+            <div className="content-tight">
+              <Label className="text-base font-medium">Danger Zone</Label>
+              <p className="text-muted-foreground text-sm">
+                Permanently delete this project and all its connections, tokens,
+                and semantic models.
+              </p>
+            </div>
+            <div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  setConfirmInput("");
+                  setOpen(true);
+                }}
+              >
+                Delete project
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Dialog open={open} onOpenChange={(v) => { if (!deleteMutation.isPending) setOpen(v); }}>
+        <DialogContent showCloseButton={!deleteMutation.isPending}>
+          <DialogHeader>
+            <DialogTitle>Delete project</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. All connections, MCP tokens, and
+              semantic models belonging to{" "}
+              <span className="font-medium text-foreground">{project.title}</span>{" "}
+              will be permanently removed.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="confirm-delete" className="text-sm">
+              Type <span className="font-medium">{project.title}</span> to confirm
+            </Label>
+            <Input
+              id="confirm-delete"
+              value={confirmInput}
+              disabled={deleteMutation.isPending}
+              onChange={(e) => setConfirmInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canConfirm && !deleteMutation.isPending) {
+                  deleteMutation.mutate();
+                }
+              }}
+              autoComplete="off"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!canConfirm || deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate()}
+            >
+              {deleteMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Delete project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

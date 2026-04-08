@@ -4,7 +4,7 @@ import { softDeletePlugin, type SoftDeleteFields, type SoftDeleteMethods } from 
 export interface ITestCase {
   title: string;
   project: Types.ObjectId;
-  testAgent: Types.ObjectId;
+  testAgent?: Types.ObjectId | null;
   semanticModel: string;
   inputMessage: string;
   expectedFacts: string[];
@@ -20,7 +20,7 @@ const TestCaseSchema = new Schema<ITestCaseDocument>(
   {
     title: { type: String, required: true },
     project: { type: Schema.Types.ObjectId, ref: "Project", required: true },
-    testAgent: { type: Schema.Types.ObjectId, ref: "TestAgent", required: true },
+    testAgent: { type: Schema.Types.ObjectId, ref: "TestAgent", default: null },
     semanticModel: { type: String, required: true },
     inputMessage: { type: String, required: true },
     expectedFacts: { type: [String], required: true, validate: [(v: string[]) => v.length >= 1, "At least one expected fact is required"] },

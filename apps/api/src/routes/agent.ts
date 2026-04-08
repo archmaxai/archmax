@@ -3,31 +3,25 @@ import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { connectDB } from "@semlayer/core/infra/db";
-import { Conversation } from "@semlayer/core/models/index";
-import { createSemlayerAgent } from "@semlayer/core/services/agent";
-import { isRedisConfigured, publishCancelSignal } from "@semlayer/core/infra/redis";
-import { enqueueAgentJob } from "@semlayer/core/queue/producer";
+import { connectDB } from "@archsem/core/infra/db";
+import { Conversation } from "@archsem/core/models/index";
+import { createSemlayerAgent } from "@archsem/core/services/agent";
+import { processAgentStream } from "@archsem/core/services/agent-stream";
+import { isRedisConfigured, publishCancelSignal } from "@archsem/core/infra/redis";
+import { enqueueAgentJob } from "@archsem/core/queue/producer";
 import {
   subscribeToStream,
   getBufferedStreamEvents,
   isStreamActive,
   type StreamEvent,
-} from "@semlayer/core/streaming/stream-bridge";
+} from "@archsem/core/streaming/stream-bridge";
 import { generateTitle, truncateTitle } from "../services/title-agent";
-import type { IMessage, IContentSegment, IToolCallRecord } from "@semlayer/core/models/Conversation";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
 const chatSchema = z.object({
   message: z.string().min(1),
   conversationId: z.string().optional(),
 });
-
-const RESULT_TRUNCATE = 500;
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "…" : s;
-}
 
 const app = new Hono()
   .post("/chat", zValidator("json", chatSchema), async (c) => {
@@ -150,106 +144,19 @@ const app = new Hono()
             : new AIMessage(m.content),
         );
 
-      let fullResponse = "";
-      let textBuffer = "";
-      const collectedToolCalls: IToolCallRecord[] = [];
-      const orderedSegments: IContentSegment[] = [];
-
-      const flushText = () => {
-        if (textBuffer) {
-          orderedSegments.push({ type: "text", content: textBuffer });
-          textBuffer = "";
-        }
-      };
-
+      let result;
       try {
         const events = agent.streamEvents(
           { messages: inputMessages },
           { version: "v2" },
         );
-
-        for await (const event of events) {
-          if (event.event === "on_chat_model_stream") {
-            const chunk = event.data?.chunk;
-            if (!chunk) continue;
-
-            const content = chunk.content;
-            if (typeof content === "string" && content) {
-              fullResponse += content;
-              textBuffer += content;
-              await stream.writeSSE({
-                event: "token",
-                data: JSON.stringify({ content }),
-              });
-            } else if (Array.isArray(content)) {
-              for (const block of content) {
-                if (
-                  block.type === "text" &&
-                  typeof block.text === "string" &&
-                  block.text
-                ) {
-                  fullResponse += block.text;
-                  textBuffer += block.text;
-                  await stream.writeSSE({
-                    event: "token",
-                    data: JSON.stringify({ content: block.text }),
-                  });
-                }
-              }
-            }
-          } else if (event.event === "on_tool_start") {
-            flushText();
-            const inputData = event.data?.input;
-            const args =
-              typeof inputData === "string"
-                ? inputData
-                : JSON.stringify(inputData ?? {});
-            const truncatedArgs = truncate(args, RESULT_TRUNCATE);
-            const tc: IToolCallRecord = {
-              id: event.run_id,
-              name: event.name,
-              args: truncatedArgs,
-            };
-            collectedToolCalls.push(tc);
-            orderedSegments.push({ type: "tool_call", toolCall: tc });
-            await stream.writeSSE({
-              event: "tool_call_start",
-              data: JSON.stringify({
-                id: event.run_id,
-                name: event.name,
-                args: truncatedArgs,
-              }),
-            });
-          } else if (event.event === "on_tool_end") {
-            const output = event.data?.output;
-            const result =
-              typeof output === "string"
-                ? output
-                : typeof output?.content === "string"
-                  ? output.content
-                  : JSON.stringify(output ?? {});
-            const truncatedResult = truncate(result, RESULT_TRUNCATE);
-            const existing = collectedToolCalls.find((tc) => tc.id === event.run_id);
-            if (existing) {
-              existing.result = truncatedResult;
-              existing.status = "completed";
-            }
-            await stream.writeSSE({
-              event: "tool_call_end",
-              data: JSON.stringify({
-                id: event.run_id,
-                name: event.name,
-                result: truncatedResult,
-              }),
-            });
-          }
-        }
+        result = await processAgentStream(
+          events,
+          (event, data) => stream.writeSSE({ event, data }),
+        );
       } catch (err) {
         console.error("[agent] Error during streaming:", err);
-        if (!fullResponse) {
-          fullResponse =
-            "The agent encountered an error processing your request.";
-        }
+        result = result ?? { fullResponse: "The agent encountered an error processing your request.", toolCalls: [], segments: [] };
         await stream.writeSSE({
           event: "error",
           data: JSON.stringify({
@@ -258,13 +165,11 @@ const app = new Hono()
         });
       }
 
-      flushText();
-
       conv.messages.push({
         role: "assistant",
-        content: fullResponse,
-        toolCalls: collectedToolCalls.length ? collectedToolCalls : undefined,
-        segments: orderedSegments.length ? orderedSegments : undefined,
+        content: result.fullResponse,
+        toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
+        segments: result.segments.length ? result.segments : undefined,
         timestamp: new Date(),
       });
       await conv.save();
@@ -298,12 +203,23 @@ const app = new Hono()
     return c.json({ ok: true });
   })
   .get("/stream-status/:conversationId", async (c) => {
+    const projectId = c.req.param("projectId")!;
     const conversationId = c.req.param("conversationId");
+
+    await connectDB();
+    const conv = await Conversation.findOne({ _id: conversationId, project: projectId }).select("_id").lean();
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+
     const active = await isStreamActive(conversationId);
     return c.json({ isStreaming: active });
   })
   .get("/subscribe/:conversationId", async (c) => {
+    const projectId = c.req.param("projectId")!;
     const conversationId = c.req.param("conversationId");
+
+    await connectDB();
+    const conv = await Conversation.findOne({ _id: conversationId, project: projectId }).select("_id").lean();
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
 
     const active = await isStreamActive(conversationId);
     if (!active) {

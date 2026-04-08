@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Button, Input, Label } from "@semlayer/ui";
+import { Button, Input, Label } from "@archsem/ui";
 import { authClient } from "@/lib/auth-client";
 import { GradientBackground } from "@/components/ui/gradient-background";
 
@@ -45,7 +45,7 @@ function LoginPage() {
 
       <div className="relative z-10 w-full max-w-sm rounded-2xl bg-card/80 backdrop-blur-xl p-8 shadow-popup">
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">Semantic Layer</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">archsem</h1>
           <p className="text-muted-foreground text-sm mt-1">Sign in to the admin panel</p>
         </div>
         <form onSubmit={handleSubmit} className="content-group">

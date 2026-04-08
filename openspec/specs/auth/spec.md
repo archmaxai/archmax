@@ -2,9 +2,7 @@
 
 ## Purpose
 Authentication and session management for the admin UI, using Better Auth with username/password login, session cookies, and route guarding on both server and client.
-
 ## Requirements
-
 ### Requirement: Better Auth Integration
 
 The API SHALL use Better Auth with the `username` plugin and MongoDB adapter for authentication. All Better Auth routes SHALL be mounted at `/api/auth/**` and delegated to the Better Auth handler. The `BETTER_AUTH_SECRET` environment variable SHALL be used for signing sessions.
@@ -17,12 +15,12 @@ The API SHALL use Better Auth with the `username` plugin and MongoDB adapter for
 
 ### Requirement: Admin User Seeding
 
-The system SHALL seed an admin user at startup using the `UI_USERNAME` and `UI_PASSWORD` environment variables. The admin user is created with email `admin@semlayer.local` and a hashed password credential. If the user already exists, seeding is skipped.
+The system SHALL seed an admin user at startup using the `UI_USERNAME` and `UI_PASSWORD` environment variables. The admin user is created with email `admin@archsem.local` and a hashed password credential. If the user already exists, seeding is skipped.
 
 #### Scenario: First startup seeds admin
 
 - **WHEN** the API starts and no admin user exists
-- **THEN** a user with `UI_USERNAME` as name/username and `admin@semlayer.local` as email is created
+- **THEN** a user with `UI_USERNAME` as name/username and `admin@archsem.local` as email is created
 - **AND** a hashed credential is created from `UI_PASSWORD`
 
 #### Scenario: Subsequent startup skips seeding
@@ -87,3 +85,4 @@ The user profile menu in the sidebar SHALL include a sign-out option. Clicking i
 - **WHEN** the user clicks "Sign out" in the profile dropdown
 - **THEN** the session is terminated via Better Auth
 - **AND** the browser is redirected to `/login`
+

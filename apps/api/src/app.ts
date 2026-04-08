@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "hono/logger";
-import { getEnv } from "@semlayer/core/config/env";
+import { getEnv } from "@archsem/core/config/env";
 import { corsMiddleware } from "./middleware/cors";
 import { AppError } from "./utils/errors";
 import { auth } from "./lib/auth";
@@ -21,7 +21,8 @@ import testAgents from "./routes/test-agents";
 import testCases from "./routes/test-cases";
 import testRuns from "./routes/test-runs";
 import playground from "./routes/playground";
-import semlayerMcp from "./mcp/semlayer-route";
+import improvements from "./routes/improvements";
+import archsemMcp from "./mcp/archsem-route";
 
 const app = new Hono()
   .use("*", logger())
@@ -39,8 +40,8 @@ const app = new Hono()
   })
   .on(["POST", "GET"], "/api/auth/**", (c) => auth.handler(c.req.raw))
   .route("/api/github", githubCallback)
-  .route("/mcp/:slug/mcp", semlayerMcp)
-  .route("/mcp/:slug/test/mcp", semlayerMcp)
+  .route("/mcp/:slug/mcp", archsemMcp)
+  .route("/mcp/:slug/test/mcp", archsemMcp)
   .use("/api/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return c.json({ error: "Unauthorized" }, 401);
@@ -60,7 +61,8 @@ const app = new Hono()
   .route("/api/projects/:projectId/test-agents", testAgents)
   .route("/api/projects/:projectId/test-cases", testCases)
   .route("/api/projects/:projectId/test-runs", testRuns)
-  .route("/api/projects/:projectId/playground", playground);
+  .route("/api/projects/:projectId/playground", playground)
+  .route("/api/projects/:projectId/improvements", improvements);
 
 app.onError((err, c) => {
   if (err instanceof AppError) {

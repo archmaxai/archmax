@@ -1,0 +1,87 @@
+---
+title: MCP Tools Reference
+description: Complete reference for all MCP tools exposed by archsem.
+---
+
+All tools are available through the project MCP endpoint at `POST /mcp/<project-slug>/mcp`. Tools operate within the scope of the project identified by the URL slug.
+
+## list_connections
+
+List all active database connections for the project.
+
+**Parameters:** None
+
+**Returns:** A list of connections with name, slug, type, and active status.
+
+---
+
+## list_semantic_models
+
+List semantic models the authenticated token has access to.
+
+**Parameters:** None
+
+**Returns:** A list of model names and descriptions, filtered by the token's scopes. Reads from published (assembled) YAML files.
+
+---
+
+## get_semantic_model_overview
+
+Get a compact overview of a semantic model including its datasets, relationships, and metrics.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `modelName` | string | Yes | Name of the semantic model |
+| `scope` | string | No | Filter to `"datasets"`, `"relationships"`, or `"metrics"` |
+| `page` | number | No | Page number for paginated results |
+
+**Returns:** Markdown-formatted overview. Each dataset row includes its corresponding `_scope_<modelName>."<datasetName>"` VIEW name for use in queries.
+
+---
+
+## get_dataset_fields
+
+Get fields for one or more datasets with types, expressions, and metadata.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `modelName` | string | Yes | Name of the semantic model |
+| `datasetNames` | string[] | Yes | Dataset names (up to 10) |
+| `page` | number | No | Page number for field pagination (single dataset only) |
+
+**Returns:** Compact markdown lists of fields with data types, expressions, dimension info, and AI context.
+
+---
+
+## execute_query
+
+Run a read-only SQL query scoped to a semantic model's VIEWs.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `modelName` | string | Yes | Semantic model to query against |
+| `sql` | string | Yes | SQL query using `_scope_<modelName>."<dataset>"` table references. Supports `$1`, `$2` positional placeholders. |
+| `params` | any[] | No | Values for positional placeholders |
+
+**Returns:** JSON with `columns` and `rows`. Results capped at 1,000 rows (includes `truncated: true` flag when exceeded). 30-second timeout.
+
+### Validation Rules
+
+- Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
+- Multi-statement queries rejected
+- Raw catalog references (e.g., `shopify.public.orders`) rejected
+- Cross-model scope references (e.g., `_scope_other."table"`) rejected
+- Only `_scope_<modelName>.*` references for the requested model are permitted
+
+### Security Hardening
+
+Each query runs in a DuckDB connection with:
+- `enable_external_access = false` — no file reads, network access, or COPY operations
+- `threads = 2`, `memory_limit = '512MB'` — resource limits
+- `lock_configuration = true` — prevents setting changes via injected SQL

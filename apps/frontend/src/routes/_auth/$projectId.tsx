@@ -28,7 +28,7 @@ function ProjectLayout() {
 
   useEffect(() => {
     if (project) {
-      localStorage.setItem("semlayer-last-project", project._id);
+      localStorage.setItem("archsem-last-project", project._id);
     }
   }, [project]);
 

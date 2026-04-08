@@ -38,7 +38,7 @@ export function validateScopedSQL(sql: string, catalogSlugs: string[], modelName
   }
 
   const escapedModel = modelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const crossScopePattern = new RegExp(`\\b_scope_(?!${escapedModel}\\b)\\w+\\.`, "i");
+  const crossScopePattern = new RegExp(`\\b_scope_(?!${escapedModel}\\b)[\\w.-]+\\.`, "i");
   if (crossScopePattern.test(sql)) {
     return `Cross-model scope access is not allowed. Only _scope_${modelName}.* VIEWs are accessible for this query.`;
   }

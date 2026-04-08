@@ -1,4 +1,3 @@
-export * from "./shared";
 export * from "./Project";
 export * from "./Connection";
 export * from "./Conversation";
@@ -8,3 +7,4 @@ export * from "./PublishEvent";
 export * from "./TestAgent";
 export * from "./TestCase";
 export * from "./TestRun";
+export * from "./Improvement";

@@ -1,18 +1,18 @@
 /**
- * Migrates all collections from the "test" database to "archmax".
+ * Migrates all collections from the "archmax" database to "archsem".
  *
  * Run: npx tsx apps/api/src/scripts/migrate-db-rename.ts
  *
- * The script copies every document from each collection in "test" into
- * "archmax", skipping collections that already have data in the target
+ * The script copies every document from each collection in the source into
+ * the target, skipping collections that already have data in the target
  * to avoid duplicating on re-run. After a successful copy the source
  * collection is dropped.
  */
 import "../env";
 import { MongoClient } from "mongodb";
 
-const SOURCE_DB = "test";
-const TARGET_DB = "archmax";
+const SOURCE_DB = "archmax";
+const TARGET_DB = "archsem";
 
 function getBaseUri(): string {
   const uri = process.env.MONGODB_URI;

@@ -4,7 +4,7 @@ import { encrypt } from "../infra/crypto";
 const mockEnv: Record<string, string | undefined> = {
   ENCRYPTION_KEY: "test-encryption-key-32-chars-ok!",
   TEST_AGENT_MAX_ITERATIONS: "100",
-  SEMLAYER_DATA_DIR: "/tmp/test",
+  ARCHSEM_DATA_DIR: "/tmp/test",
 };
 
 vi.mock("../config/env", () => ({

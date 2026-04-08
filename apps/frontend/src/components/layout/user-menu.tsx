@@ -11,8 +11,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-} from "@semlayer/ui";
-import { Avatar, AvatarFallback } from "@semlayer/ui";
+} from "@archsem/ui";
+import { Avatar, AvatarFallback } from "@archsem/ui";
 import { authClient } from "@/lib/auth-client";
 import { useTheme, type Theme } from "@/lib/use-theme";
 

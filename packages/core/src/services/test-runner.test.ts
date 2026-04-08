@@ -1,14 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
+import { createMockLlm } from "../test-utils";
 
-vi.mock("../infra/db", () => ({
-  connectDB: vi.fn(),
-}));
-
+vi.mock("../infra/db", () => ({ connectDB: vi.fn() }));
 vi.mock("../models/index", () => ({
   TestRun: { updateOne: vi.fn(), findById: vi.fn() },
   TestAgent: { findById: vi.fn() },
 }));
-
 vi.mock("./playground-agent", () => ({
   createPlaygroundAgent: vi.fn(),
   getTestAgentRecursionLimit: vi.fn(() => 100),
@@ -16,14 +13,6 @@ vi.mock("./playground-agent", () => ({
 }));
 
 import { truncate, evaluateFacts } from "./test-runner";
-
-function mockLlm(response: { content: string | unknown[] } | Error) {
-  return {
-    invoke: response instanceof Error
-      ? vi.fn().mockRejectedValue(response)
-      : vi.fn().mockResolvedValue(response),
-  } as any;
-}
 
 describe("truncate", () => {
   it("returns string unchanged when shorter than max", () => {
@@ -55,7 +44,7 @@ describe("evaluateFacts", () => {
       { fact: "Revenue is 1.65 MEUR", passed: true, reasoning: "The response mentions 1.65M EUR" },
       { fact: "Profit margin is 12%", passed: false, reasoning: "No mention of profit margin" },
     ];
-    const llm = mockLlm({ content: JSON.stringify(factResults) });
+    const llm = createMockLlm({ content: JSON.stringify(factResults) });
 
     const result = await evaluateFacts(
       "The total revenue is 1.65 million EUR.",
@@ -70,7 +59,7 @@ describe("evaluateFacts", () => {
 
   it("extracts JSON array from response with surrounding text", async () => {
     const factResults = [{ fact: "Revenue is 100", passed: true, reasoning: "Match" }];
-    const llm = mockLlm({
+    const llm = createMockLlm({
       content: `Here is my evaluation:\n${JSON.stringify(factResults)}\nDone.`,
     });
 
@@ -80,7 +69,7 @@ describe("evaluateFacts", () => {
   });
 
   it("returns all failed when LLM returns non-JSON content", async () => {
-    const llm = mockLlm({ content: "I cannot evaluate these facts." });
+    const llm = createMockLlm({ content: "I cannot evaluate these facts." });
 
     const result = await evaluateFacts("response", ["fact1", "fact2"], llm);
     expect(result).toHaveLength(2);
@@ -89,7 +78,7 @@ describe("evaluateFacts", () => {
   });
 
   it("returns all failed when LLM returns non-string content", async () => {
-    const llm = mockLlm({ content: [{ type: "text", text: "..." }] as unknown as string });
+    const llm = createMockLlm({ content: [{ type: "text", text: "..." }] as unknown as string });
 
     const result = await evaluateFacts("response", ["fact1"], llm);
     expect(result).toHaveLength(1);
@@ -97,7 +86,7 @@ describe("evaluateFacts", () => {
   });
 
   it("returns all failed when LLM throws an error", async () => {
-    const llm = mockLlm(new Error("API timeout"));
+    const llm = createMockLlm(new Error("API timeout"));
 
     const result = await evaluateFacts("response", ["fact1", "fact2", "fact3"], llm);
     expect(result).toHaveLength(3);
@@ -105,7 +94,7 @@ describe("evaluateFacts", () => {
   });
 
   it("returns all failed when LLM returns empty string", async () => {
-    const llm = mockLlm({ content: "" });
+    const llm = createMockLlm({ content: "" });
 
     const result = await evaluateFacts("response", ["fact1"], llm);
     expect(result).toHaveLength(1);
@@ -113,7 +102,7 @@ describe("evaluateFacts", () => {
   });
 
   it("handles LLM response with malformed JSON", async () => {
-    const llm = mockLlm({ content: '[{"fact": "f1", "passed": true, broken' });
+    const llm = createMockLlm({ content: '[{"fact": "f1", "passed": true, broken' });
 
     const result = await evaluateFacts("response", ["f1"], llm);
     expect(result).toHaveLength(1);

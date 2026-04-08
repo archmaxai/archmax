@@ -1,8 +1,8 @@
 import { UnrecoverableError, type Job } from "bullmq";
-import { connectDB } from "@semlayer/core/infra/db";
-import { TestRun } from "@semlayer/core/models/index";
-import type { TestRunJobData, TestRunJobResult } from "@semlayer/core/queue/types";
-import { processTestCase } from "@semlayer/core/services/test-runner";
+import { connectDB } from "@archsem/core/infra/db";
+import { TestRun } from "@archsem/core/models/index";
+import type { TestRunJobData, TestRunJobResult } from "@archsem/core/queue/types";
+import { processTestCase } from "@archsem/core/services/test-runner";
 
 export async function processTestRunJob(
   job: Job<TestRunJobData, TestRunJobResult>,

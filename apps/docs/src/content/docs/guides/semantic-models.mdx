@@ -1,0 +1,111 @@
+---
+title: Semantic Models
+description: How to create and manage semantic models that describe your database schema.
+---
+
+Semantic models are YAML files that describe your database tables as datasets with typed fields, relationships, and metrics. They follow the [Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI) spec and use DuckDB SQL syntax for expressions.
+
+## File Structure
+
+Each project stores its semantic models under `<ARCHSEM_DATA_DIR>/<projectId>/src/`. A model consists of a root file and per-dataset files:
+
+```
+src/
+├── ecommerce.yaml           # Root file: name, description, relationships, metrics
+└── ecommerce/
+    ├── orders.yaml           # Dataset: orders table
+    ├── customers.yaml        # Dataset: customers table
+    └── products.yaml         # Dataset: products table
+```
+
+## Root File
+
+The root YAML file contains model-level metadata:
+
+```yaml
+name: ecommerce
+description: E-commerce data model for order analytics
+ai_context:
+  instructions: Use this model for revenue and order analysis
+  synonyms:
+    - sales model
+    - shop data
+relationships:
+  - name: order_customer
+    from_model: orders
+    from_columns: [customer_id]
+    to_model: customers
+    to_columns: [customer_id]
+    ai_context: Links orders to the customer who placed them
+metrics:
+  - name: total_revenue
+    description: Sum of all order amounts
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "SUM(orders.total_amount)"
+    ai_context: Total revenue across all orders
+```
+
+## Dataset Files
+
+Each dataset maps to a database table or view:
+
+```yaml
+name: orders
+source: shopify.public.orders
+primary_key: [order_id]
+description: Customer orders with line items and totals
+ai_context:
+  instructions: Each row is one order. Use total_amount for revenue calculations.
+fields:
+  - name: order_id
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "order_id"
+    custom_extensions:
+      - vendor_name: COMMON
+        data:
+          data_type: INTEGER
+  - name: total_amount
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "total_amount"
+    custom_extensions:
+      - vendor_name: COMMON
+        data:
+          data_type: DECIMAL
+  - name: created_at
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: "created_at"
+    dimension:
+      is_time: true
+    custom_extensions:
+      - vendor_name: COMMON
+        data:
+          data_type: TIMESTAMP
+```
+
+## AI Context
+
+Every entity (model, dataset, field, relationship, metric) supports `ai_context` — either a plain string or a structured object with `instructions`, `synonyms`, and `examples`. This metadata is surfaced to AI agents through MCP tools, helping them understand what the data means and how to use it.
+
+## AI-Assisted Builder
+
+The admin UI includes an AI agent that can build semantic models by:
+
+1. **Schema discovery** — listing tables and columns from your connections
+2. **Field mapping** — creating typed fields with correct SQL expressions
+3. **Enum detection** — finding columns with limited distinct values
+4. **Relationship inference** — detecting foreign keys and join paths
+5. **Metric definition** — suggesting common aggregations
+
+You can also create and edit models manually through the YAML files or the admin UI editor.
+
+## Publishing
+
+After editing a model, click **Publish** to make it available to MCP clients. Publishing assembles the split source files (`src/`) into optimized single-file YAMLs in the `build/` directory. MCP tools in production always read from the published build.

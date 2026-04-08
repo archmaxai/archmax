@@ -53,6 +53,54 @@ Return ONLY a JSON array with one object per fact:
   }));
 }
 
+function extractMessages(messages: any[]): { agentResponse: string; toolCalls: IToolCallRecord[] } {
+  let agentResponse = "";
+  const toolCalls: IToolCallRecord[] = [];
+  const argsById = new Map<string, { name: string; args: string }>();
+
+  for (const msg of messages) {
+    if (msg._getType() === "ai") {
+      const content = msg.content;
+      if (typeof content === "string") agentResponse += content;
+      else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (typeof block === "string") agentResponse += block;
+          else if (block.type === "text") agentResponse += block.text;
+        }
+      }
+      const aiToolCalls = (msg as any).tool_calls as
+        | { id?: string; name?: string; args?: Record<string, unknown> }[]
+        | undefined;
+      if (aiToolCalls) {
+        for (const tc of aiToolCalls) {
+          if (tc.id) {
+            argsById.set(tc.id, {
+              name: tc.name || "unknown",
+              args: truncate(JSON.stringify(tc.args ?? {}), RESULT_TRUNCATE),
+            });
+          }
+        }
+      }
+    }
+    if (msg._getType() === "tool") {
+      const callId = (msg as any).tool_call_id || "";
+      const saved = argsById.get(callId);
+      toolCalls.push({
+        id: callId,
+        name: saved?.name || (msg as any).name || "unknown",
+        args: saved?.args || "",
+        result: truncate(
+          typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
+          RESULT_TRUNCATE,
+        ),
+        status: "completed",
+      });
+    }
+  }
+
+  return { agentResponse, toolCalls };
+}
+
 export async function processTestCase(
   testRunId: string,
   caseIndex: number,
@@ -71,45 +119,37 @@ export async function processTestCase(
   );
 
   try {
-    const agent = await createPlaygroundAgent(testAgentId);
+    const agentOpts: { maxToolCalls?: number } = {};
+    if (maxToolCalls) agentOpts.maxToolCalls = maxToolCalls;
 
-    const defaultLimit = getTestAgentRecursionLimit();
-    const recursionLimit = maxToolCalls
-      ? Math.min(maxToolCalls * 2 + 2, defaultLimit)
-      : defaultLimit;
+    const agent = await createPlaygroundAgent(testAgentId, agentOpts);
+    const recursionLimit = getTestAgentRecursionLimit();
 
-    const result = await agent.invoke(
-      { messages: [new HumanMessage(inputMessage)] },
-      { recursionLimit },
-    );
+    let lastState: any = null;
+    let streamError: Error | null = null;
 
-    let agentResponse = "";
-    const toolCalls: IToolCallRecord[] = [];
-
-    const messages = result.messages || [];
-    for (const msg of messages) {
-      if (msg._getType() === "ai") {
-        const content = msg.content;
-        if (typeof content === "string") agentResponse += content;
-        else if (Array.isArray(content)) {
-          for (const block of content) {
-            if (typeof block === "string") agentResponse += block;
-            else if (block.type === "text") agentResponse += block.text;
-          }
-        }
+    try {
+      const stream = await agent.stream(
+        { messages: [new HumanMessage(inputMessage)] },
+        { recursionLimit, streamMode: "values" as const },
+      );
+      for await (const state of stream) {
+        lastState = state;
       }
-      if (msg._getType() === "tool") {
-        toolCalls.push({
-          id: (msg as any).tool_call_id || "",
-          name: (msg as any).name || "unknown",
-          args: "",
-          result: truncate(typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content), RESULT_TRUNCATE),
-          status: "completed",
-        });
-      }
+    } catch (err) {
+      streamError = err instanceof Error ? err : new Error(String(err));
     }
 
-    if (maxToolCalls && toolCalls.length > maxToolCalls) {
+    const { agentResponse, toolCalls } = extractMessages(lastState?.messages || []);
+
+    if (streamError) {
+      const isRecursionError = /recursion limit/i.test(streamError.message);
+      const errorMessage = isRecursionError && maxToolCalls
+        ? `Exceeded max tool calls (${maxToolCalls})`
+        : isRecursionError
+          ? `Agent exceeded the maximum number of iterations (${getTestAgentRecursionLimit()}). The model may be stuck in a loop — try simplifying the input, adjusting the system prompt, or increasing TEST_AGENT_MAX_ITERATIONS.`
+          : streamError.message;
+
       await TestRun.updateOne(
         { _id: testRunId },
         {
@@ -117,7 +157,7 @@ export async function processTestCase(
             [`cases.${caseIndex}.status`]: "error",
             [`cases.${caseIndex}.agentResponse`]: agentResponse,
             [`cases.${caseIndex}.toolCalls`]: toolCalls,
-            [`cases.${caseIndex}.errorMessage`]: `Exceeded max tool calls (${maxToolCalls})`,
+            [`cases.${caseIndex}.errorMessage`]: errorMessage,
             [`cases.${caseIndex}.durationMs`]: Date.now() - start,
           },
         },
@@ -152,18 +192,12 @@ export async function processTestCase(
     );
   } catch (err) {
     console.error(`[test-runner] Case ${caseIndex} error:`, err);
-    const isRecursionError = err instanceof Error && /recursion limit/i.test(err.message);
-    const errorMessage = isRecursionError && maxToolCalls
-      ? `Exceeded max tool calls (${maxToolCalls})`
-      : isRecursionError
-        ? `Agent exceeded the maximum number of iterations (${getTestAgentRecursionLimit()}). The model may be stuck in a loop — try simplifying the input, adjusting the system prompt, or increasing TEST_AGENT_MAX_ITERATIONS.`
-        : err instanceof Error ? err.message : "Unknown error";
     await TestRun.updateOne(
       { _id: testRunId },
       {
         $set: {
           [`cases.${caseIndex}.status`]: "error",
-          [`cases.${caseIndex}.errorMessage`]: errorMessage,
+          [`cases.${caseIndex}.errorMessage`]: err instanceof Error ? err.message : "Unknown error",
           [`cases.${caseIndex}.durationMs`]: Date.now() - start,
         },
       },

@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, MessageSquare, Plus, Trash2 } from "lucide-react";
-import { cn, Button, ScrollArea, Skeleton } from "@semlayer/ui";
+import { MessageSquare, Plus, Trash2 } from "lucide-react";
+import { cn, Button, ScrollArea, Skeleton } from "@archsem/ui";
 import { toast } from "sonner";
 import { AgentChat, type ChatRequestFn, type CancelRequestFn } from "@/components/chat/agent-chat";
 import { InputPill, type InputPillOption } from "@/components/chat/chat-input";
@@ -43,8 +43,8 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 function PlaygroundPage() {
   const { project } = useProject();
   const queryClient = useQueryClient();
-  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("semlayer-playground-panel-width", 256);
-  const storageKey = `semlayer-playground-agent-${project._id}`;
+  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("archsem-playground-panel-width", 256);
+  const storageKey = `archsem-playground-agent-${project._id}`;
   const [selectedAgentId, setSelectedAgentId] = useState<string>(() => localStorage.getItem(storageKey) ?? "");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [chatKey, setChatKey] = useState(0);
@@ -147,7 +147,7 @@ function PlaygroundPage() {
         setChatKey((k) => k + 1);
       }
     } catch {
-      toast.error("Failed to delete conversation");
+      toast.error("Conversation could not be deleted");
     }
   }, [project._id, conversationId, queryClient]);
 
@@ -267,20 +267,14 @@ function PlaygroundPage() {
               value={selectedAgentId}
               onChange={handleAgentChange}
               placeholder="Select agent"
+              emptyLabel="Create an agent to get started"
             />
           }
-          emptyState={
-            <div className="flex flex-col items-center justify-center py-24 text-center content-tight">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white dark:bg-white/10 backdrop-blur-sm">
-                <Bot className="h-6 w-6 text-foreground/70" />
-              </div>
-              <h3 className="text-heading text-lg mt-4">{selectedAgentName ?? "Playground"}</h3>
-              <p className="text-foreground/60 text-sm max-w-md">
-                {selectedAgentId
-                  ? "Chat with your test agent to explore and validate semantic models."
-                  : "Select a test agent from the input bar below to start chatting."}
-              </p>
-            </div>
+          emptyStateTitle={selectedAgentName ?? "Playground"}
+          emptyStateDescription={
+            selectedAgentId
+              ? "Chat with your test agent to explore and validate semantic models."
+              : "Select a test agent from the input bar below to start chatting."
           }
         />
       </div>

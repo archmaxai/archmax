@@ -10,7 +10,7 @@ import {
   Button,
   Input,
   Label,
-} from "@semlayer/ui";
+} from "@archsem/ui";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/project-context";
 

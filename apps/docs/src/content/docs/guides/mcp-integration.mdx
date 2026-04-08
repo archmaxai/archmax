@@ -1,0 +1,100 @@
+---
+title: MCP Integration
+description: Connect AI agents to your semantic layer using the Model Context Protocol.
+---
+
+archsem exposes your semantic models to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Agents discover available models, browse datasets and fields, and run scoped SQL queries.
+
+## Endpoint
+
+Each project has its own MCP endpoint:
+
+```
+POST https://your-server/mcp/<project-slug>/mcp
+```
+
+The endpoint accepts JSON-RPC requests with `tools/list` and `tools/call` methods.
+
+## Authentication
+
+All MCP requests require a Bearer token:
+
+```
+Authorization: Bearer <your-mcp-token>
+```
+
+Tokens are created in the admin UI under **MCP Access**. Each token has:
+- **Scopes** — which semantic models the token can access
+- **Permission** — `read` (query only) or `readwrite` (query + suggest improvements)
+- **Expiry** — optional expiration date
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_connections` | List active database connections for the project |
+| `list_semantic_models` | List semantic models the token has access to |
+| `get_semantic_model_overview` | Get a compact overview of a model with datasets, relationships, and metrics |
+| `get_dataset_fields` | Get fields for one or more datasets with types and expressions |
+| `execute_query` | Run a read-only SQL query scoped to a semantic model |
+
+## Query Execution
+
+The `execute_query` tool lets agents run SQL against your data through sandboxed VIEWs. Instead of accessing raw tables, queries reference scoped VIEWs:
+
+```sql
+SELECT o.total_amount, c.name
+FROM _scope_ecommerce."orders" o
+JOIN _scope_ecommerce."customers" c
+  ON o.customer_id = c.customer_id
+WHERE o.created_at > '2024-01-01'
+LIMIT 100
+```
+
+### Security
+
+- Queries are validated to only allow `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements
+- Raw catalog references (e.g., `shopify.public.orders`) are rejected
+- Cross-model scope references are blocked
+- Each query runs with DuckDB security hardening: external access disabled, resource limits, locked configuration
+- Results are capped at 1,000 rows with a 30-second timeout
+
+## Client Configuration Examples
+
+### Claude Desktop
+
+Add to your Claude Desktop MCP config:
+
+```json
+{
+  "mcpServers": {
+    "archsem": {
+      "url": "https://your-server/mcp/your-project/mcp",
+      "headers": {
+        "Authorization": "Bearer sk-your-token"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to your `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "archsem": {
+      "url": "https://your-server/mcp/your-project/mcp",
+      "headers": {
+        "Authorization": "Bearer sk-your-token"
+      }
+    }
+  }
+}
+```
+
+## Rate Limiting
+
+MCP requests are rate-limited per client IP. The default is 120 requests per 60-second window, configurable via `MCP_RATE_LIMIT_MAX`.

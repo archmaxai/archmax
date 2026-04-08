@@ -1,6 +1,6 @@
 import { readdir, rename, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { getEnv } from "@semlayer/core/config/env";
+import { getEnv } from "@archsem/core/config/env";
 
 const SKIP_DIRS = new Set(["src", "build", "uploads"]);
 
@@ -56,7 +56,7 @@ async function migrateProject(projectDir: string): Promise<boolean> {
 }
 
 export async function migrateSrcLayout(): Promise<void> {
-  const dataDir = getEnv().SEMLAYER_DATA_DIR;
+  const dataDir = getEnv().ARCHSEM_DATA_DIR;
   let projectDirs: string[];
   try {
     projectDirs = await readdir(dataDir);

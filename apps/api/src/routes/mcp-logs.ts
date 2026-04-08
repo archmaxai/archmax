@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { connectDB } from "@semlayer/core/infra/db";
-import { McpCallLog } from "@semlayer/core/models/index";
+import { connectDB } from "@archsem/core/infra/db";
+import { McpCallLog } from "@archsem/core/models/index";
 import type { FilterQuery } from "mongoose";
-import type { IMcpCallLogDocument } from "@semlayer/core/models/McpCallLog";
+import type { IMcpCallLogDocument } from "@archsem/core/models/McpCallLog";
 
 const app = new Hono().get("/", async (c) => {
   await connectDB();
