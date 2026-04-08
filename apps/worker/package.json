@@ -1,0 +1,27 @@
+{
+  "name": "@semlayer/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --import tsx src/index.ts",
+    "build": "tsc --build",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.1.39",
+    "@semlayer/core": "workspace:*",
+    "bullmq": "^5",
+    "dotenv": "^17.3.1",
+    "ioredis": "^5",
+    "mongoose": "^9"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3",
+    "vitest": "^4"
+  }
+}

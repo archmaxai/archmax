@@ -8,13 +8,23 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@duckdb/node-api": "1.5.1-r.1",
+    "@langchain/core": "^1.1.39",
+    "@langchain/openai": "^1.4.2",
+    "bullmq": "^5",
+    "deepagents": "^1.8.8",
+    "ioredis": "^5",
+    "js-yaml": "^4.1.1",
+    "markitdown-ts": "^0.0.10",
     "mongoose": "^9.0.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20",
     "typescript": "5.9.3"
   }

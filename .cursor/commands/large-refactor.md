@@ -1,0 +1,1 @@
+There have been many many changes on the whole project. Look at the project for opportunities of large refactorings. Try to throw away as much code as possible. Remove redundancies, split up large files into better modularized ones. Look for unused code. Merge functionalities where needed. Update tests accordingly and validate that changes are ok. 

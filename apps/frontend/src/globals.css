@@ -3,6 +3,10 @@
 
 @source "../../../packages/ui/src";
 
+@layer base {
+  @import "@xyflow/react/dist/style.css";
+}
+
 @font-face {
   font-family: "Geist Sans";
   font-style: normal;
@@ -26,6 +30,14 @@
   --color-foreground: var(--foreground);
   --font-sans: "Geist Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
@@ -45,6 +57,7 @@
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
+  --color-table-row-hover: var(--table-row-hover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --radius-sm: calc(var(--radius) - 4px);
@@ -62,7 +75,7 @@
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.965 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
@@ -81,6 +94,36 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Motion tokens */
+  --duration-fast: 0.15s;
+  --duration-normal: 0.25s;
+  --duration-slow: 0.4s;
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Table row hover — slightly lighter than muted for visible contrast */
+  --table-row-hover: oklch(0.985 0 0);
+
+  /* Frosted glass overlay background (matches --muted) */
+  --frosted-bg: oklch(0.97 0 0 / 0.5);
+
+  /* Gradient palette — earthy/muted tones for ambient background */
+  --gradient-1: #8c987f;
+  --gradient-2: #a69d85;
+  --gradient-3: #bca195;
+  --gradient-4: #c9a9ac;
+  --gradient-5: #ccb4c5;
+  --gradient-6: #c8c1d9;
+  --gradient-7: #c2d0e4;
 }
 
 .dark {
@@ -88,7 +131,7 @@
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.25 0 0);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.25 0 0);
+  --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);
@@ -107,6 +150,24 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+  --table-row-hover: oklch(0.31 0 0);
+  --frosted-bg: oklch(0.269 0 0 / 0.5);
+
+  --gradient-1: #3b4035;
+  --gradient-2: #464238;
+  --gradient-3: #4f443f;
+  --gradient-4: #544748;
+  --gradient-5: #564c53;
+  --gradient-6: #54515b;
+  --gradient-7: #515760;
 }
 
 @layer base {
@@ -116,10 +177,28 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  .react-flow {
+    --xy-background-color: var(--muted);
+  }
 }
 
 @layer components {
-  /* Cards */
+  /* Popup / overlay shadow — zero offset, large soft diffuse spread */
+  .shadow-popup {
+    box-shadow:
+      0 0 24px rgba(0, 0, 0, 0.06),
+      0 0 64px rgba(0, 0, 0, 0.05),
+      0 0 120px rgba(0, 0, 0, 0.03);
+  }
+  :is(.dark) .shadow-popup {
+    box-shadow:
+      0 0 24px rgba(0, 0, 0, 0.3),
+      0 0 64px rgba(0, 0, 0, 0.25),
+      0 0 120px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Cards — flat surfaces, no shadows or borders; contrast via --card vs --background */
   .card-surface {
     @apply bg-card rounded-xl;
   }
@@ -136,6 +215,9 @@
   }
   .surface-raised {
     @apply bg-card;
+  }
+  .surface-overlay {
+    @apply bg-background;
   }
   .surface-inset {
     @apply bg-muted/50;
@@ -178,14 +260,71 @@
   .interactive-bg {
     @apply transition-colors hover:bg-foreground/[0.05];
   }
+  .interactive-bg-surface {
+    @apply transition-colors hover:bg-foreground/[0.05];
+  }
 
   /* Inline error banner */
   .error-banner {
     @apply flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive;
   }
 
+  /* Sonner toast overrides — borderless, popover-styled, shadow-popup */
+  [data-sonner-toaster] [data-sonner-toast] {
+    --normal-bg: var(--popover);
+    --normal-text: var(--popover-foreground);
+    --normal-border: transparent;
+    border: none;
+    border-radius: var(--radius-xl);
+    box-shadow:
+      0 0 24px rgba(0, 0, 0, 0.06),
+      0 0 64px rgba(0, 0, 0, 0.05),
+      0 0 120px rgba(0, 0, 0, 0.03);
+  }
+  :is(.dark) [data-sonner-toaster] [data-sonner-toast] {
+    box-shadow:
+      0 0 24px rgba(0, 0, 0, 0.3),
+      0 0 64px rgba(0, 0, 0, 0.25),
+      0 0 120px rgba(0, 0, 0, 0.15);
+  }
+  [data-sonner-toaster] [data-sonner-toast][data-type="success"],
+  [data-sonner-toaster] [data-sonner-toast][data-type="error"],
+  [data-sonner-toaster] [data-sonner-toast][data-type="info"],
+  [data-sonner-toaster] [data-sonner-toast][data-type="warning"] {
+    --normal-bg: var(--popover);
+    --normal-text: var(--popover-foreground);
+    --normal-border: transparent;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    border: none;
+  }
+  [data-sonner-toaster] [data-sonner-toast][data-type="success"] [data-icon] {
+    color: oklch(0.62 0.17 145);
+  }
+  [data-sonner-toaster] [data-sonner-toast][data-type="error"] [data-icon] {
+    color: var(--destructive);
+  }
+  [data-sonner-toaster] [data-sonner-toast][data-type="warning"] [data-icon] {
+    color: oklch(0.75 0.15 75);
+  }
+  [data-sonner-toaster] [data-sonner-toast][data-type="info"] [data-icon] {
+    color: var(--muted-foreground);
+  }
+
   /* Input focus states */
   .input-focus {
     @apply transition-[color,box-shadow] outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px];
   }
+  .input-focus-within {
+    @apply transition-[color,box-shadow] outline-none;
+  }
+}
+
+/* Card + Table: strip vertical padding when table is flush first/last child.
+   Unlayered to override Tailwind utility py-6. */
+[data-slot="card"]:has(> [data-slot="table-container"]:first-child) {
+  padding-top: 0;
+}
+[data-slot="card"]:has(> [data-slot="table-container"]:last-child) {
+  padding-bottom: 0;
 }

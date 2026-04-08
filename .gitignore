@@ -144,5 +144,8 @@ vite.config.ts.timestamp-*
 # Turborepo
 .turbo
 
+# Semantic model data (runtime-generated YAML files)
+data/
+
 # Generated route tree
 routeTree.gen.ts

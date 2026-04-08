@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Semantic Layer — a tool for managing semantic descriptions of database schemas, tables, columns, and relationships. Provides an admin UI for data source registration and an MCP server that AI agents can query to understand database structure and meaning.
+Semantic Layer — a tool for managing semantic descriptions of database schemas, tables, columns, and relationships. Provides an admin UI for project and connection management, a DuckDB federation layer for cross-connection queries, and an MCP server that AI agents can query to understand database structure and meaning.
 
 ## Tech Stack
 
@@ -12,6 +12,7 @@ Semantic Layer — a tool for managing semantic descriptions of database schemas
 - **API**: Hono 4 on Node.js (`@hono/node-server`), Zod validation
 - **MCP**: JSON-RPC endpoint on Hono with bearer token auth, rate limiting
 - **Database**: MongoDB via Mongoose 9
+- **Query federation**: DuckDB (in-process, per project) via `@duckdb/node-api`
 - **UI Kit**: Radix UI primitives + CVA variants in `@semlayer/ui`
 - **Fonts**: Geist Sans / Geist Mono
 - **Deployment**: Docker (multi-stage) with nginx reverse proxy on port 8080
@@ -29,17 +30,32 @@ Semantic Layer — a tool for managing semantic descriptions of database schemas
 - Rounded-full for buttons/inputs, rounded-xl for cards/containers
 - No comments that just narrate what code does
 
+### UI Surface Hierarchy
+
+- **Popup backgrounds must match `--background`** (the page-level light grey): `--popover` is set to the same value as `--background` in both light and dark themes. This ensures all overlay surfaces — popovers, dropdown menus, selects, dialogs, sheets, toasts — share a consistent grey backdrop so that white card-level elements (`--card`) placed inside them have visible contrast. Never override popup backgrounds to white/card color; use `bg-popover` or `surface-overlay` which both resolve to the page grey.
+- **Input fields use white (`bg-card`) backgrounds**: Text inputs, textareas, and select triggers use `bg-card` (white in light theme) so they stand out against the grey overlay/page surface. In dark mode they use `dark:bg-input/30` for subtle contrast. This gives form fields a clear "recessed field" look on any surface.
+
+### Tables
+
+- **No card padding around tables**: When a `<Table>` is placed directly inside a `<Card>`, the card's vertical padding is automatically stripped (via `:has()` on `data-slot`). Tables should sit flush within their container — no extra wrapper padding at top or bottom.
+- **Hover must be distinct from background**: Table rows use `hover:bg-table-row-hover`, a dedicated token (`--table-row-hover`) that is slightly lighter than `--muted` in both light and dark themes. Never use `hover:bg-foreground/[0.05]` for table rows — the contrast is too low on muted backgrounds.
+- **Tables on muted backgrounds**: Content-area tables (data browser, connections list) sit on `bg-muted`. The hover token is tuned for this case. Tables inside cards (on `bg-card`) also work because the token is between `--muted` and `--card`.
+- **Header rows don't hover**: `TableHeader` sets `[&_tr]:hover:bg-transparent` to prevent header hover states.
+
 ### Architecture Patterns
 
-- **Shared packages**: `@semlayer/core` for models/DB/config, `@semlayer/ui` for React components
-- **Mongoose models**: Interface → Schema → hot-reload-safe export (`mongoose.models.X || mongoose.model()`)
+- **Shared packages**: `@semlayer/core` for models/DB/config/services, `@semlayer/ui` for React components
+- **Mongoose models**: Interface → Schema → hot-reload-safe export (`mongoose.models.X || mongoose.model()`) — used for Project and Connection
+- **Soft delete**: Mongoose models use a shared plugin (`softDeletePlugin`) that adds `deleted`/`deletedAt` fields and auto-filters deleted records
+- **Semantic model file service**: `SemanticModelFileService` in `@semlayer/core/services/semantic-model-files` handles all YAML file I/O (list, read, write, delete) with atomic writes (temp file + rename)
 - **Env config**: Zod schema validation via `getEnv()` singleton in `@semlayer/core/config/env`
 - **DB connection**: Singleton `connectDB()` with global mongoose cache in `@semlayer/core/infra/db`
+- **DuckDB service**: Lazy per-project DuckDB instances in `@semlayer/core/services/duckdb` — connections attached as named schemas via postgres/mysql/mssql extensions
 - **API structure**: Hono app exports `AppType` for typed RPC client in frontend
 - **Frontend API client**: `hc<AppType>` from `hono/client` — fully typed end-to-end
 - **Error handling**: `AppError` class with static factory methods (badRequest, notFound, etc.)
 - **MCP tools**: Function returning tool map `Record<string, { description, handler }>`, separate schema/required helpers
-- **No auth**: Single-user admin tool — no JWT/auth middleware
+- **Auth**: Better Auth with session-based admin login
 
 ### Testing Strategy
 
@@ -53,37 +69,47 @@ Semantic Layer — a tool for managing semantic descriptions of database schemas
 
 ## Domain Context
 
-### Data Sources
+### Projects
 
-A data source represents a database connection (Postgres, MySQL, MSSQL, MongoDB) with:
-- Connection details (type, connection string)
-- Semantic table descriptions — human-readable descriptions of what tables contain
-- Column-level metadata — types, descriptions, primary/foreign key annotations, relationship references
+The top-level organizational unit. A project groups related database connections and their semantic models.
 
-### Semantic Models
+### Connections
 
-Higher-level groupings that span multiple tables within a data source:
-- Named relationships between tables with cardinality
-- Computed metrics with SQL/aggregation expressions
-- Tags for discovery and organization
+A connection represents a database connection (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck) within a project. Each active connection is attached to the project's DuckDB instance for federated querying. Connection config stores structured parameters (host, port, database, user, password) or a raw URI.
+
+### Semantic Models (DuckDB-native, file-based)
+
+Semantic models are stored as YAML files on disk, one file per model, in a per-project directory (`<SEMLAYER_DATA_DIR>/<projectId>/`). Semantic models are project-scoped (not connection-scoped) and follow the [OSI (Open Semantic Interchange)](https://github.com/open-semantic-interchange/OSI) spec with snake_case naming. Each YAML file is self-contained:
+
+- **Datasets** — logical representations of tables/views with source references (`<connection>.<schema>.<table>`), `primary_key`, `unique_keys`, and inline fields
+- **Fields** — row-level attributes within a dataset, with an OSI `expression` object (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), optional `dimension` (`{ is_time: true }` for temporal fields), and `custom_extensions` for project-specific metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`)
+- **Relationships** — foreign-key relationships between datasets with `from_columns`/`to_columns` mappings
+- **Metrics** — quantitative measures with OSI expression objects spanning datasets
+
+All entities support `ai_context` (string or object with instructions, synonyms, examples) and `custom_extensions` for vendor-specific data. Each project directory also contains an auto-generated `AGENTS.md` summarizing its semantic models for AI assistants.
+
+A global agent system prompt at `packages/core/prompts/semantic-model-agent.md` guides AI agents through the semantic model assembly workflow (schema discovery, field mapping, enum detection, relationship inference, metric definition).
 
 ### MCP Server
 
 Exposes semantic metadata as MCP tools for AI agent consumption:
-- `list_data_sources` — enumerate available data sources
-- `get_data_source` — get full details for a named data source
-- `list_semantic_models` — enumerate semantic models
-- `get_semantic_model` — get full semantic model by name
-- `describe_table` — get column-level semantics for a specific table
+- `list_connections` — list active database connections for the project
+- `list_semantic_models` — list semantic models the token has access to (reads YAML files from disk)
+- `get_semantic_model` — get a markdown overview of a semantic model with datasets, relationships, and metrics; supports scoped pagination (`scope`: `"datasets"` | `"relationships"` | `"metrics"`, `page`)
+- `get_datasets` — get one or more datasets (up to 10) with all their fields as compact markdown lists; single dataset supports field pagination, multiple datasets return page 1 of each
 
 ## Important Constraints
 
-- Single-user system — no multi-tenancy or authentication required
-- MongoDB is the only data store (semantic descriptions stored here)
-- Data source connections are for description only — the system does not query external databases (yet)
-- MCP bearer token auth is the only security boundary
+- Single-user system — no multi-tenancy
+- MongoDB stores projects and connections; semantic models are stored as YAML files on disk
+- `SEMLAYER_DATA_DIR` env var configures the base directory for project folders (defaults to `./data/projects`)
+- DuckDB is used for federated querying across connections (in-process, per project)
+- MCP bearer token auth is the only security boundary for AI agents
+- Better Auth session-based login for admin UI
 
 ## External Dependencies
 
-- MongoDB — document store for all persistent data
-- External databases (Postgres, MySQL, MSSQL, MongoDB) — described but not queried
+- MongoDB — document store for projects and connections
+- DuckDB — in-process analytical query engine for federation
+- External databases (Postgres, MySQL, MSSQL, SQLite) — attached via DuckDB extensions for querying
+- js-yaml — YAML parsing/serialization for semantic model files

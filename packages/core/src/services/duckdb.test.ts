@@ -1,0 +1,259 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { DuckDBInstance } from "@duckdb/node-api";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews } from "./duckdb";
+import type { SemanticModel } from "./semantic-model-schema";
+
+function makeModel(name: string, datasets: SemanticModel["datasets"]): SemanticModel {
+  return {
+    name,
+    description: "",
+    datasets,
+    relationships: [],
+    metrics: [],
+    custom_extensions: [],
+  };
+}
+
+function makeDataset(
+  name: string,
+  source: string,
+  fields: Array<{ name: string; expression?: string }>,
+) {
+  return {
+    name,
+    source,
+    primary_key: [] as string[],
+    unique_keys: [] as string[][],
+    description: "",
+    fields: fields.map((f) => ({
+      name: f.name,
+      expression: {
+        dialects: [{ dialect: "ANSI_SQL" as const, expression: f.expression ?? f.name }],
+      },
+      description: "",
+      custom_extensions: [],
+    })),
+    custom_extensions: [],
+  };
+}
+
+describe("scopeSchemaName", () => {
+  it("produces _scope_<modelName> format", () => {
+    expect(scopeSchemaName("ecommerce")).toBe("_scope_ecommerce");
+  });
+});
+
+describe("scopedViewName", () => {
+  it('produces _scope_<modelName>."dataset" format', () => {
+    expect(scopedViewName("ecommerce", "orders")).toBe('_scope_ecommerce."orders"');
+  });
+
+  it("handles dataset names with hyphens", () => {
+    expect(scopedViewName("shop", "my-dataset")).toBe('_scope_shop."my-dataset"');
+  });
+});
+
+describe("createScopedViews", () => {
+  let instance: DuckDBInstance;
+  const projectId = "test-project";
+
+  beforeEach(async () => {
+    invalidateScopedViews(projectId);
+    instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      await db.run("CREATE TABLE test_source (id INTEGER, name VARCHAR, amount DECIMAL(10,2))");
+      await db.run("INSERT INTO test_source VALUES (1, 'Alice', 99.99), (2, 'Bob', 50.00)");
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("creates VIEWs in per-model schema", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [
+        { name: "id" },
+        { name: "name" },
+      ]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT * FROM _scope_shop."orders"');
+      const columns = result.columnNames();
+      const rows: unknown[][] = [];
+      for await (const chunk of result) {
+        rows.push(...chunk.getRows());
+      }
+
+      expect(columns).toEqual(["id", "name"]);
+      expect(rows).toHaveLength(2);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("excludes amount column not in model fields", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT * FROM _scope_shop."orders"');
+      const columns = result.columnNames();
+      expect(columns).toEqual(["id"]);
+      expect(columns).not.toContain("amount");
+      expect(columns).not.toContain("name");
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("handles computed expressions", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [
+        { name: "order_id", expression: "id" },
+        { name: "total", expression: "amount * 1.1" },
+      ]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT order_id, total FROM _scope_shop."orders" ORDER BY order_id');
+      const columns = result.columnNames();
+      expect(columns).toEqual(["order_id", "total"]);
+
+      const rows: unknown[][] = [];
+      for await (const chunk of result) {
+        rows.push(...chunk.getRows());
+      }
+      expect(rows[0][0]).toBe(1);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("skips datasets with zero fields", async () => {
+    const model = makeModel("shop", [
+      makeDataset("empty", "test_source", []),
+      makeDataset("orders", "test_source", [{ name: "id" }]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT * FROM _scope_shop."orders"');
+      expect(result.columnNames()).toEqual(["id"]);
+
+      await expect(db.run('SELECT * FROM _scope_shop."empty"')).rejects.toThrow();
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("isolates models in separate schemas", async () => {
+    const modelA = makeModel("model_a", [
+      makeDataset("ds", "test_source", [{ name: "id" }]),
+    ]);
+    const modelB = makeModel("model_b", [
+      makeDataset("ds", "test_source", [{ name: "name" }]),
+    ]);
+
+    await createScopedViews(instance, projectId, modelA);
+    await createScopedViews(instance, projectId, modelB);
+
+    const db = await instance.connect();
+    try {
+      const resultA = await db.run('SELECT * FROM _scope_model_a."ds"');
+      expect(resultA.columnNames()).toEqual(["id"]);
+
+      const resultB = await db.run('SELECT * FROM _scope_model_b."ds"');
+      expect(resultB.columnNames()).toEqual(["name"]);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("skips view recreation when model hash unchanged", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+    await createScopedViews(instance, projectId, model);
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT * FROM _scope_shop."orders"');
+      expect(result.columnNames()).toEqual(["id"]);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("recreates views after cache invalidation", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+    invalidateScopedViews(projectId, "shop");
+
+    const modelV2 = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
+    ]);
+    await createScopedViews(instance, projectId, modelV2);
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT * FROM _scope_shop."orders"');
+      expect(result.columnNames()).toEqual(["id", "name"]);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+});
+
+describe("computeModelHash", () => {
+  it("returns same hash for identical models", () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }]),
+    ]);
+    expect(computeModelHash(model)).toBe(computeModelHash(model));
+  });
+
+  it("returns different hash when fields change", () => {
+    const a = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }]),
+    ]);
+    const b = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
+    ]);
+    expect(computeModelHash(a)).not.toBe(computeModelHash(b));
+  });
+});
+
+describe("hardenConnection", () => {
+  it("disables external access and locks configuration", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+
+    await hardenConnection(db);
+
+    try {
+      await expect(
+        db.run("SET enable_external_access = true"),
+      ).rejects.toThrow();
+    } finally {
+      db.disconnectSync();
+    }
+  });
+});

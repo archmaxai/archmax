@@ -9,9 +9,11 @@ const env = getEnv();
 const mongoClient = new MongoClient(env.MONGODB_URI);
 
 export const auth = betterAuth({
+  baseURL: env.AUTH_BASE_URL || `http://localhost:${env.PORT}`,
   basePath: "/api/auth",
   secret: env.BETTER_AUTH_SECRET,
   database: mongodbAdapter(mongoClient.db()),
+  trustedOrigins: env.corsOrigins,
 
   emailAndPassword: {
     enabled: true,
@@ -20,10 +22,27 @@ export const auth = betterAuth({
 
   plugins: [username()],
 
+  rateLimit: {
+    enabled: true,
+    window: 10,
+    max: 100,
+    customRules: {
+      "/api/auth/sign-in/email": { window: 60, max: 5 },
+    },
+  },
+
   session: {
+    expiresIn: 60 * 60 * 24 * 7,
+    updateAge: 60 * 60 * 24,
     cookieCache: {
       enabled: true,
       maxAge: 60 * 5,
+    },
+  },
+
+  advanced: {
+    ipAddress: {
+      ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
     },
   },
 });

@@ -10,11 +10,15 @@
     "typecheck": "turbo typecheck"
   },
   "devDependencies": {
-    "turbo": "^2"
+    "turbo": "^2",
+    "vitest": "^4.1.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
     ]
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
   }
 }

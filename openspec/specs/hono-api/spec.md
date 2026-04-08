@@ -1,17 +1,17 @@
 # hono-api Specification
 
 ## Purpose
-The API layer built on Hono, serving as the backend for the Semantic Layer application. Provides typed REST routes, CORS, error handling, and cache control.
+The API layer built on Hono, providing typed REST routes, middleware (CORS, cache control, logging), error handling, and type-safe client export. Auth-specific behavior is covered in the `auth` spec.
 
 ## Requirements
 
 ### Requirement: Health Endpoint
 
-The API SHALL expose a `GET /api/health` endpoint that returns `{ "status": "ok" }`.
+The API SHALL expose a `GET /api/health` endpoint that returns `{ "status": "ok" }`. This endpoint SHALL NOT require authentication.
 
-#### Scenario: Health check succeeds
+#### Scenario: Health check succeeds without auth
 
-- **WHEN** a GET request is made to `/api/health`
+- **WHEN** a GET request is made to `/api/health` without a session cookie
 - **THEN** the response status is 200
 - **AND** the body is `{ "status": "ok" }`
 
@@ -35,7 +35,7 @@ The API SHALL set `Cache-Control: no-store` on all `/api/*` responses that do no
 
 ### Requirement: Error Handling
 
-The API SHALL catch `AppError` instances and return structured JSON with the error message, status code, and optional error code.
+The API SHALL catch `AppError` instances and return structured JSON with the error message, status code, and optional error code. Unhandled errors SHALL return a 500 response with `{ "error": "Internal server error" }`.
 
 #### Scenario: AppError returns structured response
 
@@ -43,9 +43,15 @@ The API SHALL catch `AppError` instances and return structured JSON with the err
 - **THEN** the response status is 404
 - **AND** the body contains `{ "error": "..." }`
 
+#### Scenario: Unhandled error returns 500
+
+- **WHEN** a route throws an unexpected error
+- **THEN** the response status is 500
+- **AND** the body is `{ "error": "Internal server error" }`
+
 ### Requirement: Type-Safe Client
 
-The API SHALL export an `AppType` type from `app.ts` so the frontend can create a fully typed Hono RPC client.
+The API SHALL export an `AppType` type from `app.ts` so the frontend can create a fully typed Hono RPC client via `hc<AppType>`.
 
 #### Scenario: Frontend imports AppType
 

@@ -1,0 +1,62 @@
+.gradient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(
+    -45deg,
+    #8c987f,
+    #a69d85,
+    #bca195,
+    #c9a9ac,
+    #ccb4c5,
+    #c8c1d9,
+    #c2d0e4,
+    #c8c1d9,
+    #ccb4c5,
+    #c9a9ac,
+    #bca195,
+    #a69d85,
+    #8c987f
+  );
+  background-size: 400% 400%;
+  animation: flow 40s ease infinite;
+  transition: opacity 1.5s ease-out;
+}
+
+:global(.dark) .gradient {
+  background: linear-gradient(
+    -45deg,
+    #3b4035,
+    #464238,
+    #4f443f,
+    #544748,
+    #564c53,
+    #54515b,
+    #515760,
+    #54515b,
+    #564c53,
+    #544748,
+    #4f443f,
+    #464238,
+    #3b4035
+  );
+}
+
+@keyframes flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gradient {
+    animation: none;
+  }
+}
