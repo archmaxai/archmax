@@ -72,29 +72,21 @@ export function ModelVisualization({
         <div className="flex items-center justify-between px-4 pt-2">
           <div />
           <TabsList variant="pill">
-            <TabsTrigger value="yaml">
-              <Code className="h-3.5 w-3.5" />
-              YAML
+            <TabsTrigger value="graph">
+              <Network className="h-3.5 w-3.5" />
+              Graph
             </TabsTrigger>
             <TabsTrigger value="tree">
               <TreePine className="h-3.5 w-3.5" />
               Tree
             </TabsTrigger>
-            <TabsTrigger value="graph">
-              <Network className="h-3.5 w-3.5" />
-              Graph
+            <TabsTrigger value="yaml">
+              <Code className="h-3.5 w-3.5" />
+              YAML
             </TabsTrigger>
           </TabsList>
           <PublishButton />
         </div>
-
-        <TabsContent value="yaml" className="flex-1 min-h-0">
-          <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
-        </TabsContent>
-
-        <TabsContent value="tree" className="flex-1 min-h-0">
-          <ModelTreeView model={model} diff={diff} className="h-full" />
-        </TabsContent>
 
         <TabsContent value="graph" className="flex-1 min-h-0">
           <ModelGraphView
@@ -105,6 +97,14 @@ export function ModelVisualization({
             diff={diff}
             className="h-full"
           />
+        </TabsContent>
+
+        <TabsContent value="tree" className="flex-1 min-h-0">
+          <ModelTreeView model={model} diff={diff} className="h-full" />
+        </TabsContent>
+
+        <TabsContent value="yaml" className="flex-1 min-h-0">
+          <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
         </TabsContent>
       </Tabs>
     </div>

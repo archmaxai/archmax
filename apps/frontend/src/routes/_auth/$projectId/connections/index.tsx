@@ -130,25 +130,24 @@ function ConnectionsPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
-        <div className="content-tight">
-          <h1 className="text-heading text-2xl">Data Connections</h1>
-          <p className="text-subtle text-sm">
-            Add external databases to the {project.title} federation.
-            Connected sources are queryable as a single unified catalog.
-          </p>
+        <div className="flex items-center justify-between">
+          <div className="content-tight">
+            <h1 className="text-heading text-2xl">Data Sources</h1>
+            <p className="text-subtle text-sm">
+              Add external databases to the {project.title} federation.
+              Connected sources are queryable as a single unified catalog.
+            </p>
+          </div>
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            New Connection
+          </Button>
         </div>
       </header>
 
       <div className="divider-subtle mx-8" />
 
       <div className="flex-1 overflow-y-auto p-8 space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-heading text-lg">Connections</h2>
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            New Connection
-          </Button>
-        </div>
 
         {isLoading ? (
           <p className="text-subtle py-8 text-center text-sm">Loading...</p>

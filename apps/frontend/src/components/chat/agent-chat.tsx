@@ -105,7 +105,7 @@ export function normalizeMessage(msg: ChatMessage): ChatMessage {
   };
 }
 
-function MessageSegments({ segments }: { segments: ContentSegment[] }) {
+export function MessageSegments({ segments }: { segments: ContentSegment[] }) {
   return (
     <>
       {segments.map((seg, i) => {
@@ -149,6 +149,18 @@ export function updateToolCall(
   });
 }
 
+export type ChatRequestFn = (params: {
+  projectId: string;
+  message: string;
+  conversationId?: string;
+  signal: AbortSignal;
+}) => Promise<Response>;
+
+export type CancelRequestFn = (params: {
+  projectId: string;
+  conversationId: string;
+}) => void;
+
 interface AgentChatProps {
   projectId: string;
   conversationId: string | null;
@@ -158,6 +170,18 @@ interface AgentChatProps {
   hideInput?: boolean;
   hideMessages?: boolean;
   activeStreamConversationId?: string | null;
+  chatRequest?: ChatRequestFn;
+  cancelRequest?: CancelRequestFn;
+  disableFileUpload?: boolean;
+  emptyState?: React.ReactNode;
+  /** Render content in the bottom-left of the input (e.g. agent selector pills) */
+  inputBottomLeft?: React.ReactNode;
+  /** Custom placeholder text for the input */
+  inputPlaceholder?: string;
+  /** Override the subscribe URL prefix for stream reconnection (default: /api/projects/{id}/agent) */
+  subscribeUrlPrefix?: string;
+  /** Disable sending while still showing the input */
+  disableSend?: boolean;
 }
 
 export function AgentChat({
@@ -169,6 +193,14 @@ export function AgentChat({
   hideInput,
   hideMessages,
   activeStreamConversationId,
+  chatRequest,
+  cancelRequest,
+  disableFileUpload,
+  emptyState,
+  inputBottomLeft,
+  inputPlaceholder,
+  subscribeUrlPrefix,
+  disableSend,
 }: AgentChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map(normalizeMessage),
@@ -215,11 +247,12 @@ export function AgentChat({
     });
 
     const baseUrl = import.meta.env.VITE_API_URL ?? "";
+    const prefix = subscribeUrlPrefix ?? `/api/projects/${projectId}/agent`;
 
     (async () => {
       try {
         const res = await fetch(
-          `${baseUrl}/api/projects/${projectId}/agent/subscribe/${activeStreamConversationId}`,
+          `${baseUrl}${prefix}/subscribe/${activeStreamConversationId}`,
           { signal: controller.signal },
         );
         if (!res.ok) {
@@ -370,16 +403,23 @@ export function AgentChat({
     ]);
 
     try {
-      const res = await api.api.projects[":projectId"].agent.chat.$post(
-        {
-          param: { projectId },
-          json: {
+      const res = chatRequest
+        ? await chatRequest({
+            projectId,
             message: text,
             conversationId: conversationId ?? undefined,
-          },
-        },
-        { init: { signal: controller.signal } },
-      );
+            signal: controller.signal,
+          })
+        : await api.api.projects[":projectId"].agent.chat.$post(
+            {
+              param: { projectId },
+              json: {
+                message: text,
+                conversationId: conversationId ?? undefined,
+              },
+            },
+            { init: { signal: controller.signal } },
+          );
 
       if (!res.ok) {
         const err = await res
@@ -444,7 +484,7 @@ export function AgentChat({
       onStreamEnd?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, isStreaming, projectId, conversationId, uploadedFiles]);
+  }, [input, isStreaming, projectId, conversationId, uploadedFiles, chatRequest]);
 
   function handleSSEEvent(
     event: string,
@@ -510,9 +550,13 @@ export function AgentChat({
 
     const convId = activeConvIdRef.current;
     if (convId) {
-      api.api.projects[":projectId"].agent.cancel[":conversationId"]
-        .$post({ param: { projectId, conversationId: convId } })
-        .catch(() => {});
+      if (cancelRequest) {
+        cancelRequest({ projectId, conversationId: convId });
+      } else {
+        api.api.projects[":projectId"].agent.cancel[":conversationId"]
+          .$post({ param: { projectId, conversationId: convId } })
+          .catch(() => {});
+      }
     }
   }
 
@@ -525,13 +569,13 @@ export function AgentChat({
           <div className="relative flex-1 min-h-0 overflow-hidden">
             <ScrollArea className="h-full">
               <div className="pt-16 pb-40 space-y-4">
-                {!hasMessages && (
+                {!hasMessages && (emptyState ?? (
                   <div className="flex flex-col items-center justify-center py-24 text-center content-tight">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-background/60 backdrop-blur-sm">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white dark:bg-white/10 backdrop-blur-sm">
                       <Bot className="h-6 w-6 text-foreground/70" />
                     </div>
                     <h3 className="text-heading text-lg mt-4">
-                      Semantic Model Agent
+                      Semantic Model Builder
                     </h3>
                     <p className="text-foreground/60 text-sm max-w-md">
                       Ask me to explore your database schemas and create
@@ -555,7 +599,7 @@ export function AgentChat({
                       </div>
                     </div>
                   </div>
-                )}
+                ))}
 
                 {messages.map((msg, i) => {
                   const textContent = getTextContent(msg.segments);
@@ -619,10 +663,15 @@ export function AgentChat({
           isStreaming={isStreaming}
           hasMessages={hasMessages || !!hideMessages}
           focusRequestId={focusRequestId}
-          onFileUpload={handleFileUpload}
-          uploadedFiles={uploadedFiles}
-          onRemoveFile={handleRemoveFile}
-          isUploading={isUploading}
+          placeholder={inputPlaceholder}
+          bottomLeft={inputBottomLeft}
+          disableSend={disableSend}
+          {...(disableFileUpload ? {} : {
+            onFileUpload: handleFileUpload,
+            uploadedFiles,
+            onRemoveFile: handleRemoveFile,
+            isUploading,
+          })}
         />
       )}
     </div>

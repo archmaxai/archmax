@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, stat, symlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ValidatingFilesystemBackend } from "./agent";
@@ -148,6 +148,60 @@ describe("ValidatingFilesystemBackend", () => {
         "this: is not { valid yaml: [",
       );
       expect(result.error).toBeUndefined();
+    });
+  });
+
+  describe("rename()", () => {
+    it("renames a file", async () => {
+      await writeFile(join(dir, "old.yaml"), "name: test\n");
+      const result = await backend.rename(join(dir, "old.yaml"), join(dir, "new.yaml"));
+      expect(result.error).toBeUndefined();
+      expect(result.oldPath).toBe(join(dir, "old.yaml"));
+      expect(result.newPath).toBe(join(dir, "new.yaml"));
+      await expect(stat(join(dir, "old.yaml"))).rejects.toThrow();
+      const content = await readFile(join(dir, "new.yaml"), "utf-8");
+      expect(content).toBe("name: test\n");
+    });
+
+    it("renames a directory", async () => {
+      await mkdir(join(dir, "olddir"));
+      await writeFile(join(dir, "olddir", "file.txt"), "content");
+      const result = await backend.rename(join(dir, "olddir"), join(dir, "newdir"));
+      expect(result.error).toBeUndefined();
+      await expect(stat(join(dir, "olddir"))).rejects.toThrow();
+      const content = await readFile(join(dir, "newdir", "file.txt"), "utf-8");
+      expect(content).toBe("content");
+    });
+
+    it("returns error when source does not exist", async () => {
+      const result = await backend.rename(join(dir, "nope.yaml"), join(dir, "dest.yaml"));
+      expect(result.error).toMatch(/not found/);
+    });
+
+    it("returns error when target already exists", async () => {
+      await writeFile(join(dir, "a.yaml"), "name: a\n");
+      await writeFile(join(dir, "b.yaml"), "name: b\n");
+      const result = await backend.rename(join(dir, "a.yaml"), join(dir, "b.yaml"));
+      expect(result.error).toMatch(/Target already exists/);
+      const content = await readFile(join(dir, "a.yaml"), "utf-8");
+      expect(content).toBe("name: a\n");
+    });
+
+    it("rejects symlinks", async () => {
+      await writeFile(join(dir, "real.txt"), "content");
+      await symlink(join(dir, "real.txt"), join(dir, "link.txt"));
+      const result = await backend.rename(join(dir, "link.txt"), join(dir, "moved.txt"));
+      expect(result.error).toMatch(/Symlinks/i);
+    });
+
+    it("blocks path traversal in virtual mode", async () => {
+      const vBackend = new ValidatingFilesystemBackend({
+        rootDir: dir,
+        virtualMode: true,
+      });
+      await writeFile(join(dir, "file.txt"), "content");
+      const result = await vBackend.rename("/file.txt", "/../../../tmp/stolen.txt");
+      expect(result.error).toMatch(/traversal/i);
     });
   });
 });

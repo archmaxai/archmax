@@ -1,5 +1,5 @@
 import { resolve, relative, isAbsolute } from "node:path";
-import { rm, lstat } from "node:fs/promises";
+import { rename as fsRename, rm, lstat, access } from "node:fs/promises";
 import { createDeepAgent, FilesystemBackend } from "deepagents";
 import { ChatOpenAI } from "@langchain/openai";
 import yaml from "js-yaml";
@@ -54,6 +54,35 @@ export class ValidatingFilesystemBackend extends FilesystemBackend {
       if (msg.includes("ENOENT"))
         return { error: `'${filePath}' not found` };
       return { error: `Error deleting '${filePath}': ${msg}` };
+    }
+  }
+
+  async rename(
+    oldPath: string,
+    newPath: string,
+  ): Promise<{ error?: string; oldPath?: string; newPath?: string }> {
+    try {
+      const resolvedOld = this.resolveVirtualPath(oldPath);
+      const resolvedNew = this.resolveVirtualPath(newPath);
+
+      const oldStat = await lstat(resolvedOld);
+      if (oldStat.isSymbolicLink())
+        return { error: `Symlinks are not allowed: ${oldPath}` };
+
+      try {
+        await access(resolvedNew);
+        return { error: `Target already exists: ${newPath}` };
+      } catch {
+        // target doesn't exist — good
+      }
+
+      await fsRename(resolvedOld, resolvedNew);
+      return { oldPath, newPath };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("ENOENT"))
+        return { error: `'${oldPath}' not found` };
+      return { error: `Error renaming '${oldPath}': ${msg}` };
     }
   }
 
@@ -207,6 +236,26 @@ function makeDeleteTool(backend: ValidatingFilesystemBackend) {
   );
 }
 
+function makeRenameTool(backend: ValidatingFilesystemBackend) {
+  return tool(
+    async ({ oldPath, newPath }: { oldPath: string; newPath: string }) => {
+      const result = await backend.rename(oldPath, newPath);
+      if (result.error) return JSON.stringify({ error: result.error });
+      return JSON.stringify({ renamed: { from: result.oldPath, to: result.newPath } });
+    },
+    {
+      name: "rename",
+      description:
+        "Rename or move a file or directory within the project filesystem. " +
+        "Both paths must be absolute virtual paths within the project root.",
+      schema: z.object({
+        oldPath: z.string().describe("Current absolute virtual path of the file or directory"),
+        newPath: z.string().describe("Desired absolute virtual path"),
+      }),
+    },
+  );
+}
+
 function makeReadDocumentTool(projectId: string) {
   const docSvc = new DocumentFileService(getEnv().SEMLAYER_DATA_DIR);
   return tool(
@@ -317,12 +366,13 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
 
   const executeQuery = makeExecuteQueryTool(projectId);
   const rmTool = makeDeleteTool(backend);
+  const renameTool = makeRenameTool(backend);
   const readDocTool = makeReadDocumentTool(projectId);
 
   const agent = createDeepAgent({
     model: llm,
     backend,
-    tools: [executeQuery, rmTool, readDocTool],
+    tools: [executeQuery, rmTool, renameTool, readDocTool],
     systemPrompt: buildSystemPrompt(connections),
   });
 

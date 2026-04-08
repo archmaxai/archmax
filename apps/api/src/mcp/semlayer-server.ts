@@ -1,9 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { getEnv } from "@semlayer/core/config/env";
 import { McpCallLog } from "@semlayer/core/models/index";
 import { SemanticModelFileService } from "@semlayer/core/services/semantic-model-files";
-import { DocumentFileService } from "@semlayer/core/services/document-files";
 import {
   listSemanticModels,
   getSemanticModelOverview,
@@ -24,10 +22,6 @@ export interface McpAuthContext {
 
 export interface McpToolContext extends McpAuthContext {
   fileSvc: SemanticModelFileService;
-}
-
-function getDocService(): DocumentFileService {
-  return new DocumentFileService(getEnv().SEMLAYER_DATA_DIR);
 }
 
 function textResult(text: string) {
@@ -151,59 +145,4 @@ export async function registerSemlayerTools(server: McpServer, ctx: McpToolConte
     return result;
   });
 
-  server.registerTool("list_documents", {
-    description: "List uploaded documents available in this project (PDFs, spreadsheets, data dictionaries, etc.)",
-    annotations: { readOnlyHint: true },
-  }, async () => {
-    const start = Date.now();
-    const docSvc = getDocService();
-    const docs = await docSvc.list(projectId);
-    if (docs.length === 0) {
-      const result = textResult("No documents have been uploaded to this project.");
-      logCall(ctx, "list_documents", null, result, Date.now() - start);
-      return result;
-    }
-    const lines = docs.map(
-      (d) => `- **${d.filename}** (${(d.size / 1024).toFixed(1)} KB, ${d.mimeType}, modified ${d.lastModified})`,
-    );
-    const result = textResult(`# Uploaded Documents\n\n${lines.join("\n")}`);
-    logCall(ctx, "list_documents", null, result, Date.now() - start);
-    return result;
-  });
-
-  server.registerTool("read_document", {
-    description:
-      "Read an uploaded document and return its content as markdown. " +
-      "Supports PDF, DOCX, XLSX, CSV, TXT, MD, HTML, and more. " +
-      "Use list_documents first to see available files.",
-    inputSchema: z.object({
-      filename: z.string().describe("The filename of the document to read"),
-    }),
-    annotations: { readOnlyHint: true },
-  }, async ({ filename }) => {
-    const start = Date.now();
-    const args = { filename };
-
-    if (!scopes.includes("read") && scopes.length > 0) {
-      const result = errorResult("Access denied: token does not have 'read' permission");
-      logCall(ctx, "read_document", args, result, Date.now() - start);
-      return result;
-    }
-
-    const docSvc = getDocService();
-    try {
-      const md = await docSvc.readAsMarkdown(projectId, filename);
-      const result = textResult(md);
-      logCall(ctx, "read_document", args, result, Date.now() - start);
-      return result;
-    } catch {
-      const docs = await docSvc.list(projectId);
-      const names = docs.map((d) => d.filename);
-      const result = errorResult(
-        `Document "${filename}" not found. Available documents: ${names.length > 0 ? names.join(", ") : "(none)"}`,
-      );
-      logCall(ctx, "read_document", args, result, Date.now() - start);
-      return result;
-    }
-  });
 }

@@ -1,11 +1,17 @@
-import { useRef, useCallback, useEffect, useState } from "react";
-import { ArrowUp, Square, Paperclip, X, Loader2 } from "lucide-react";
+import { useRef, useCallback, useEffect, useState, type ReactNode } from "react";
+import { ArrowUp, Square, Paperclip, X, Loader2, ChevronDown } from "lucide-react";
 import { cn, Textarea } from "@semlayer/ui";
 
 export interface UploadedFile {
   filename: string;
   size: number;
   mimeType: string;
+}
+
+export interface InputPillOption {
+  id: string;
+  label: string;
+  detail?: string;
 }
 
 interface ChatInputProps {
@@ -16,10 +22,15 @@ interface ChatInputProps {
   isStreaming: boolean;
   hasMessages: boolean;
   focusRequestId?: number;
+  placeholder?: string;
   onFileUpload?: (file: File) => Promise<UploadedFile>;
   uploadedFiles?: UploadedFile[];
   onRemoveFile?: (filename: string) => void;
   isUploading?: boolean;
+  /** Render pills (dropdowns) in the bottom-left of the input, like Cursor's "Agent" / model selectors */
+  bottomLeft?: ReactNode;
+  /** Disable send (greys out textarea + button) while still showing the input */
+  disableSend?: boolean;
 }
 
 export function ChatInput({
@@ -30,10 +41,13 @@ export function ChatInput({
   isStreaming,
   hasMessages,
   focusRequestId,
+  placeholder,
   onFileUpload,
   uploadedFiles = [],
   onRemoveFile,
   isUploading,
+  bottomLeft,
+  disableSend,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +94,7 @@ export function ChatInput({
     handleFileSelect(e.dataTransfer.files);
   }
 
-  const canSend = (value.trim() || uploadedFiles.length > 0) && !isStreaming;
+  const canSend = (value.trim() || uploadedFiles.length > 0) && !isStreaming && !disableSend;
 
   return (
     <div
@@ -139,11 +153,18 @@ export function ChatInput({
               autoResize();
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about your database or describe a semantic model..."
-            disabled={isStreaming}
+            placeholder={placeholder ?? "Ask about your database or describe a semantic model..."}
+            disabled={isStreaming || disableSend}
             rows={1}
             className="min-h-[80px] max-h-[50vh] resize-none rounded-[inherit] border-0 bg-transparent pb-12 shadow-none focus-visible:ring-0 overflow-y-auto text-base md:text-sm"
           />
+
+          {bottomLeft && (
+            <div className="absolute bottom-2 left-2 flex items-center gap-1">
+              {bottomLeft}
+            </div>
+          )}
+
           <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
             {onFileUpload && (
               <>
@@ -204,6 +225,84 @@ export function ChatInput({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A pill-shaped dropdown selector for the bottom-left of ChatInput.
+ * Mimics Cursor's "Agent" / model selector pills.
+ */
+export function InputPill({
+  options,
+  value,
+  onChange,
+  placeholder = "Select...",
+}: {
+  options: InputPillOption[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find((o) => o.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
+          selected
+            ? "bg-muted text-foreground hover:bg-muted/80"
+            : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+        )}
+      >
+        <span className="max-w-[140px] truncate">{selected?.label ?? placeholder}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-2 z-50 min-w-[280px] max-w-[360px] rounded-xl bg-popover p-1.5 shadow-popup">
+          {options.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => {
+                onChange(opt.id);
+                setOpen(false);
+              }}
+              className={cn(
+                "flex w-full flex-col items-start rounded-lg px-3 py-2 text-left text-sm transition-colors",
+                opt.id === value
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-accent/50",
+              )}
+            >
+              <span className="font-medium truncate w-full">{opt.label}</span>
+              {opt.detail && (
+                <span className="text-xs text-muted-foreground truncate w-full">{opt.detail}</span>
+              )}
+            </button>
+          ))}
+          {options.length === 0 && (
+            <p className="px-3 py-4 text-sm text-muted-foreground text-center">No options available</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

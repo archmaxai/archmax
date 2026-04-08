@@ -35,12 +35,26 @@ Semantic Layer — a tool for managing semantic descriptions of database schemas
 - **Popup backgrounds must match `--background`** (the page-level light grey): `--popover` is set to the same value as `--background` in both light and dark themes. This ensures all overlay surfaces — popovers, dropdown menus, selects, dialogs, sheets, toasts — share a consistent grey backdrop so that white card-level elements (`--card`) placed inside them have visible contrast. Never override popup backgrounds to white/card color; use `bg-popover` or `surface-overlay` which both resolve to the page grey.
 - **Input fields use white (`bg-card`) backgrounds**: Text inputs, textareas, and select triggers use `bg-card` (white in light theme) so they stand out against the grey overlay/page surface. In dark mode they use `dark:bg-input/30` for subtle contrast. This gives form fields a clear "recessed field" look on any surface.
 
+### Filter Controls
+
+- **Filter selectors use ghost styling, not form-input styling**: Inline filter dropdowns (e.g., "All agents", "All models" above a table) must use the `.filter-trigger` class on `SelectTrigger` — transparent background, no border, no shadow, `text-xs`, compact `h-7`. They should look like subtle toolbar controls, not data-entry fields. Never apply the default `bg-card` / `border-input` / `shadow-xs` form styling to filters.
+- **Placement**: Filter bar sits directly above its associated table/list, as the first element in the content area. Use `flex items-center gap-1.5` for the row of filters.
+- **Clear button**: When any filter is active, show a ghost icon button (`variant="ghost" size="icon"`, `h-7 w-7`) with an `X` icon to reset all filters. Use `title="Clear filters"` for accessibility.
+- **No icons in filter triggers**: The built-in chevron from `SelectTrigger` is sufficient. Do not add extra `Filter` icons inside the trigger — it adds visual noise without information.
+
 ### Tables
 
 - **No card padding around tables**: When a `<Table>` is placed directly inside a `<Card>`, the card's vertical padding is automatically stripped (via `:has()` on `data-slot`). Tables should sit flush within their container — no extra wrapper padding at top or bottom.
 - **Hover must be distinct from background**: Table rows use `hover:bg-table-row-hover`, a dedicated token (`--table-row-hover`) that is slightly lighter than `--muted` in both light and dark themes. Never use `hover:bg-foreground/[0.05]` for table rows — the contrast is too low on muted backgrounds.
 - **Tables on muted backgrounds**: Content-area tables (data browser, connections list) sit on `bg-muted`. The hover token is tuned for this case. Tables inside cards (on `bg-card`) also work because the token is between `--muted` and `--card`.
 - **Header rows don't hover**: `TableHeader` sets `[&_tr]:hover:bg-transparent` to prevent header hover states.
+- **Server-side pagination**: Paginated list endpoints return `{ items, total, page, limit }`. The frontend uses `page` state, a `PAGE_SIZE` constant, and computes `totalPages`. Pagination controls appear below the table only when `totalPages > 1`: a left-aligned `"N total entries"` label (`text-xs text-muted-foreground`) and right-aligned `ChevronLeft` / `page / totalPages` (`tabular-nums`) / `ChevronRight` buttons (`variant="outline" size="sm"`). When client-side filters exist, reset `page` to 1 on filter change.
+
+### Page Layout
+
+- **Page-level actions live in the header**: Primary action buttons (e.g., "Create Agent", "New Connection") MUST be placed to the right of the page's `h1` headline inside the `<header>`, not beside per-section `h2` sub-headings. Use a `flex items-center justify-between` wrapper around the `h1` group and the action buttons.
+- **No redundant section sub-headings**: If a page has a single content section below the header (one list or table), do not add an `h2` that restates the page title. The `h1` in the header already provides sufficient context.
+- **Multiple content sections may use sub-headings**: When a page contains genuinely distinct groups (e.g., MCP Access shows endpoint cards and a token list), lightweight sub-headings are acceptable to separate them — but primary actions still belong in the page header.
 
 ### Architecture Patterns
 

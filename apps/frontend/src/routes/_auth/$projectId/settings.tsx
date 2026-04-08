@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ListOrdered, FolderPen, Github } from "lucide-react";
+import { ListOrdered, FolderPen, Github, Loader2 } from "lucide-react";
 import { Label, Card, Input, Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@semlayer/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
@@ -31,16 +31,20 @@ function SettingsPage() {
   const [slugInput, setSlugInput] = useState(project.slug);
   const [slugTouched, setSlugTouched] = useState(false);
   const [slugError, setSlugError] = useState<string | null>(null);
+  const [pageSizeInput, setPageSizeInput] = useState(
+    String(project.mcpPageSize ?? 50),
+  );
 
   useEffect(() => {
     setTitleInput(project.title);
     setSlugInput(project.slug);
+    setPageSizeInput(String(project.mcpPageSize ?? 50));
     setSlugTouched(false);
     setSlugError(null);
-  }, [project._id, project.title, project.slug]);
+  }, [project._id, project.title, project.slug, project.mcpPageSize]);
 
-  const identityMutation = useMutation({
-    mutationFn: async (body: { title?: string; slug?: string }) => {
+  const saveMutation = useMutation({
+    mutationFn: async (body: { title?: string; slug?: string; mcpPageSize?: number }) => {
       const res = await api.api.projects[":id"].$put({
         param: { id: project._id },
         json: body,
@@ -57,27 +61,12 @@ function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project", project._id] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      toast.success("Project updated");
+      toast.success("Settings saved");
     },
     onError: (err) => {
       toast.error(err.message);
     },
   });
-
-  function handleTitleBlur() {
-    const trimmed = titleInput.trim();
-    if (!trimmed || trimmed === project.title) {
-      setTitleInput(project.title);
-      return;
-    }
-    const updates: { title: string; slug?: string } = { title: trimmed };
-    if (!slugTouched) {
-      const newSlug = slugify(trimmed);
-      setSlugInput(newSlug);
-      updates.slug = newSlug;
-    }
-    identityMutation.mutate(updates);
-  }
 
   function handleTitleChange(value: string) {
     setTitleInput(value);
@@ -102,57 +91,46 @@ function SettingsPage() {
     }
   }
 
-  function handleSlugBlur() {
-    if (slugInput === project.slug) return;
-    if (!slugInput || slugInput.length < 2 || !SLUG_PATTERN.test(slugInput)) {
-      setSlugInput(project.slug);
-      setSlugError(null);
-      return;
-    }
-    identityMutation.mutate({ slug: slugInput });
-  }
+  const trimmedTitle = titleInput.trim();
+  const parsedPageSize = parseInt(pageSizeInput, 10);
+  const pageSizeValid = !isNaN(parsedPageSize) && parsedPageSize >= 10 && parsedPageSize <= 200;
+  const slugValid = slugInput.length >= 2 && SLUG_PATTERN.test(slugInput);
 
-  const pageSizeMutation = useMutation({
-    mutationFn: async (mcpPageSize: number) => {
-      const res = await api.api.projects[":id"].$put({
-        param: { id: project._id },
-        json: { mcpPageSize },
-      });
-      if (!res.ok) throw new Error("Failed to update project");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
-      toast.success("Setting updated");
-    },
-    onError: (err) => {
-      toast.error(err.message);
-    },
-  });
+  const titleDirty = trimmedTitle !== project.title && trimmedTitle.length > 0;
+  const slugDirty = slugInput !== project.slug && slugValid;
+  const pageSizeDirty = pageSizeValid && parsedPageSize !== (project.mcpPageSize ?? 50);
+  const isDirty = titleDirty || slugDirty || pageSizeDirty;
+  const hasValidationErrors = !!slugError || (pageSizeInput !== "" && !pageSizeValid);
 
-  const [pageSizeInput, setPageSizeInput] = useState(
-    String(project.mcpPageSize ?? 50),
-  );
-
-  function handlePageSizeBlur() {
-    const value = parseInt(pageSizeInput, 10);
-    if (isNaN(value) || value < 10 || value > 200) {
-      setPageSizeInput(String(project.mcpPageSize ?? 50));
-      return;
-    }
-    if (value !== (project.mcpPageSize ?? 50)) {
-      pageSizeMutation.mutate(value);
+  function handleSave() {
+    const updates: { title?: string; slug?: string; mcpPageSize?: number } = {};
+    if (titleDirty) updates.title = trimmedTitle;
+    if (slugDirty) updates.slug = slugInput;
+    if (pageSizeDirty) updates.mcpPageSize = parsedPageSize;
+    if (Object.keys(updates).length > 0) {
+      saveMutation.mutate(updates);
     }
   }
 
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
-        <div className="content-tight">
-          <h1 className="text-heading text-2xl">Settings</h1>
-          <p className="text-subtle text-sm">
-            Configure project-level settings for {project.title}
-          </p>
+        <div className="content-tight flex items-start justify-between">
+          <div>
+            <h1 className="text-heading text-2xl">Settings</h1>
+            <p className="text-subtle text-sm">
+              Configure project-level settings for {project.title}
+            </p>
+          </div>
+          <Button
+            onClick={handleSave}
+            disabled={!isDirty || hasValidationErrors || saveMutation.isPending}
+          >
+            {saveMutation.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Save changes
+          </Button>
         </div>
       </header>
 
@@ -180,12 +158,8 @@ function SettingsPage() {
                     <Input
                       id="project-title"
                       value={titleInput}
-                      disabled={identityMutation.isPending}
+                      disabled={saveMutation.isPending}
                       onChange={(e) => handleTitleChange(e.target.value)}
-                      onBlur={handleTitleBlur}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                      }}
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -195,12 +169,8 @@ function SettingsPage() {
                     <Input
                       id="project-slug"
                       value={slugInput}
-                      disabled={identityMutation.isPending}
+                      disabled={saveMutation.isPending}
                       onChange={(e) => handleSlugChange(e.target.value)}
-                      onBlur={handleSlugBlur}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                      }}
                     />
                     {slugError && (
                       <p className="text-destructive text-xs">{slugError}</p>
@@ -232,14 +202,10 @@ function SettingsPage() {
                 pattern="[0-9]*"
                 className="w-20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={pageSizeInput}
-                disabled={pageSizeMutation.isPending}
+                disabled={saveMutation.isPending}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (v === "" || /^\d+$/.test(v)) setPageSizeInput(v);
-                }}
-                onBlur={handlePageSizeBlur}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
                 }}
               />
             </div>

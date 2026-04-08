@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Bot } from "lucide-react";
+import { Plus, Pencil, Trash2, Bot, Loader2, Zap } from "lucide-react";
 import {
   Badge,
   Button,
@@ -86,24 +86,23 @@ function TestAgentsPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
-        <div className="content-tight">
-          <h1 className="text-heading text-2xl">Test Agents</h1>
-          <p className="text-subtle text-sm">
-            Configure LLM-powered agents to test your semantic models.
-          </p>
+        <div className="flex items-center justify-between">
+          <div className="content-tight">
+            <h1 className="text-heading text-2xl">Test Agents</h1>
+            <p className="text-subtle text-sm">
+              Configure LLM-powered agents to test your semantic models.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Create Agent
+          </Button>
         </div>
       </header>
 
       <div className="divider-subtle mx-8" />
 
       <div className="flex-1 overflow-y-auto p-8 space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-heading text-lg">Agents</h2>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Create Agent
-          </Button>
-        </div>
 
         {agents.length === 0 ? (
           <Card className="flex flex-col items-center justify-center p-12 text-center">
@@ -289,6 +288,22 @@ function AgentFormDialog({
     });
   }
 
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      if (!agent) return;
+      const res = await api.api.projects[":projectId"]["test-agents"][":agentId"]["test-connection"].$post({
+        param: { projectId, agentId: agent._id },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body as any)?.error ?? "Connection test failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => toast.success("LLM connection is healthy"),
+    onError: (err) => toast.error(err.message),
+  });
+
   const canSubmit =
     name.trim().length > 0 &&
     llmBaseUrl.trim().length > 0 &&
@@ -386,6 +401,22 @@ function AgentFormDialog({
         </div>
 
         <DialogFooter>
+          {agent && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mr-auto"
+              disabled={testMutation.isPending}
+              onClick={() => testMutation.mutate()}
+            >
+              {testMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Zap className="mr-2 h-4 w-4" />
+              )}
+              Test Connection
+            </Button>
+          )}
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!canSubmit} onClick={() => mutation.mutate()}>
             {mutation.isPending ? "Saving..." : agent ? "Save Changes" : "Create Agent"}

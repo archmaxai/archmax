@@ -262,26 +262,9 @@ export class SemanticModelFileService {
   }
 
   async getRawYaml(projectId: string, name: string): Promise<string | null> {
-    assertSafeSegment(name, "model name");
-    const dir = await this.resolveWorkDir(projectId);
-    const rootPath = join(dir, `${name}.yaml`);
-    let rootContent: string;
-    try {
-      rootContent = await readFile(rootPath, "utf-8");
-    } catch {
-      return null;
-    }
-
-    const dsDir = join(dir, name);
-    if (!(await this.dirExists(dsDir))) {
-      return rootContent;
-    }
-
-    const root = yaml.load(rootContent) as Record<string, unknown>;
-    const datasets = await this.readAllDatasets(dsDir);
-    root.datasets = datasets;
-
-    return yaml.dump(stripEmptyExtensions(root as Record<string, unknown> & { datasets: unknown[] }), YAML_OPTS);
+    const model = await this.get(projectId, name);
+    if (!model) return null;
+    return yaml.dump(stripEmptyExtensions({ ...model } as Record<string, unknown>), YAML_OPTS);
   }
 
   async updateDatasetExtensions(

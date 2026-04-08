@@ -142,11 +142,17 @@ function McpAccessPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
-        <div className="content-tight">
-          <h1 className="text-heading text-2xl">MCP Access</h1>
-          <p className="text-subtle text-sm">
-            Manage bearer tokens for AI agents connecting to this project's MCP server.
-          </p>
+        <div className="flex items-center justify-between">
+          <div className="content-tight">
+            <h1 className="text-heading text-2xl">MCP Access</h1>
+            <p className="text-subtle text-sm">
+              Manage bearer tokens for AI agents connecting to this project's MCP server.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Create Token
+          </Button>
         </div>
       </header>
 
@@ -195,14 +201,6 @@ function McpAccessPage() {
               {copiedTestEndpoint ? "Copied" : "Copy"}
             </Button>
           </Card>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <h2 className="text-heading text-lg">Tokens</h2>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Create Token
-          </Button>
         </div>
 
         {tokens.length === 0 ? (

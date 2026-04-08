@@ -81,6 +81,11 @@ function ModelsChat() {
         onConversationCreated={handleConversationCreated}
         onStreamEnd={onStreamEnd}
         activeStreamConversationId={activeStreamId}
+        inputBottomLeft={
+          <span className="inline-flex items-center rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
+            Semantic Model Builder
+          </span>
+        }
       />
     </div>
   );

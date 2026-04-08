@@ -1,0 +1,284 @@
+# testing-suite Specification
+
+## Purpose
+TBD - created by archiving change add-testing-suite. Update Purpose after archive.
+## Requirements
+### Requirement: Test Agent Model
+
+The system SHALL provide a `TestAgent` Mongoose model with the following fields: `name` (string, required), `project` (ObjectId ref to Project, required, indexed), `semanticModels` (array of strings — semantic model names the agent can access), `systemPrompt` (string, required), `llmBaseUrl` (string, required — OpenAI-compatible base URL), `encryptedApiKey` (string, required — AES-256-GCM encrypted API key), `llmModel` (string, required — model identifier), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
+
+#### Scenario: Create a test agent
+
+- **WHEN** a TestAgent is created with `name: "GPT-4o Agent"`, `project: "<projectId>"`, `semanticModels: ["ecommerce"]`, `systemPrompt: "You are a data analyst..."`, `llmBaseUrl: "https://api.openai.com/v1"`, API key `"sk-abc123"`, and `llmModel: "gpt-4o"`
+- **THEN** the API key is encrypted with AES-256-GCM using `ENCRYPTION_KEY` and stored as `encryptedApiKey`
+- **AND** the agent is persisted in MongoDB
+
+#### Scenario: Soft-delete a test agent
+
+- **WHEN** a TestAgent is soft-deleted
+- **THEN** the `deleted` flag is set to true
+- **AND** the agent no longer appears in list queries
+
+### Requirement: Test Agent CRUD API
+
+The API SHALL expose CRUD endpoints for test agents at `/api/projects/:projectId/test-agents`:
+
+- `GET /` — List all non-deleted test agents for the project (name, semanticModels, systemPrompt, llmBaseUrl, llmModel, createdAt; never the API key)
+- `GET /:agentId` — Get a single test agent (same fields as list; API key returned as masked string e.g. `sk-...****`)
+- `POST /` — Create a new test agent (accepts name, semanticModels, systemPrompt, llmBaseUrl, apiKey, llmModel; encrypts and stores the API key)
+- `PUT /:agentId` — Update a test agent (all fields except apiKey are updatable; if `apiKey` is provided, re-encrypt and replace)
+- `DELETE /:agentId` — Soft-delete a test agent
+
+All endpoints SHALL require admin session auth.
+
+#### Scenario: Create a test agent and verify API key is hidden
+
+- **WHEN** a POST request creates a test agent with `apiKey: "sk-live-abc123"`
+- **THEN** the response includes all agent fields
+- **AND** the `apiKey` field is NOT included in the response (shown only in the creation confirmation)
+- **AND** subsequent GET requests return the API key as a masked string
+
+#### Scenario: Update a test agent without changing API key
+
+- **WHEN** a PUT request updates the `systemPrompt` without providing `apiKey`
+- **THEN** the existing encrypted API key is preserved
+
+#### Scenario: Update a test agent's API key
+
+- **WHEN** a PUT request includes a new `apiKey` value
+- **THEN** the old encrypted key is replaced with the newly encrypted value
+
+#### Scenario: List test agents for a project
+
+- **WHEN** a GET request is made to `/api/projects/:projectId/test-agents`
+- **THEN** all non-deleted test agents are returned with name, semanticModels, llmBaseUrl, llmModel, and createdAt
+- **AND** no API key or encrypted key data is included
+
+### Requirement: Test Case Model
+
+The system SHALL provide a `TestCase` Mongoose model with the following fields: `title` (string, required), `project` (ObjectId ref to Project, required, indexed), `semanticModel` (string, required — the semantic model name to test against), `inputMessage` (string, required — the natural language question to send to the agent), `expectedFacts` (array of strings, required, min 1 — factual assertions that the agent's response must satisfy), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
+
+#### Scenario: Create a test case
+
+- **WHEN** a TestCase is created with `title: "Revenue 2025"`, `semanticModel: "ecommerce"`, `inputMessage: "What's the revenue for 2025?"`, `expectedFacts: ["Revenue is 1.65 MEUR"]`
+- **THEN** the test case is persisted in MongoDB
+
+#### Scenario: Create a test case with multiple expected facts
+
+- **WHEN** a TestCase is created with `expectedFacts: ["Revenue is 1.65 MEUR", "Growth rate is 12%", "Top market is Germany"]`
+- **THEN** all three facts are stored and each will be individually evaluated during a test run
+
+### Requirement: Test Case CRUD API
+
+The API SHALL expose CRUD endpoints for test cases at `/api/projects/:projectId/test-cases`:
+
+- `GET /` — List all non-deleted test cases for the project
+- `POST /` — Create a new test case
+- `PUT /:caseId` — Update an existing test case
+- `DELETE /:caseId` — Soft-delete a test case
+
+All endpoints SHALL require admin session auth.
+
+#### Scenario: List test cases for a project
+
+- **WHEN** a GET request is made to `/api/projects/:projectId/test-cases`
+- **THEN** all non-deleted test cases are returned with title, semanticModel, inputMessage, expectedFacts, and timestamps
+
+#### Scenario: Delete a test case
+
+- **WHEN** a DELETE request is made for a test case
+- **THEN** the test case is soft-deleted and no longer appears in list queries
+
+### Requirement: Playground Chat
+
+The system SHALL provide an interactive playground chat where the user selects a test agent and converses with it. The playground agent SHALL be configured with the test agent's LLM settings (decrypted API key, base URL, model) and system prompt, and SHALL have access to MCP-style tools scoped to the test agent's selected semantic models:
+
+- `list_semantic_models` — list available semantic models (filtered to agent's selected models)
+- `get_semantic_model_overview` — get model overview (datasets, relationships, metrics)
+- `get_dataset_fields` — get dataset fields with types, examples, and AI context
+- `execute_query` — run read-only SQL queries via scoped DuckDB VIEWs
+
+The tools SHALL read from the current development state of semantic models (YAML files on disk), not from any published snapshot. Playground conversations SHALL be persisted in the existing `Conversation` model with a `testAgent` reference field. Playground interactions SHALL NOT be logged to `McpCallLog`.
+
+#### Scenario: Start a playground conversation
+
+- **WHEN** the user selects a test agent and sends a message in the playground
+- **THEN** a new Conversation is created with the `testAgent` field set to the agent's ID
+- **AND** the agent is initialized with the test agent's LLM config and MCP-style tools
+- **AND** the response streams via SSE using the same protocol as the semantic model builder
+
+#### Scenario: Playground agent queries a semantic model
+
+- **WHEN** the playground agent invokes `execute_query` with a model name and SQL
+- **THEN** scoped VIEWs are created for the model's datasets (same pattern as MCP server)
+- **AND** the query executes against the project's DuckDB instance
+- **AND** results are returned to the agent
+
+#### Scenario: Playground conversations excluded from access log
+
+- **WHEN** the playground agent executes MCP-style tools
+- **THEN** no entries are created in `McpCallLog`
+
+#### Scenario: Resume a playground conversation
+
+- **WHEN** the user selects a past playground conversation from the history
+- **THEN** the conversation is loaded with full message and tool call history
+- **AND** subsequent messages continue in the same conversation context
+
+#### Scenario: Playground reuses chat UI components
+
+- **WHEN** the playground renders a conversation
+- **THEN** messages, tool call cards, markdown rendering, and streaming indicators use the same components as the semantic model builder chat (`agent-chat`, `tool-call-card`, `chat-input`, `markdown-components`)
+
+### Requirement: Test Run Model
+
+The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `testAgent` (ObjectId ref to TestAgent, required), `status` (enum: `pending`, `running`, `completed`, `failed`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string — snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`), `agentResponse` (string — the agent's final text response), `toolCalls` (array of tool call records — same shape as Conversation toolCalls), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
+
+#### Scenario: Create a test run
+
+- **WHEN** a batch run is initiated with a test agent and a set of test cases
+- **THEN** a TestRun document is created with `status: "pending"` and each case embedded with `status: "pending"`
+
+#### Scenario: Test run completes successfully
+
+- **WHEN** all test cases in a run finish processing
+- **THEN** the TestRun status is set to `completed`
+- **AND** `completedAt` is set
+
+#### Scenario: Individual test case passes
+
+- **WHEN** the judge evaluates the agent's response against the expected facts
+- **AND** all facts are satisfied
+- **THEN** the case result status is `passed` and each factResult has `passed: true`
+
+#### Scenario: Individual test case fails
+
+- **WHEN** the judge evaluates the agent's response and one or more expected facts are not satisfied
+- **THEN** the case result status is `failed`
+- **AND** the `factResults` array shows which facts passed and which did not, with reasoning
+
+### Requirement: Test Run Batch Execution
+
+The system SHALL execute test runs via a dedicated `test-runs` BullMQ queue processed by the worker (`apps/worker/`). When a batch run is initiated:
+
+1. The API creates a `TestRun` document and enqueues one job per test case on the `test-runs` queue
+2. Each job creates a playground-style agent with the test agent's LLM config, scoped to the test case's semantic model
+3. The agent processes the input message and produces a response with tool calls
+4. A judge LLM call evaluates each expected fact against the agent's response
+5. The case result (status, response, tool calls, fact results, duration) is written to the `TestRun` document
+6. When all cases complete, the `TestRun` status is updated to `completed`
+
+The batch execution SHALL integrate with the existing worker infrastructure: same Redis connection, same graceful shutdown handling, same stalled job detection. When Redis is not configured, the API SHALL fall back to in-process execution (sequential).
+
+#### Scenario: Batch run enqueues jobs via worker
+
+- **GIVEN** Redis is configured and the worker is running
+- **WHEN** a batch run is initiated with 5 test cases
+- **THEN** 5 jobs are enqueued on the `test-runs` queue
+- **AND** the worker processes them concurrently (up to `WORKER_CONCURRENCY`)
+
+#### Scenario: Batch run without Redis falls back to in-process
+
+- **GIVEN** `REDIS_URL` is not set
+- **WHEN** a batch run is initiated
+- **THEN** test cases are executed sequentially in the API process
+
+#### Scenario: Test case execution error
+
+- **WHEN** the agent pipeline fails for a test case (LLM error, timeout, etc.)
+- **THEN** the case result status is set to `error` with the error message
+- **AND** remaining test cases continue processing
+
+#### Scenario: Fact evaluation via LLM judge
+
+- **GIVEN** a test case with `expectedFacts: ["Revenue is 1.65 MEUR", "Growth rate is 12%"]`
+- **WHEN** the agent responds with "The total revenue for 2025 was approximately 1.65 million EUR, representing a year-over-year growth of 12%."
+- **THEN** the judge returns `[{ fact: "Revenue is 1.65 MEUR", passed: true, reasoning: "..." }, { fact: "Growth rate is 12%", passed: true, reasoning: "..." }]`
+
+### Requirement: Test Run API
+
+The API SHALL expose endpoints for managing test runs at `/api/projects/:projectId/test-runs`:
+
+- `GET /` — List all test runs for the project (summary: id, testAgent name, case count, passed/failed/error counts, status, timestamps)
+- `GET /:runId` — Get a single test run with full case results
+- `POST /` — Initiate a batch run (accepts `testAgentId` and `testCaseIds` array)
+- `DELETE /:runId` — Delete a test run
+
+All endpoints SHALL require admin session auth.
+
+#### Scenario: Initiate a batch run
+
+- **WHEN** a POST request is made with `testAgentId` and an array of `testCaseIds`
+- **THEN** a TestRun is created and jobs are enqueued
+- **AND** the response returns the TestRun ID and status `pending`
+
+#### Scenario: Poll test run progress
+
+- **WHEN** a GET request is made for a running test run
+- **THEN** the response includes the current status of each case (pending, running, passed, failed, error)
+- **AND** completed cases include their full results
+
+### Requirement: Testing UI — Test Agents Page
+
+The frontend SHALL provide a Test Agents page at `/$projectId/testing/agents` displaying a table of all test agents with columns: name, semantic models (as badges), LLM model, base URL, and actions (edit, delete). A "Create Test Agent" button SHALL open a form dialog with fields: name, semantic model multi-select (from available project models), system prompt (textarea), OpenAI base URL, API key (password input), and model name. After creation, the API key is no longer visible. Editing a test agent allows changing all fields; the API key field shows a placeholder and only updates if a new value is entered.
+
+#### Scenario: Create a test agent via UI
+
+- **WHEN** the user fills in the create form and submits
+- **THEN** the test agent is created via the API
+- **AND** the table refreshes to include the new agent
+- **AND** the API key field is cleared and no longer retrievable
+
+#### Scenario: Edit a test agent
+
+- **WHEN** the user clicks edit on a test agent row
+- **THEN** a form dialog opens with current values pre-filled (API key shows placeholder)
+- **AND** submitting updates the agent via PUT
+
+#### Scenario: Delete a test agent
+
+- **WHEN** the user clicks delete and confirms
+- **THEN** the agent is soft-deleted via the API and removed from the table
+
+### Requirement: Testing UI — Test Cases Page
+
+The frontend SHALL provide a Test Cases page at `/$projectId/testing/cases` displaying a table of all test cases with columns: title, semantic model, input message (truncated), expected facts count, and actions (edit, delete). A "Create Test Case" button SHALL open a form dialog with fields: title, semantic model (single select from project models), input message (textarea), and expected facts (dynamic list — add/remove individual fact strings). A "Run Batch" button SHALL allow the user to select a test agent and run all (or selected) test cases, navigating to the test run detail view.
+
+#### Scenario: Create a test case via UI
+
+- **WHEN** the user fills in the create form with title, model, input, and at least one expected fact
+- **THEN** the test case is created and appears in the table
+
+#### Scenario: Run a batch from the test cases page
+
+- **WHEN** the user clicks "Run Batch", selects a test agent, and confirms
+- **THEN** a test run is initiated via the API
+- **AND** the user is navigated to the test run detail view showing live progress
+
+#### Scenario: View test run results
+
+- **WHEN** the user views a completed test run
+- **THEN** each test case shows pass/fail status with a breakdown of individual fact evaluations including the judge's reasoning
+- **AND** the agent's response and tool calls are viewable for each case
+
+### Requirement: Testing UI — Playground Page
+
+The frontend SHALL provide a Playground page at `/$projectId/testing/playground` with a test agent selector and a chat interface. The chat interface SHALL reuse the existing chat components (`AgentChat`, `ToolCallCard`, `ChatInput`, `MarkdownContent`) adapted to work with playground conversations. The sidebar SHALL show past playground conversations for the selected test agent. Tool calls (list_semantic_models, get_semantic_model_overview, get_dataset_fields, execute_query) SHALL be rendered with the same card-based visualization as the semantic model builder.
+
+#### Scenario: Select a test agent and start chatting
+
+- **WHEN** the user selects a test agent from the dropdown
+- **THEN** past playground conversations for that agent are shown in the sidebar
+- **AND** the user can start a new conversation or resume an existing one
+
+#### Scenario: Tool calls displayed in playground
+
+- **WHEN** the playground agent invokes `execute_query`
+- **THEN** the tool call card shows the SQL query with syntax highlighting and result table (same as semantic model builder)
+
+#### Scenario: Switch test agent
+
+- **WHEN** the user switches to a different test agent
+- **THEN** the conversation list updates to show that agent's past conversations
+- **AND** any active conversation is deselected
+

@@ -43,13 +43,13 @@ The sidebar SHALL display a project selector above the navigation menu. The sele
 
 ### Requirement: Sidebar Navigation
 
-The sidebar SHALL display navigation items below the project selector. Each item has an icon and a label. The items are: Data Connections, Semantic Models, MCP Access, Monitoring, and Settings. The active route is visually highlighted.
+The sidebar SHALL display navigation items below the project selector. Each item has an icon and a label. Top-level items are: Data Federation, Semantic Models, Testing, MCP Access, and Settings. Data Federation is a collapsible group containing: Data Sources and Browser. The active route is visually highlighted.
 
-#### Scenario: Navigate to Data Connections
+#### Scenario: Navigate to Data Sources
 
-- **WHEN** the user clicks the Data Connections nav item
+- **WHEN** the user clicks the Data Sources nav item under Data Federation
 - **THEN** the URL changes to `/<projectId>/connections`
-- **AND** the Data Connections item is highlighted as active
+- **AND** the Data Sources item is highlighted as active
 
 #### Scenario: Navigate to Semantic Models
 

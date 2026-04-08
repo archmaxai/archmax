@@ -3,6 +3,7 @@ import Redis from "ioredis";
 import { connectDB } from "@semlayer/core/infra/db";
 import { Conversation } from "@semlayer/core/models/index";
 import { createSemlayerAgent } from "@semlayer/core/services/agent";
+import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@semlayer/core/services/playground-agent";
 import {
   getRedis,
   isCancelFlagSet,
@@ -150,7 +151,10 @@ export async function processAgentJob(
       throw new UnrecoverableError("Conversation not found");
     }
 
-    const agent = await createSemlayerAgent(projectId);
+    const isPlayground = !!job.data.testAgentId;
+    const agent = isPlayground
+      ? await createPlaygroundAgent(job.data.testAgentId!)
+      : await createSemlayerAgent(projectId);
 
     const inputMessages = conv.messages
       .filter(
@@ -175,9 +179,17 @@ export async function processAgentJob(
       }
     };
 
+    const streamOptions: Record<string, unknown> = {
+      version: "v2",
+      signal: abortController.signal,
+    };
+    if (isPlayground) {
+      streamOptions.recursionLimit = getTestAgentRecursionLimit();
+    }
+
     const events = agent.streamEvents(
       { messages: inputMessages },
-      { version: "v2", signal: abortController.signal },
+      streamOptions,
     );
 
     for await (const event of events) {

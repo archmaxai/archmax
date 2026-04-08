@@ -4,6 +4,8 @@ import {
   Plus,
   MessageSquare,
   Trash2,
+  MoreHorizontal,
+  Loader2,
 } from "lucide-react";
 
 import { cn, Button, ScrollArea, Skeleton } from "@semlayer/ui";
@@ -90,6 +92,15 @@ function ModelsLayout() {
     <div className="flex h-full">
       <div className="flex shrink-0 flex-col bg-muted min-h-0" style={{ width: panelWidth }}>
         <ScrollArea className="flex-1 min-h-0 pt-1.5">
+            <AccordionSection title="Semantic Models">
+              <SemanticModelExplorer
+                projectId={project._id}
+                selectedModel={selectedModelName}
+              />
+            </AccordionSection>
+
+            <div className="divider-subtle mx-3" />
+
             <AccordionSection
               title="History"
               action={
@@ -117,7 +128,7 @@ function ModelsLayout() {
                   <div
                     key={c._id}
                     className={cn(
-                      "group flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition-colors cursor-pointer",
+                      "group flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors cursor-pointer",
                       c._id === activeConvId
                         ? "bg-foreground/[0.08] text-foreground font-medium"
                         : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
@@ -128,11 +139,9 @@ function ModelsLayout() {
                       params={{ projectId: project._id, conversationId: c._id }}
                       className="flex items-center gap-2 flex-1 min-w-0"
                     >
-                      <MessageSquare className="h-3 w-3 shrink-0" />
-                      <span className="flex-1 truncate text-xs">
-                        {c.title && c.title.length > 30
-                          ? c.title.slice(0, 30) + "..."
-                          : c.title}
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                      <span className="flex-1 truncate">
+                        {c.title && c.title.length > 25 ? c.title.slice(0, 25) + "…" : c.title}
                       </span>
                     </Link>
                     <button
@@ -147,15 +156,17 @@ function ModelsLayout() {
                   </div>
                 ))}
                 {hasNextPage && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <button
                     onClick={() => fetchNextPage()}
                     disabled={isFetchingNextPage}
-                    className="w-full text-xs text-muted-foreground h-7"
+                    className="flex w-full items-center justify-center py-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-50"
                   >
-                    {isFetchingNextPage ? "Loading…" : "Load More"}
-                  </Button>
+                    {isFetchingNextPage ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" />
+                    )}
+                  </button>
                 )}
                 {!listLoading && !conversations?.length && (
                   <p className="px-3 py-4 text-xs text-muted-foreground text-center">
@@ -163,15 +174,6 @@ function ModelsLayout() {
                   </p>
                 )}
               </div>
-            </AccordionSection>
-
-            <div className="divider-subtle mx-3" />
-
-            <AccordionSection title="Models">
-              <SemanticModelExplorer
-                projectId={project._id}
-                selectedModel={selectedModelName}
-              />
             </AccordionSection>
         </ScrollArea>
       </div>

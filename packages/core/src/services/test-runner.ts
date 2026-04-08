@@ -60,6 +60,7 @@ export async function processTestCase(
   semanticModel: string,
   inputMessage: string,
   expectedFacts: string[],
+  maxToolCalls?: number,
 ): Promise<void> {
   await connectDB();
   const start = Date.now();
@@ -72,9 +73,14 @@ export async function processTestCase(
   try {
     const agent = await createPlaygroundAgent(testAgentId);
 
+    const defaultLimit = getTestAgentRecursionLimit();
+    const recursionLimit = maxToolCalls
+      ? Math.min(maxToolCalls * 2 + 2, defaultLimit)
+      : defaultLimit;
+
     const result = await agent.invoke(
       { messages: [new HumanMessage(inputMessage)] },
-      { recursionLimit: getTestAgentRecursionLimit() },
+      { recursionLimit },
     );
 
     let agentResponse = "";
@@ -101,6 +107,22 @@ export async function processTestCase(
           status: "completed",
         });
       }
+    }
+
+    if (maxToolCalls && toolCalls.length > maxToolCalls) {
+      await TestRun.updateOne(
+        { _id: testRunId },
+        {
+          $set: {
+            [`cases.${caseIndex}.status`]: "error",
+            [`cases.${caseIndex}.agentResponse`]: agentResponse,
+            [`cases.${caseIndex}.toolCalls`]: toolCalls,
+            [`cases.${caseIndex}.errorMessage`]: `Exceeded max tool calls (${maxToolCalls})`,
+            [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+          },
+        },
+      );
+      return;
     }
 
     const testAgentDoc = await TestAgent.findById(testAgentId).lean();
@@ -131,9 +153,11 @@ export async function processTestCase(
   } catch (err) {
     console.error(`[test-runner] Case ${caseIndex} error:`, err);
     const isRecursionError = err instanceof Error && /recursion limit/i.test(err.message);
-    const errorMessage = isRecursionError
-      ? `Agent exceeded the maximum number of iterations (${getTestAgentRecursionLimit()}). The model may be stuck in a loop — try simplifying the input, adjusting the system prompt, or increasing TEST_AGENT_MAX_ITERATIONS.`
-      : err instanceof Error ? err.message : "Unknown error";
+    const errorMessage = isRecursionError && maxToolCalls
+      ? `Exceeded max tool calls (${maxToolCalls})`
+      : isRecursionError
+        ? `Agent exceeded the maximum number of iterations (${getTestAgentRecursionLimit()}). The model may be stuck in a loop — try simplifying the input, adjusting the system prompt, or increasing TEST_AGENT_MAX_ITERATIONS.`
+        : err instanceof Error ? err.message : "Unknown error";
     await TestRun.updateOne(
       { _id: testRunId },
       {

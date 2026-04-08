@@ -3,6 +3,8 @@ export interface AgentJobData {
   conversationId: string;
   assistantMessageId: string;
   message: string;
+  /** When set, use createPlaygroundAgent instead of createSemlayerAgent */
+  testAgentId?: string;
 }
 
 export interface AgentJobResult {
@@ -18,6 +20,7 @@ export interface TestRunJobData {
   semanticModel: string;
   inputMessage: string;
   expectedFacts: string[];
+  maxToolCalls?: number;
 }
 
 export interface TestRunJobResult {

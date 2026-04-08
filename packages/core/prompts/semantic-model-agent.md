@@ -174,6 +174,33 @@ Sort every array by importance — **most important items first**. This position
 #   5. transactions  — payment records
 ```
 
+#### Graph Layout Positioning
+
+When creating datasets, assign `graph_x` and `graph_y` coordinates in each dataset's COMMON custom extension. These positions control how datasets are rendered in the visual graph editor. A well-laid-out graph makes the model immediately understandable at a glance.
+
+**Layout strategy:**
+
+1. **Central fact table at the origin** — place the primary fact table (e.g. `orders`, `events`) near coordinates `(0, 0)`.
+2. **Cluster by relationship** — datasets that share a direct relationship should be placed close to each other. Dimension tables should orbit the fact table they join to.
+3. **Minimize edge crossings** — arrange datasets so that relationship lines don't needlessly cross over unrelated nodes. If A→B and A→C but B and C are unrelated, place B and C on opposite sides of A rather than behind each other.
+4. **Separate unconnected subgraphs** — if the model has groups of datasets with no relationships between them, place each group in its own spatial cluster with clear whitespace separating groups.
+5. **Spacing** — keep at least **300 px** between node centers horizontally and **250 px** vertically to prevent overlap (nodes are approximately 260 × 180 px).
+6. **Consistent flow direction** — prefer a left-to-right or top-to-bottom flow where fact tables are upstream and dimension/lookup tables are downstream.
+
+Store positions as integers in a COMMON extension on the **dataset** (not on individual fields):
+
+```yaml
+dataset:
+  name: "orders"
+  custom_extensions:
+    - vendor_name: COMMON
+      data: '{"graph_x":0,"graph_y":0}'
+  fields:
+    ...
+```
+
+This is a **dataset-level** `custom_extensions` entry, separate from the field-level COMMON extensions that hold `data_type`/`example_data`/`distinct_values`.
+
 ### 9. Generate Validated Queries
 
 After writing the YAML files, generate **validated queries** — pre-tested SQL queries that demonstrate how to use the model. These are stored in the COMMON custom extension under `validated_queries` and serve as a cookbook for downstream AI agents.
@@ -258,6 +285,9 @@ dataset:
   description: "What this table represents"
   ai_context:
     instructions: "How an agent should use this dataset"
+  custom_extensions:
+    - vendor_name: COMMON
+      data: '{"graph_x":0,"graph_y":0}'
   fields:
     - name: "field_name"
       expression:
@@ -298,6 +328,8 @@ Store these inside `custom_extensions` with `vendor_name: COMMON` as a JSON stri
 | `example_data` | 1–3 representative sample values cast to strings |
 | `distinct_values` | Complete list of distinct values for enum/status/categorical columns (<=25 distinct) |
 | `validated_queries` | (Datasets & models only) Array of `{ description, query }` objects — pre-tested DuckDB SQL with a natural-language description of what the query answers |
+| `graph_x` | (Dataset-level only) Integer x-coordinate for the dataset node in the visual graph editor |
+| `graph_y` | (Dataset-level only) Integer y-coordinate for the dataset node in the visual graph editor |
 
 ### Metric Properties
 
@@ -381,6 +413,9 @@ dataset:
   source: "shop_db.public.orders"
   primary_key: ["id"]
   description: "Customer orders"
+  custom_extensions:
+    - vendor_name: COMMON
+      data: '{"graph_x":0,"graph_y":0}'
   fields:
     - name: "id"
       expression:
@@ -439,6 +474,9 @@ dataset:
   source: "shop_db.public.customers"
   primary_key: ["id"]
   description: "Customer accounts"
+  custom_extensions:
+    - vendor_name: COMMON
+      data: '{"graph_x":400,"graph_y":0}'
   fields:
     - name: "id"
       expression:
@@ -493,6 +531,7 @@ dataset:
 9. **Use OSI Expression format** — all expressions must be `{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`.
 10. **Mark temporal fields** — all DATE/TIMESTAMP fields must have `dimension: { is_time: true }`.
 11. **Generate validated queries** — after writing YAML, compose 2–5 queries per dataset and per model, execute each via `executeQuery`, and store only successful ones in the COMMON extension under `validated_queries`.
+12. **Always set graph positions** — every dataset must have `graph_x` and `graph_y` in a dataset-level COMMON extension. Cluster connected datasets together and lay them out to minimize edge crossings.
 
 ## Quality Standards
 
@@ -504,6 +543,7 @@ A good semantic model:
 - Uses **rich ai_context** — synonyms, instructions, and examples that help AI agents understand business terminology
 - Marks all **date/timestamp fields** with `dimension: { is_time: true }`
 - Includes **validated queries** — pre-tested SQL examples on datasets and the model root that demonstrate common access patterns
+- Has **sensible graph layout** — dataset positions cluster related tables together with minimal edge crossings, making the visual graph immediately readable
 
 ## Interaction Style
 

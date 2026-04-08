@@ -1,5 +1,6 @@
 import { useState, useRef, useLayoutEffect } from "react";
 import {
+  ArrowRightLeft,
   Database,
   FolderOpen,
   FileText,
@@ -134,6 +135,17 @@ const TOOL_META: Record<
     label: (tc) => {
       const n = fileBasename(tc);
       return tc.status === "completed" ? `Deleted ${n}` : `Deleting ${n}…`;
+    },
+  },
+  rename: {
+    icon: ArrowRightLeft,
+    label: (tc) => {
+      const a = getArgs(tc);
+      const from = ((a?.oldPath as string) || "").split("/").pop() || "file";
+      const to = ((a?.newPath as string) || "").split("/").pop() || "file";
+      return tc.status === "completed"
+        ? `Renamed ${from} → ${to}`
+        : `Renaming ${from}…`;
     },
   },
   read_document: {
@@ -411,6 +423,31 @@ function FileContentExpanded({ tc }: { tc: ToolCallInfo }) {
   );
 }
 
+function RenameExpanded({ tc }: { tc: ToolCallInfo }) {
+  const args = getArgs(tc);
+  const from = (args?.oldPath as string) || "?";
+  const to = (args?.newPath as string) || "?";
+  const result = tc.result
+    ? (safeParse(tc.result) as Record<string, unknown> | null)
+    : null;
+  const error = result?.error as string | undefined;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-[11px] font-mono">
+        <span className="text-muted-foreground">{from}</span>
+        <ArrowRightLeft className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <span>{to}</span>
+      </div>
+      {error && (
+        <Section label="Error">
+          <p className="text-[11px] text-destructive">{error}</p>
+        </Section>
+      )}
+    </div>
+  );
+}
+
 function GenericExpanded({ tc }: { tc: ToolCallInfo }) {
   const args = getArgs(tc);
   const hasArgs = Object.keys(args).length > 0;
@@ -507,6 +544,8 @@ function ExpandedContent({ tc }: { tc: ToolCallInfo }) {
     case "write_file":
     case "edit_file":
       return <FileContentExpanded tc={tc} />;
+    case "rename":
+      return <RenameExpanded tc={tc} />;
     default:
       return <GenericExpanded tc={tc} />;
   }

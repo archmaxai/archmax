@@ -7,11 +7,11 @@ import { processTestCase } from "@semlayer/core/services/test-runner";
 export async function processTestRunJob(
   job: Job<TestRunJobData, TestRunJobResult>,
 ): Promise<TestRunJobResult> {
-  const { testRunId, caseIndex, testAgentId, semanticModel, inputMessage, expectedFacts } = job.data;
+  const { testRunId, caseIndex, testAgentId, semanticModel, inputMessage, expectedFacts, maxToolCalls } = job.data;
   const start = Date.now();
 
   try {
-    await processTestCase(testRunId, caseIndex, testAgentId, semanticModel, inputMessage, expectedFacts);
+    await processTestCase(testRunId, caseIndex, testAgentId, semanticModel, inputMessage, expectedFacts, maxToolCalls);
   } catch (err) {
     throw new UnrecoverableError(err instanceof Error ? err.message : "Test case processing failed");
   }

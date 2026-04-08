@@ -198,6 +198,17 @@
       0 0 120px rgba(0, 0, 0, 0.15);
   }
 
+  /* Filter triggers — ghost-style select/button for toolbar filters */
+  .filter-trigger {
+    @apply h-7 border-0 shadow-none bg-transparent text-xs text-muted-foreground px-2.5 rounded-md;
+  }
+  .filter-trigger:hover {
+    @apply bg-foreground/[0.05] text-foreground;
+  }
+  .filter-trigger[data-state="open"] {
+    @apply bg-foreground/[0.08] text-foreground;
+  }
+
   /* Cards — flat surfaces, no shadows or borders; contrast via --card vs --background */
   .card-surface {
     @apply bg-card rounded-xl;

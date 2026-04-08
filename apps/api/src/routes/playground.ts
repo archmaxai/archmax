@@ -2,8 +2,17 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
+import { randomUUID } from "node:crypto";
 import { connectDB } from "@semlayer/core/infra/db";
 import { Conversation, TestAgent } from "@semlayer/core/models/index";
+import { isRedisConfigured, publishCancelSignal } from "@semlayer/core/infra/redis";
+import { enqueueAgentJob } from "@semlayer/core/queue/producer";
+import {
+  subscribeToStream,
+  getBufferedStreamEvents,
+  isStreamActive,
+  type StreamEvent,
+} from "@semlayer/core/streaming/stream-bridge";
 import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@semlayer/core/services/playground-agent";
 import { generateTitle, truncateTitle } from "../services/title-agent";
 import type { IToolCallRecord, IContentSegment } from "@semlayer/core/models/Conversation";
@@ -52,6 +61,71 @@ const app = new Hono()
     conv.messages.push({ role: "user", content: message, timestamp: new Date() });
     await conv.save();
 
+    // Worker queue path (Redis available)
+    if (isRedisConfigured()) {
+      const assistantMessageId = randomUUID();
+
+      try {
+        await enqueueAgentJob({
+          projectId,
+          conversationId: conv._id.toString(),
+          assistantMessageId,
+          message,
+          testAgentId,
+        });
+      } catch (err) {
+        console.error("[playground] Failed to enqueue job:", err);
+        return c.json({ error: "Failed to enqueue agent job" }, 500);
+      }
+
+      if (isNewConversation) {
+        generateTitle(message)
+          .then((title) => Conversation.updateOne({ _id: conv._id }, { title }))
+          .catch((err) => console.error("[playground] Failed to save generated title:", err));
+      }
+
+      return streamSSE(c, async (stream) => {
+        await stream.writeSSE({
+          event: "conversation",
+          data: JSON.stringify({ conversationId: conv._id }),
+        });
+
+        let unsubscribe: (() => Promise<void>) | null = null;
+
+        try {
+          unsubscribe = await subscribeToStream(
+            conv._id.toString(),
+            (event: StreamEvent) => {
+              stream
+                .writeSSE({ event: event.event, data: event.data })
+                .catch(() => {});
+
+              if (event.event === "done") {
+                unsubscribe?.().catch(() => {});
+                unsubscribe = null;
+              }
+            },
+          );
+
+          while (unsubscribe) {
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        } catch (err) {
+          console.error("[playground] SSE bridge error:", err);
+          await stream.writeSSE({
+            event: "error",
+            data: JSON.stringify({ error: "Stream bridge failed" }),
+          });
+          await stream.writeSSE({ event: "done", data: "{}" });
+        } finally {
+          if (unsubscribe) {
+            await unsubscribe().catch(() => {});
+          }
+        }
+      });
+    }
+
+    // In-process fallback (no Redis)
     return streamSSE(c, async (stream) => {
       await stream.writeSSE({
         event: "conversation",
@@ -171,20 +245,80 @@ const app = new Hono()
       await stream.writeSSE({ event: "done", data: "{}" });
     });
   })
+  .post("/cancel/:conversationId", async (c) => {
+    const projectId = c.req.param("projectId")!;
+    const conversationId = c.req.param("conversationId");
+
+    if (!isRedisConfigured()) {
+      return c.json({ ok: true, message: "No worker queue configured" });
+    }
+
+    await connectDB();
+    const conv = await Conversation.findOne({
+      _id: conversationId,
+      project: projectId,
+      testAgent: { $ne: null },
+    }).select("_id").lean();
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+
+    await publishCancelSignal(conversationId);
+    return c.json({ ok: true });
+  })
+  .get("/stream-status/:conversationId", async (c) => {
+    const conversationId = c.req.param("conversationId");
+    const active = await isStreamActive(conversationId);
+    return c.json({ isStreaming: active });
+  })
+  .get("/subscribe/:conversationId", async (c) => {
+    const conversationId = c.req.param("conversationId");
+
+    const active = await isStreamActive(conversationId);
+    if (!active) {
+      return c.json({ error: "No active stream" }, 404);
+    }
+
+    return streamSSE(c, async (stream) => {
+      let cursor = 0;
+      let done = false;
+
+      while (!done) {
+        const { events, nextIndex } = await getBufferedStreamEvents(
+          conversationId,
+          cursor,
+        );
+        cursor = nextIndex;
+
+        for (const event of events) {
+          await stream.writeSSE({ event: event.event, data: event.data });
+          if (event.event === "done") {
+            done = true;
+            break;
+          }
+        }
+
+        if (!done) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      }
+    });
+  })
   .get("/conversations", async (c) => {
     await connectDB();
     const projectId = c.req.param("projectId")!;
     const testAgentId = c.req.query("testAgentId");
-    if (!testAgentId) return c.json({ error: "testAgentId query param required" }, 400);
 
-    const agentExists = await TestAgent.findOne({ _id: testAgentId, project: projectId }).lean();
-    if (!agentExists) return c.json({ error: "Test agent not found" }, 404);
-
-    const conversations = await Conversation.find({
+    const filter: Record<string, unknown> = {
       project: projectId,
-      testAgent: testAgentId,
-    })
-      .select("title createdAt updatedAt")
+      testAgent: testAgentId ?? { $ne: null },
+    };
+
+    if (testAgentId) {
+      const agentExists = await TestAgent.findOne({ _id: testAgentId, project: projectId }).lean();
+      if (!agentExists) return c.json({ error: "Test agent not found" }, 404);
+    }
+
+    const conversations = await Conversation.find(filter)
+      .select("title testAgent createdAt updatedAt")
       .sort({ updatedAt: -1 })
       .lean();
 
@@ -198,7 +332,8 @@ const app = new Hono()
       testAgent: { $ne: null },
     }).lean();
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
-    return c.json(conv);
+    const streaming = await isStreamActive(conv._id.toString());
+    return c.json({ ...conv, isStreaming: streaming });
   })
   .delete("/conversations/:conversationId", async (c) => {
     await connectDB();

@@ -51,9 +51,9 @@ The Semantic Models page SHALL render a chat interface where the user can conver
 
 #### Scenario: Filesystem tool visualization
 
-- **WHEN** the agent invokes a filesystem tool (`ls`, `read_file`, `write_file`, or `find`)
-- **THEN** the collapsed card shows an appropriate file icon, a human-readable label (e.g., "Read orders.yaml", "Listed files"), and status indicator
-- **AND** expanding the card reveals tool-specific content: file list for `ls`, content preview for `read_file`/`write_file`, matching paths for `find`
+- **WHEN** the agent invokes a filesystem tool (`ls`, `read_file`, `write_file`, `find`, or `rename`)
+- **THEN** the collapsed card shows an appropriate file icon, a human-readable label (e.g., "Read orders.yaml", "Listed files", "Renamed sales.yaml → retail_sales.yaml"), and status indicator
+- **AND** expanding the card reveals tool-specific content: file list for `ls`, content preview for `read_file`/`write_file`, matching paths for `find`, old and new paths for `rename`
 
 #### Scenario: write_todos tool visualization
 
@@ -256,6 +256,37 @@ The agent's filesystem backend SHALL validate YAML syntax before persisting any 
 - **WHEN** the agent invokes `write_file` or `edit_file` on a file that does not end in `.yaml` or `.yml` (e.g. `.md`, `.txt`)
 - **THEN** no YAML validation is performed
 - **AND** the file is written or edited as normal
+
+### Requirement: Rename Tool
+
+The deep agent SHALL have access to a `rename` tool that moves or renames a file or directory within the project's sandboxed filesystem. The tool accepts `oldPath` (the current virtual path) and `newPath` (the desired virtual path). Both paths MUST resolve within the project root directory; path traversal attempts SHALL be rejected. Renaming onto an existing target SHALL be rejected to prevent accidental overwrites. Symlinks SHALL be rejected.
+
+#### Scenario: Agent renames a semantic model file
+- **WHEN** the agent invokes `rename` with `{ "oldPath": "/sales.yaml", "newPath": "/retail_sales.yaml" }`
+- **THEN** the file is moved from `sales.yaml` to `retail_sales.yaml` within the project directory
+- **AND** the tool returns a success result with both paths
+
+#### Scenario: Agent renames a dataset file
+- **WHEN** the agent invokes `rename` with `{ "oldPath": "/sales/orders.yaml", "newPath": "/sales/customer_orders.yaml" }`
+- **THEN** the dataset file is renamed within the model subdirectory
+- **AND** the tool returns a success result
+
+#### Scenario: Path traversal rejected
+- **WHEN** the agent invokes `rename` with a path containing `..` that would escape the project root
+- **THEN** the tool returns an error and no file system changes occur
+
+#### Scenario: Target already exists
+- **WHEN** the agent invokes `rename` and `newPath` already exists on disk
+- **THEN** the tool returns an error indicating the target already exists
+- **AND** the original file remains untouched
+
+#### Scenario: Source not found
+- **WHEN** the agent invokes `rename` with an `oldPath` that does not exist
+- **THEN** the tool returns a descriptive error
+
+#### Scenario: Symlink rejected
+- **WHEN** the agent invokes `rename` on a path that is a symbolic link
+- **THEN** the tool returns an error and no rename occurs
 
 ### Requirement: Semantic Model Visualization Tabs
 

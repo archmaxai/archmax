@@ -13,8 +13,6 @@ import {
   Badge,
   Button,
   Card,
-  Switch,
-  Label,
   Table,
   TableBody,
   TableCell,
@@ -61,7 +59,6 @@ const PAGE_SIZE = 50;
 function MonitoringPage() {
   const { project } = useProject();
   const [page, setPage] = useState(1);
-  const [showListCalls, setShowListCalls] = useState(false);
   const [selectedLog, setSelectedLog] = useState<McpLogEntry | null>(null);
 
   const { data, isLoading, refetch, isFetching } = useQuery<McpLogsResponse>({
@@ -81,9 +78,7 @@ function MonitoringPage() {
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const filteredLogs = showListCalls
-    ? logs
-    : logs.filter((l) => l.method !== "tools/list");
+  const filteredLogs = logs.filter((l) => l.method !== "tools/list");
 
   function formatTimestamp(iso: string) {
     const d = new Date(iso);
@@ -112,16 +107,6 @@ function MonitoringPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="show-list"
-                checked={showListCalls}
-                onCheckedChange={setShowListCalls}
-              />
-              <Label htmlFor="show-list" className="text-sm text-muted-foreground">
-                Show list calls
-              </Label>
-            </div>
             <Button
               variant="outline"
               size="sm"
@@ -146,9 +131,7 @@ function MonitoringPage() {
           <Card className="flex flex-col items-center justify-center p-12 text-center">
             <Activity className="h-8 w-8 text-muted-foreground mb-3" />
             <p className="text-sm text-muted-foreground">
-              {total === 0
-                ? "No MCP calls recorded yet. Logs appear here when AI agents use this project's MCP endpoint."
-                : "No matching calls. Try enabling \"Show list calls\" above."}
+              No MCP calls recorded yet. Logs appear here when AI agents use this project's MCP endpoint.
             </p>
           </Card>
         ) : (

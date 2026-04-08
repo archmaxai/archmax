@@ -54,13 +54,13 @@ export function SemanticModelExplorer({
             to="/$projectId/models/$modelName"
             params={{ projectId, modelName: model.name }}
             className={cn(
-              "flex w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs transition-colors",
+              "flex w-full items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors",
               selectedModel === model.name
                 ? "bg-foreground/[0.08] text-foreground font-medium"
                 : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
             )}
           >
-            <Database className="h-3 w-3 shrink-0" />
+            <Database className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{model.name}</span>
             <span className="ml-auto text-[10px] text-muted-foreground/60">
               {model.datasets.length}ds

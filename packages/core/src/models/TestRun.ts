@@ -12,6 +12,7 @@ export interface ITestCaseResult {
   semanticModel: string;
   inputMessage: string;
   expectedFacts: string[];
+  maxToolCalls?: number;
   status: "pending" | "running" | "passed" | "failed" | "error";
   agentResponse: string;
   toolCalls: { id: string; name: string; args: string; result?: string; status?: "completed" | "error" }[];
@@ -49,6 +50,7 @@ const TestCaseResultSchema = new Schema<ITestCaseResult>(
     semanticModel: { type: String, required: true },
     inputMessage: { type: String, required: true },
     expectedFacts: { type: [String], default: [] },
+    maxToolCalls: { type: Number },
     status: { type: String, required: true, enum: ["pending", "running", "passed", "failed", "error"], default: "pending" },
     agentResponse: { type: String, default: "" },
     toolCalls: [

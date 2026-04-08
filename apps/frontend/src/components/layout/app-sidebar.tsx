@@ -29,10 +29,10 @@ type NavItem =
 
 const navItems: NavItem[] = [
   {
-    label: "Data Sources",
+    label: "Data Federation",
     icon: Database,
     children: [
-      { label: "Connections", path: "connections" },
+      { label: "Data Sources", path: "connections" },
       { label: "Browser", path: "connections/data" },
     ],
   },
@@ -43,6 +43,7 @@ const navItems: NavItem[] = [
     children: [
       { label: "Test Agents", path: "testing/agents" },
       { label: "Test Cases", path: "testing/cases" },
+      { label: "Test Runs", path: "testing/runs" },
       { label: "Playground", path: "testing/playground" },
     ],
   },
@@ -68,7 +69,7 @@ export function AppSidebar({
 }) {
   const { pathname } = useLocation();
   const [openGroups, setOpenGroups] = useState<Set<string>>(
-    () => new Set(["Data Sources"]),
+    () => new Set(["Data Federation"]),
   );
 
   function toggleGroup(label: string) {

@@ -1,20 +1,14 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { Bot, MessageSquare } from "lucide-react";
-import { cn, Button, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Card } from "@semlayer/ui";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bot, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { cn, Button, ScrollArea, Skeleton } from "@semlayer/ui";
 import { toast } from "sonner";
-import { MarkdownContent } from "@/components/chat/markdown-components";
-import { ToolCallCard } from "@/components/chat/tool-call-card";
-import { ChatInput } from "@/components/chat/chat-input";
-import {
-  parseSSEChunk,
-  normalizeMessage,
-  appendToken,
-  appendToolCallStart,
-  updateToolCall,
-} from "@/components/chat/agent-chat";
-import { getTextContent, type ChatMessage, type ContentSegment, type ToolCallInfo } from "@/lib/chat-types";
+import { AgentChat, type ChatRequestFn, type CancelRequestFn } from "@/components/chat/agent-chat";
+import { InputPill, type InputPillOption } from "@/components/chat/chat-input";
+import { AccordionSection } from "@/components/layout/accordion-section";
+import { useResizablePanel, PanelResizeHandle } from "@/components/layout/panel-resize-handle";
+import type { ChatMessage } from "@/lib/chat-types";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 
@@ -36,31 +30,26 @@ interface ConversationListItem {
   updatedAt: string;
 }
 
-function MessageSegments({ segments }: { segments: ContentSegment[] }) {
-  return (
-    <>
-      {segments.map((seg, i) => {
-        if (seg.type === "text" && seg.content) {
-          return <MarkdownContent key={i} content={seg.content} />;
-        }
-        if (seg.type === "tool_call") {
-          return <ToolCallCard key={seg.toolCall.id} tc={seg.toolCall} />;
-        }
-        return null;
-      })}
-    </>
-  );
+interface ConversationFull {
+  _id: string;
+  title: string;
+  testAgent: string;
+  messages: ChatMessage[];
+  isStreaming?: boolean;
 }
+
+const EMPTY_MESSAGES: ChatMessage[] = [];
 
 function PlaygroundPage() {
   const { project } = useProject();
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const queryClient = useQueryClient();
+  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("semlayer-playground-panel-width", 256);
+  const storageKey = `semlayer-playground-agent-${project._id}`;
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(() => localStorage.getItem(storageKey) ?? "");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const [chatKey, setChatKey] = useState(0);
+
+  const ownedConvIdRef = useRef<string | null>(null);
 
   const { data: agents = [] } = useQuery<TestAgentItem[]>({
     queryKey: ["test-agents", project._id],
@@ -73,322 +62,227 @@ function PlaygroundPage() {
     },
   });
 
-  const { data: conversations = [], refetch: refetchConversations } = useQuery<ConversationListItem[]>({
-    queryKey: ["playground-conversations", project._id, selectedAgentId],
+  useEffect(() => {
+    if (agents.length === 0 || conversationId) return;
+    const stored = localStorage.getItem(storageKey);
+    const valid = stored && agents.some((a) => a._id === stored);
+    if (valid) {
+      setSelectedAgentId(stored);
+    } else {
+      setSelectedAgentId(agents[0]._id);
+    }
+  }, [agents, storageKey, conversationId]);
+
+  const agentPillOptions: InputPillOption[] = useMemo(
+    () => agents.map((a) => ({ id: a._id, label: a.name, detail: a.llmModel })),
+    [agents],
+  );
+
+  const selectedAgentName = agents.find((a) => a._id === selectedAgentId)?.name;
+
+  const { data: conversations = [], isLoading: listLoading } = useQuery<ConversationListItem[]>({
+    queryKey: ["playground-conversations", project._id],
     queryFn: async () => {
-      if (!selectedAgentId) return [];
       const res = await api.api.projects[":projectId"].playground.conversations.$get({
         param: { projectId: project._id },
-        query: { testAgentId: selectedAgentId },
+        query: {},
       });
       if (!res.ok) throw new Error("Failed to load conversations");
       return res.json() as Promise<ConversationListItem[]>;
     },
-    enabled: !!selectedAgentId,
+  });
+
+  const shouldFetch = !!conversationId && conversationId !== ownedConvIdRef.current;
+
+  const { data: activeConv } = useQuery({
+    queryKey: ["playground-conversation", conversationId],
+    queryFn: async () => {
+      const res = await api.api.projects[":projectId"].playground.conversations[":conversationId"].$get({
+        param: { projectId: project._id, conversationId: conversationId! },
+      });
+      if (!res.ok) throw new Error("Failed to load conversation");
+      return res.json() as unknown as ConversationFull;
+    },
+    enabled: shouldFetch,
+    refetchInterval: shouldFetch ? 10_000 : false,
   });
 
   useEffect(() => {
+    if (activeConv?.testAgent && activeConv.testAgent !== selectedAgentId) {
+      setSelectedAgentId(activeConv.testAgent);
+      localStorage.setItem(storageKey, activeConv.testAgent);
+    }
+  }, [activeConv?.testAgent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAgentChange = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+    localStorage.setItem(storageKey, agentId);
+  }, [storageKey]);
+
+  const handleNewConversation = useCallback(() => {
+    ownedConvIdRef.current = null;
     setConversationId(null);
-    setMessages([]);
-  }, [selectedAgentId]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const loadConversation = useCallback(async (convId: string) => {
-    try {
-      const res = await api.api.projects[":projectId"].playground.conversations[":conversationId"].$get({
-        param: { projectId: project._id, conversationId: convId },
-      });
-      if (!res.ok) throw new Error("Failed to load conversation");
-      const conv = await res.json() as { _id: string; messages: ChatMessage[] };
-      setConversationId(conv._id);
-      setMessages(conv.messages.map(normalizeMessage));
-    } catch (err) {
-      toast.error("Failed to load conversation");
-    }
-  }, [project._id]);
-
-  const updateLastAssistant = useCallback(
-    (updater: (prev: ChatMessage) => ChatMessage) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant") {
-          next[next.length - 1] = updater(last);
-        }
-        return next;
-      });
-    },
-    [],
-  );
-
-  function handleSSEEvent(event: string, parsed: Record<string, unknown>) {
-    switch (event) {
-      case "conversation":
-        if (parsed.conversationId && typeof parsed.conversationId === "string") {
-          setConversationId(parsed.conversationId);
-          refetchConversations();
-        }
-        break;
-      case "token":
-        if (typeof parsed.content === "string") {
-          updateLastAssistant((m) => ({
-            ...m,
-            segments: appendToken(m.segments, parsed.content as string),
-          }));
-        }
-        break;
-      case "tool_call_start": {
-        const tc: ToolCallInfo = {
-          id: parsed.id as string,
-          name: parsed.name as string,
-          args: (parsed.args as string) ?? "",
-          status: "running" as const,
-        };
-        updateLastAssistant((m) => ({
-          ...m,
-          segments: appendToolCallStart(m.segments, tc),
-        }));
-        break;
-      }
-      case "tool_call_end":
-        updateLastAssistant((m) => ({
-          ...m,
-          segments: updateToolCall(m.segments, parsed.id as string, {
-            result: parsed.result as string,
-            status: "completed" as const,
-          }),
-        }));
-        break;
-      case "error":
-        updateLastAssistant((m) => ({
-          ...m,
-          segments: appendToken(m.segments, `\n\nError: ${parsed.error ?? "Unknown error"}`),
-        }));
-        break;
-      case "done":
-        updateLastAssistant((m) => ({ ...m, isStreaming: false }));
-        setIsStreaming(false);
-        refetchConversations();
-        break;
-    }
-  }
-
-  const sendMessage = useCallback(async () => {
-    const text = input.trim();
-    if (!text || isStreaming || !selectedAgentId) return;
-
-    setInput("");
-    setIsStreaming(true);
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", segments: [{ type: "text", content: text }] },
-      { role: "assistant", segments: [], isStreaming: true },
-    ]);
-
-    try {
-      const res = await api.api.projects[":projectId"].playground.chat.$post(
-        {
-          param: { projectId: project._id },
-          json: {
-            message: text,
-            testAgentId: selectedAgentId,
-            conversationId: conversationId ?? undefined,
-          },
-        },
-        { init: { signal: controller.signal } },
-      );
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Unknown error" }));
-        updateLastAssistant((m) => ({
-          ...m,
-          segments: [{ type: "text", content: `Error: ${(err as Record<string, string>).error ?? "Unknown error"}` }],
-          isStreaming: false,
-        }));
-        setIsStreaming(false);
-        return;
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) { setIsStreaming(false); return; }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lastDoubleNewline = buffer.lastIndexOf("\n\n");
-        if (lastDoubleNewline === -1) continue;
-
-        const complete = buffer.slice(0, lastDoubleNewline + 2);
-        buffer = buffer.slice(lastDoubleNewline + 2);
-
-        for (const { event, data } of parseSSEChunk(complete)) {
-          try {
-            const parsed = JSON.parse(data);
-            handleSSEEvent(event, parsed);
-          } catch { /* ignore */ }
-        }
-      }
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
-        updateLastAssistant((m) => ({
-          ...m,
-          segments: getTextContent(m.segments)
-            ? m.segments
-            : [{ type: "text", content: `Error: ${err instanceof Error ? err.message : "Network error"}` }],
-          isStreaming: false,
-        }));
-      }
-    } finally {
-      updateLastAssistant((m) => ({ ...m, isStreaming: false }));
-      setIsStreaming(false);
-      abortRef.current = null;
-    }
-  }, [input, isStreaming, selectedAgentId, conversationId, project._id, updateLastAssistant, refetchConversations]);
-
-  const handleStop = useCallback(() => {
-    abortRef.current?.abort();
+    setChatKey((k) => k + 1);
   }, []);
 
-  const showWelcome = messages.length === 0;
+  const handleConversationCreated = useCallback((id: string) => {
+    ownedConvIdRef.current = id;
+    setConversationId(id);
+    queryClient.invalidateQueries({ queryKey: ["playground-conversations", project._id] });
+  }, [project._id, queryClient]);
+
+  const handleStreamEnd = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["playground-conversations", project._id] });
+  }, [project._id, queryClient]);
+
+  const handleDeleteConversation = useCallback(async (convId: string) => {
+    try {
+      await api.api.projects[":projectId"].playground.conversations[":conversationId"].$delete({
+        param: { projectId: project._id, conversationId: convId },
+      });
+      queryClient.invalidateQueries({ queryKey: ["playground-conversations", project._id] });
+      if (conversationId === convId) {
+        ownedConvIdRef.current = null;
+        setConversationId(null);
+        setChatKey((k) => k + 1);
+      }
+    } catch {
+      toast.error("Failed to delete conversation");
+    }
+  }, [project._id, conversationId, queryClient]);
+
+  const chatRequest: ChatRequestFn = useCallback(async ({ projectId, message, conversationId: convId, signal }) => {
+    return api.api.projects[":projectId"].playground.chat.$post(
+      {
+        param: { projectId },
+        json: {
+          message,
+          testAgentId: selectedAgentId,
+          conversationId: convId,
+        },
+      },
+      { init: { signal } },
+    );
+  }, [selectedAgentId]);
+
+  const cancelRequest: CancelRequestFn = useCallback(({ projectId, conversationId: convId }) => {
+    const baseUrl = import.meta.env.VITE_API_URL ?? "";
+    fetch(`${baseUrl}/api/projects/${projectId}/playground/cancel/${convId}`, {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => {});
+  }, []);
+
+  const activeStreamId =
+    activeConv?.isStreaming && conversationId ? conversationId : null;
 
   return (
     <div className="flex h-full">
-      <div className="w-64 border-r border-border flex flex-col bg-muted/30">
-        <div className="p-4 space-y-3">
-          <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select agent..." />
-            </SelectTrigger>
-            <SelectContent>
-              {agents.map((a) => (
-                <SelectItem key={a._id} value={a._id}>{a.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {selectedAgentId && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() => {
-                setConversationId(null);
-                setMessages([]);
-              }}
-            >
-              New Conversation
-            </Button>
-          )}
-        </div>
-
-        <div className="divider-subtle mx-4" />
-
-        <ScrollArea className="flex-1">
-          <div className="p-2 space-y-0.5">
-            {conversations.map((c) => (
-              <button
-                key={c._id}
-                onClick={() => loadConversation(c._id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors text-left",
-                  c._id === conversationId
-                    ? "bg-foreground/[0.08] font-medium"
-                    : "hover:bg-foreground/[0.05] text-muted-foreground",
-                )}
+      {/* Sidebar — matches semantic models layout */}
+      <div className="flex shrink-0 flex-col bg-muted min-h-0" style={{ width: panelWidth }}>
+        <ScrollArea className="flex-1 min-h-0 pt-1.5">
+          <AccordionSection
+            title="History"
+            action={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="h-5 w-5"
+                onClick={handleNewConversation}
               >
-                <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{c.title}</span>
-              </button>
-            ))}
-          </div>
+                <Plus className="h-3 w-3" />
+              </Button>
+            }
+          >
+            <div className="flex flex-col gap-0.5 px-1.5 pb-2">
+              {listLoading &&
+                Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-8 w-full rounded-lg" />
+                ))}
+              {conversations.map((c) => (
+                <div
+                  key={c._id}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors cursor-pointer",
+                    c._id === conversationId
+                      ? "bg-foreground/[0.08] text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
+                  )}
+                >
+                  <button
+                    onClick={() => {
+                      ownedConvIdRef.current = null;
+                      setConversationId(c._id);
+                      setChatKey((k) => k + 1);
+                    }}
+                    className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1 truncate">
+                      {c.title && c.title.length > 25 ? c.title.slice(0, 25) + "…" : c.title}
+                    </span>
+                  </button>
+                  <button
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteConversation(c._id);
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                  </button>
+                </div>
+              ))}
+              {!listLoading && conversations.length === 0 && (
+                <p className="px-3 py-4 text-xs text-muted-foreground text-center">
+                  No conversations yet
+                </p>
+              )}
+            </div>
+          </AccordionSection>
         </ScrollArea>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        {!selectedAgentId ? (
-          <div className="flex-1 flex items-center justify-center">
-            <Card className="p-8 text-center">
-              <Bot className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">
-                Select a test agent to start chatting.
+      <PanelResizeHandle onMouseDown={onResizeStart} />
+
+      {/* Main chat area */}
+      <div className="flex-1 min-w-0 bg-muted">
+        <AgentChat
+          key={chatKey}
+          projectId={project._id}
+          conversationId={conversationId}
+          initialMessages={activeConv?.messages ?? EMPTY_MESSAGES}
+          onConversationCreated={handleConversationCreated}
+          onStreamEnd={handleStreamEnd}
+          chatRequest={selectedAgentId ? chatRequest : undefined}
+          cancelRequest={cancelRequest}
+          activeStreamConversationId={activeStreamId}
+          subscribeUrlPrefix={`/api/projects/${project._id}/playground`}
+          disableFileUpload
+          disableSend={!selectedAgentId}
+          inputPlaceholder={selectedAgentId ? "Chat with your test agent..." : "Select a test agent to start..."}
+          inputBottomLeft={
+            <InputPill
+              options={agentPillOptions}
+              value={selectedAgentId}
+              onChange={handleAgentChange}
+              placeholder="Select agent"
+            />
+          }
+          emptyState={
+            <div className="flex flex-col items-center justify-center py-24 text-center content-tight">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white dark:bg-white/10 backdrop-blur-sm">
+                <Bot className="h-6 w-6 text-foreground/70" />
+              </div>
+              <h3 className="text-heading text-lg mt-4">{selectedAgentName ?? "Playground"}</h3>
+              <p className="text-foreground/60 text-sm max-w-md">
+                {selectedAgentId
+                  ? "Chat with your test agent to explore and validate semantic models."
+                  : "Select a test agent from the input bar below to start chatting."}
               </p>
-            </Card>
-          </div>
-        ) : (
-          <>
-            <ScrollArea className="flex-1">
-              <div className="mx-auto max-w-3xl px-6 py-6 space-y-6">
-                {showWelcome && (
-                  <div className="flex flex-col items-center justify-center py-20 text-center">
-                    <Bot className="h-10 w-10 text-muted-foreground mb-3" />
-                    <h2 className="text-lg font-medium mb-1">Playground</h2>
-                    <p className="text-sm text-muted-foreground max-w-sm">
-                      Chat with your test agent to explore and validate semantic models with MCP tools.
-                    </p>
-                  </div>
-                )}
-
-                {messages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "flex gap-3",
-                      msg.role === "user" ? "justify-end" : "justify-start",
-                    )}
-                  >
-                    {msg.role === "assistant" && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary mt-0.5">
-                        <Bot className="h-4 w-4" />
-                      </div>
-                    )}
-                    <div
-                      className={cn(
-                        "max-w-[85%] rounded-2xl px-4 py-3",
-                        msg.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-transparent",
-                      )}
-                    >
-                      <MessageSegments segments={msg.segments} />
-                      {msg.isStreaming && msg.segments.length === 0 && (
-                        <div className="flex gap-1 py-1">
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce [animation-delay:0ms]" />
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce [animation-delay:150ms]" />
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce [animation-delay:300ms]" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                <div ref={scrollRef} />
-              </div>
-            </ScrollArea>
-
-            <div className="border-t border-border bg-background p-4">
-              <div className="mx-auto max-w-3xl">
-                <ChatInput
-                  value={input}
-                  onChange={setInput}
-                  onSend={sendMessage}
-                  onStop={handleStop}
-                  isStreaming={isStreaming}
-                  disabled={!selectedAgentId}
-                />
-              </div>
             </div>
-          </>
-        )}
+          }
+        />
       </div>
     </div>
   );

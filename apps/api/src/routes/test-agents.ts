@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@semlayer/core/infra/db";
 import { TestAgent } from "@semlayer/core/models/index";
-import { encrypt } from "@semlayer/core/infra/crypto";
+import { encrypt, decrypt } from "@semlayer/core/infra/crypto";
 import { getEnv } from "@semlayer/core/config/env";
 import { AppError } from "../utils/errors";
 
@@ -87,6 +87,54 @@ const app = new Hono()
     const agent = await TestAgent.findOneAndUpdate(query, { $set: update }, { new: true }).lean();
     if (!agent) throw AppError.notFound("Test agent not found");
     return c.json(stripApiKey(agent as unknown as Record<string, unknown>));
+  })
+  .post("/:agentId/test-connection", async (c) => {
+    await connectDB();
+    const agent = await TestAgent.findOne({
+      _id: c.req.param("agentId"),
+      project: c.req.param("projectId")!,
+    }).lean();
+    if (!agent) throw AppError.notFound("Test agent not found");
+
+    const raw = (agent as any).encryptedApiKey as string;
+    if (!raw) return c.json({ ok: false, error: "No API key configured" }, 400);
+
+    const key = getEncryptionKey();
+    let apiKey: string;
+    try {
+      apiKey = key ? decrypt(raw, key) : raw;
+    } catch {
+      return c.json({ ok: false, error: "Failed to decrypt API key" }, 500);
+    }
+
+    const baseUrl = ((agent as any).llmBaseUrl as string).replace(/\/+$/, "");
+    const model = (agent as any).llmModel as string;
+
+    try {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "Say hi" }],
+          max_tokens: 1,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || `HTTP ${res.status}`);
+      }
+      return c.json({ ok: true });
+    } catch (err: any) {
+      const message = err?.name === "TimeoutError"
+        ? "Request timed out after 15s"
+        : err?.message || "Connection test failed";
+      return c.json({ ok: false, error: message }, 400);
+    }
   })
   .delete("/:agentId", async (c) => {
     await connectDB();
