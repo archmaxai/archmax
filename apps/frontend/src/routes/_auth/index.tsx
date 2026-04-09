@@ -24,7 +24,7 @@ function IndexPage() {
 
   useEffect(() => {
     if (!isLoading && projects?.length) {
-      const lastId = localStorage.getItem("archsem-last-project");
+      const lastId = localStorage.getItem("archmax-last-project");
       const target = projects.find((p) => p._id === lastId) ?? projects[0];
       navigate({
         to: "/$projectId/connections",

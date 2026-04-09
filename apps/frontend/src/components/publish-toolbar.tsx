@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
   Textarea,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { useProject } from "@/lib/project-context";
 
 interface PublishStatus {

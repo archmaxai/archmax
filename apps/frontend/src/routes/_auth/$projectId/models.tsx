@@ -10,7 +10,7 @@ import {
   Check,
 } from "lucide-react";
 
-import { cn, Button, ScrollArea, Skeleton } from "@archsem/ui";
+import { cn, Button, ScrollArea, Skeleton } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 import { SemanticModelExplorer } from "@/components/semantic-model-explorer";
@@ -35,7 +35,7 @@ function ModelsLayout() {
   const { project } = useProject();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("archsem-models-panel-width", 256);
+  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("archmax-models-panel-width", 256);
 
   const modelMatch = useMatch({
     from: "/_auth/$projectId/models/$modelName",

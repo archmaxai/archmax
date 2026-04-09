@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { connectDB } from "@archsem/core/infra/db";
-import { Conversation } from "@archsem/core/models/index";
-import { isStreamActive } from "@archsem/core/streaming/stream-bridge";
+import { connectDB } from "@archmax/core/infra/db";
+import { Conversation } from "@archmax/core/models/index";
+import { isStreamActive } from "@archmax/core/streaming/stream-bridge";
 import { AppError } from "../utils/errors";
 
 const app = new Hono()

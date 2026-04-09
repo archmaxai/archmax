@@ -13,7 +13,7 @@ const mockEnv: Record<string, string | undefined> = {
   AGENT_TITLE_MODEL: "test-model",
   AGENT_API_BASE_URL: "https://test.example.com",
 };
-vi.mock("@archsem/core/config/env", () => ({
+vi.mock("@archmax/core/config/env", () => ({
   getEnv: vi.fn(() => mockEnv),
 }));
 

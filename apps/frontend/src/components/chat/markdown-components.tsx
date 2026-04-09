@@ -2,7 +2,7 @@ import { useState, type ComponentPropsWithoutRef } from "react";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { cn, Button } from "@archsem/ui";
+import { cn, Button } from "@archmax/ui";
 import { Check, Copy } from "lucide-react";
 
 const remarkPlugins = [remarkGfm];

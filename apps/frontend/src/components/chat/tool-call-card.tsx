@@ -5,7 +5,7 @@ import {
   AlertCircle,
   ChevronRight,
 } from "lucide-react";
-import { cn } from "@archsem/ui";
+import { cn } from "@archmax/ui";
 import type { ToolCallInfo } from "../../lib/chat-types";
 import { getToolMeta } from "./tool-metadata";
 import { ExpandedContent } from "./tool-expanded";

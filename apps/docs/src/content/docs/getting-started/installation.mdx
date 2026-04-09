@@ -1,43 +1,17 @@
 ---
 title: Installation
-description: How to install and run archsem using Docker or local development.
+description: How to install and run archmax using Docker or local development.
 ---
 
 import { Aside } from "@astrojs/starlight/components";
 
-## Docker (Recommended)
+## Docker Compose (Recommended)
 
-The fastest way to run archsem is with Docker. The image bundles the API, worker, admin UI, nginx reverse proxy, and embedded MongoDB and Redis — no external services required.
-
-### Prerequisites
-
-- Docker (20.10+)
-
-### Quick Start
+The fastest way to run archmax is with Docker Compose. This starts archmax with dedicated MongoDB and Redis services:
 
 ```bash
-docker run -d \
-  --name archsem \
-  -p 8080:8080 \
-  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
-  -e UI_PASSWORD=changeme \
-  -v archsem-data:/app/data \
-  archsem/archsem:latest
-```
-
-Open `http://localhost:8080` and log in with username `admin` and the password you set.
-
-<Aside type="tip">
-MongoDB and Redis are embedded inside the image and start automatically. All persistent data (projects and database) is stored under `/app/data`, so the single volume mount above is all you need for backups.
-</Aside>
-
-### Docker Compose (Production)
-
-For production deployments, use Docker Compose with separate MongoDB and Redis services. The repository includes a ready-to-use `docker-compose.yml`:
-
-```bash
-git clone https://github.com/archmaxai/archsem.git
-cd archsem
+git clone https://github.com/archmaxai/archmax.git
+cd archmax
 cp .env.example .env
 ```
 
@@ -55,25 +29,30 @@ Then start the stack:
 docker compose up -d
 ```
 
-This starts archsem with dedicated MongoDB and Redis containers. The embedded services inside the archsem image are automatically skipped when `MONGODB_URI` and `REDIS_URL` are provided.
+Open `http://localhost:8080` and log in with username `admin` and the password you set.
 
-### Using External Services
+<Aside type="tip">
+The Compose stack runs MongoDB and Redis as separate containers alongside archmax. Project data is stored in the `archmax-data` volume and MongoDB data in `mongo-data`.
+</Aside>
 
-If you already have MongoDB or Redis running, pass their connection strings directly:
+## Standalone Docker
+
+If you already have MongoDB running elsewhere, you can run archmax as a single container:
 
 ```bash
 docker run -d \
-  --name archsem \
+  --name archmax \
   -p 8080:8080 \
-  -e MONGODB_URI=mongodb://your-mongo-host:27017/archsem \
-  -e REDIS_URL=redis://your-redis-host:6379 \
+  -e MONGODB_URI=mongodb://your-mongo-host:27017/archmax \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_PASSWORD=changeme \
-  -v archsem-data:/app/data \
-  archsem/archsem:latest
+  -v archmax-data:/app/data \
+  archmax/archmax:latest
 ```
 
-You can mix and match — for example, use an external MongoDB but the embedded Redis, or vice versa. Any service whose environment variable is omitted will use the embedded fallback.
+<Aside type="note">
+`MONGODB_URI` is required — the image does not include MongoDB. Redis is embedded and starts automatically when `REDIS_URL` is not provided. To use an external Redis, pass `REDIS_URL` as well.
+</Aside>
 
 ## Local Development
 

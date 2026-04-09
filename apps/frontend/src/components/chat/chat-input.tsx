@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState, type ReactNode } from "react";
 import { ArrowUp, Square, Paperclip, X, Loader2, ChevronDown } from "lucide-react";
-import { cn, Textarea } from "@archsem/ui";
+import { cn, Textarea } from "@archmax/ui";
 
 export interface UploadedFile {
   filename: string;

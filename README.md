@@ -1,8 +1,8 @@
-# archsem
+# archmax
 
 A semantic layer for your databases — describe your data once, let AI agents query it intelligently.
 
-archsem helps you create semantic descriptions of your database schemas (tables, columns, relationships, metrics) and expose them to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Instead of giving AI agents raw database access, you give them a curated, documented view of your data.
+archmax helps you create semantic descriptions of your database schemas (tables, columns, relationships, metrics) and expose them to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Instead of giving AI agents raw database access, you give them a curated, documented view of your data.
 
 ## Features
 
@@ -21,14 +21,14 @@ archsem helps you create semantic descriptions of your database schemas (tables,
 
 ```bash
 docker run -d \
-  --name archsem \
+  --name archmax \
   -p 8080:8080 \
-  -e MONGODB_URI=mongodb://host.docker.internal:27017/archsem \
+  -e MONGODB_URI=mongodb://host.docker.internal:27017/archmax \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
-  -v archsem-data:/app/data/projects \
-  archsem/archsem:latest
+  -v archmax-data:/app/data/projects \
+  archmax/archmax:latest
 ```
 
 Open `http://localhost:8080` and log in with the admin credentials.
@@ -36,8 +36,8 @@ Open `http://localhost:8080` and log in with the admin credentials.
 ### Local Development
 
 ```bash
-git clone https://github.com/archmaxai/archsem.git
-cd archsem
+git clone https://github.com/archmaxai/archmax.git
+cd archmax
 cp .env.example .env.local   # Edit with your settings
 pnpm install
 pnpm dev
@@ -53,15 +53,15 @@ pnpm dev
 ## Architecture
 
 ```
-archsem/
+archmax/
 ├── apps/
 │   ├── api/          # Hono API server
 │   ├── frontend/     # Vite + React SPA (TanStack Router)
 │   ├── worker/       # BullMQ worker for agent jobs
 │   └── docs/         # Documentation site (Astro Starlight)
 ├── packages/
-│   ├── core/         # Shared models, services, config (@archsem/core)
-│   └── ui/           # React UI components (@archsem/ui)
+│   ├── core/         # Shared models, services, config (@archmax/core)
+│   └── ui/           # React UI components (@archmax/ui)
 └── openspec/         # Specifications and change proposals
 ```
 
@@ -87,7 +87,7 @@ Configure your MCP client with:
 ```json
 {
   "mcpServers": {
-    "archsem": {
+    "archmax": {
       "url": "https://your-server/mcp/your-project/mcp",
       "headers": {
         "Authorization": "Bearer sk-your-token"
@@ -108,12 +108,12 @@ Key environment variables (see `.env.example` for the full list):
 | `UI_USERNAME` / `UI_PASSWORD` | Initial admin credentials |
 | `AGENT_API_BASE_URL` | OpenAI-compatible API endpoint for the AI agent |
 | `AGENT_API_KEY` | API key for the agent endpoint |
-| `AGENT_MODEL` | LLM model identifier (e.g., `anthropic/claude-sonnet-4`) |
+| `AGENT_MODEL` | LLM model identifier (e.g., `anthropic/claude-sonnet-4.6`) |
 | `REDIS_URL` | Optional — enables BullMQ worker queue |
 
 ## Contributing
 
-archsem uses [OpenSpec](https://github.com/nicholasgriffintn/openspec) for spec-driven development. **Every feature PR must include a corresponding spec change.**
+archmax uses [OpenSpec](https://github.com/nicholasgriffintn/openspec) for spec-driven development. **Every feature PR must include a corresponding spec change.**
 
 1. Install the CLI: `npm install -g openspec-cli`
 2. Create a proposal under `openspec/changes/<change-id>/` with spec deltas

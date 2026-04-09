@@ -7,7 +7,7 @@
 
 ## 2. Entrypoint — conditional service startup
 
-- [x] 2.1 If `MONGODB_URI` is unset, start `mongod --bind_ip 127.0.0.1 --dbpath /app/data/mongodb --logpath /var/log/mongod.log --fork` and export `MONGODB_URI=mongodb://127.0.0.1:27017/archsem`
+- [x] 2.1 If `MONGODB_URI` is unset, start `mongod --bind_ip 127.0.0.1 --dbpath /app/data/mongodb --logpath /var/log/mongod.log --fork` and export `MONGODB_URI=mongodb://127.0.0.1:27017/archmax`
 - [x] 2.2 Add a readiness loop that waits for `mongod` to accept connections before proceeding (poll with `mongosh --eval "db.adminCommand('ping')"` or a TCP check)
 - [x] 2.3 If `REDIS_URL` is unset, start `redis-server --daemonize yes --dir /tmp/redis --bind 127.0.0.1` and export `REDIS_URL=redis://127.0.0.1:6379`
 - [x] 2.4 Ensure `mkdir -p` for `/app/data/mongodb` and `/tmp/redis` in the entrypoint (handle fresh volumes)
@@ -19,14 +19,14 @@
 
 ## 4. Docker Compose file
 
-- [x] 4.1 Create `docker-compose.yml` at repository root with `archsem`, `mongo`, and `redis` services
+- [x] 4.1 Create `docker-compose.yml` at repository root with `archmax`, `mongo`, and `redis` services
 - [x] 4.2 Include `.env.example` or inline comments documenting required variables (`BETTER_AUTH_SECRET`, `UI_PASSWORD`, `AGENT_API_KEY`)
-- [x] 4.3 Verify `docker compose up` starts all services and archsem connects to external Mongo/Redis
+- [x] 4.3 Verify `docker compose up` starts all services and archmax connects to external Mongo/Redis
 
 ## 5. Documentation
 
 - [x] 5.1 Rewrite `apps/docs/src/content/docs/getting-started/installation.mdx`:
-  - Replace the current "Quick Start" `docker run` with a zero-dependency version (only `BETTER_AUTH_SECRET` + `UI_PASSWORD` required, single `-v archsem-data:/app/data` mount)
+  - Replace the current "Quick Start" `docker run` with a zero-dependency version (only `BETTER_AUTH_SECRET` + `UI_PASSWORD` required, single `-v archmax-data:/app/data` mount)
   - Add a note that MongoDB and Redis are embedded automatically when their env vars are omitted
   - Move the current external-MongoDB `docker run` example into an "Advanced: External Services" subsection
   - Update the Docker Compose section to reference the repo-root `docker-compose.yml` instead of inlining YAML; show how to clone + `docker compose up`
@@ -44,7 +44,7 @@
 - [x] 5.4 Create `apps/docs/src/content/docs/reference/docker.mdx` — an in-depth Docker reference covering:
   - Image contents (what's bundled: API, worker, SPA, nginx, embedded MongoDB, embedded Redis)
   - Exposed port (`8080`)
-  - Complete environment variable table with every variable, its default, whether it's required, and Docker-specific notes (e.g. `MONGODB_URI` — omit to use embedded MongoDB, `REDIS_URL` — omit to use embedded Redis, `ARCHSEM_DATA_DIR` — defaults to `/app/data/projects` inside the container)
+  - Complete environment variable table with every variable, its default, whether it's required, and Docker-specific notes (e.g. `MONGODB_URI` — omit to use embedded MongoDB, `REDIS_URL` — omit to use embedded Redis, `ARCHMAX_DATA_DIR` — defaults to `/app/data/projects` inside the container)
   - Volumes: `/app/data` (persistent — projects + embedded MongoDB), `/tmp/redis` (ephemeral), `/var/log/mongod.log` (embedded MongoDB log)
   - Entrypoint behavior: decision tree for embedded vs. external services, startup order (mongod → readiness check → redis → worker → API → nginx)
   - Health check recommendations (e.g. `curl -f http://localhost:8080/api/health`)

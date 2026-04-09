@@ -3,18 +3,18 @@ import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { connectDB } from "@archsem/core/infra/db";
-import { Conversation, TestAgent } from "@archsem/core/models/index";
-import { isRedisConfigured, publishCancelSignal } from "@archsem/core/infra/redis";
-import { enqueueAgentJob } from "@archsem/core/queue/producer";
+import { connectDB } from "@archmax/core/infra/db";
+import { Conversation, TestAgent } from "@archmax/core/models/index";
+import { isRedisConfigured, publishCancelSignal } from "@archmax/core/infra/redis";
+import { enqueueAgentJob } from "@archmax/core/queue/producer";
 import {
   subscribeToStream,
   getBufferedStreamEvents,
   isStreamActive,
   type StreamEvent,
-} from "@archsem/core/streaming/stream-bridge";
-import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archsem/core/services/playground-agent";
-import { processAgentStream } from "@archsem/core/services/agent-stream";
+} from "@archmax/core/streaming/stream-bridge";
+import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
+import { processAgentStream } from "@archmax/core/services/agent-stream";
 import { generateTitle, truncateTitle } from "../services/title-agent";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 

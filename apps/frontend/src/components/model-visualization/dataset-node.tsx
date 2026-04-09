@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { Columns3 } from "lucide-react";
-import { cn } from "@archsem/ui";
+import { cn } from "@archmax/ui";
 
 export interface FieldPreview {
   name: string;

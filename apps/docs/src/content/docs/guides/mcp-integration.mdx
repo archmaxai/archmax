@@ -3,7 +3,7 @@ title: MCP Integration
 description: Connect AI agents to your semantic layer using the Model Context Protocol.
 ---
 
-archsem exposes your semantic models to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Agents discover available models, browse datasets and fields, and run scoped SQL queries.
+archmax exposes your semantic models to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Agents discover available models, browse datasets and fields, and run scoped SQL queries.
 
 ## Endpoint
 
@@ -68,7 +68,7 @@ Add to your Claude Desktop MCP config:
 ```json
 {
   "mcpServers": {
-    "archsem": {
+    "archmax": {
       "url": "https://your-server/mcp/your-project/mcp",
       "headers": {
         "Authorization": "Bearer sk-your-token"
@@ -85,7 +85,7 @@ Add to your `.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "archsem": {
+    "archmax": {
       "url": "https://your-server/mcp/your-project/mcp",
       "headers": {
         "Authorization": "Bearer sk-your-token"

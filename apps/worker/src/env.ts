@@ -1,1 +1,1 @@
-import "@archsem/core/config/bootstrap";
+import "@archmax/core/config/bootstrap";

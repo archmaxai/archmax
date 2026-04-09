@@ -1,6 +1,6 @@
 ## Context
 
-archsem ships as a single Docker image that bundles the API, worker, frontend, and nginx. MongoDB and Redis are required as external services, which complicates the simplest deployment path. This change embeds both services as optional fallbacks inside the image while preserving the ability to use external instances.
+archmax ships as a single Docker image that bundles the API, worker, frontend, and nginx. MongoDB and Redis are required as external services, which complicates the simplest deployment path. This change embeds both services as optional fallbacks inside the image while preserving the ability to use external instances.
 
 ## Goals / Non-Goals
 
@@ -25,7 +25,7 @@ archsem ships as a single Docker image that bundles the API, worker, frontend, a
   - *MongoDB-in-a-container sidecar* — defeats the single-image goal.
   - *SQLite as an alternative* — would require rewriting all Mongoose models; too invasive.
 - **Data path**: `/app/data/mongodb` — under the shared `/app/data` volume alongside projects.
-- **Default URI**: `mongodb://127.0.0.1:27017/archsem` — set automatically in the entrypoint so the rest of the application is unaware of the embedded mode.
+- **Default URI**: `mongodb://127.0.0.1:27017/archmax` — set automatically in the entrypoint so the rest of the application is unaware of the embedded mode.
 - **Configuration**: `mongod` runs with `--bind_ip 127.0.0.1 --dbpath /app/data/mongodb --logpath /var/log/mongod.log --fork`. No authentication (container-internal only).
 
 ### Embedded Redis via redis-server
@@ -41,16 +41,16 @@ archsem ships as a single Docker image that bundles the API, worker, frontend, a
 
 ```
 /app/data/
-├── projects/      # Semantic model YAML files (ARCHSEM_DATA_DIR)
+├── projects/      # Semantic model YAML files (ARCHMAX_DATA_DIR)
 └── mongodb/       # Embedded MongoDB data files
 ```
 
-A single `-v archsem-data:/app/data` captures all persistent state. Redis is intentionally excluded (stored in `/tmp`).
+A single `-v archmax-data:/app/data` captures all persistent state. Redis is intentionally excluded (stored in `/tmp`).
 
 ### Env schema changes
 
 `MONGODB_URI` becomes optional in the Zod schema. When not provided:
-- In Docker (embedded mode): the entrypoint sets `MONGODB_URI=mongodb://127.0.0.1:27017/archsem` before starting the Node processes.
+- In Docker (embedded mode): the entrypoint sets `MONGODB_URI=mongodb://127.0.0.1:27017/archmax` before starting the Node processes.
 - In local dev: the bootstrap file already loads `.env` / `.env.local`, so developers must still provide it there.
 
 The env validation in `packages/core/src/config/env.ts` gains a default value only in the Docker entrypoint (not in the Zod schema itself), keeping the contract explicit for non-Docker users.
@@ -58,10 +58,10 @@ The env validation in `packages/core/src/config/env.ts` gains a default value on
 ### Docker Compose file
 
 A root-level `docker-compose.yml` provides the recommended production setup:
-- `archsem` service with explicit `MONGODB_URI` and `REDIS_URL` pointing to companion services
-- `mongo` service (mongo:7, data volume)
-- `redis` service (redis:7-alpine, no persistence)
-- Named volumes for `archsem-data`, `mongo-data`
+- `archmax` service with explicit `MONGODB_URI` and `REDIS_URL` pointing to companion services
+- `mongo` service (mongo:8, data volume)
+- `redis` service (redis:8-alpine, no persistence)
+- Named volumes for `archmax-data`, `mongo-data`
 
 ### Image size consideration
 

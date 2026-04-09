@@ -8,7 +8,7 @@ import {
   Hash,
   Type,
 } from "lucide-react";
-import { cn, ScrollArea, Popover, PopoverTrigger, PopoverContent } from "@archsem/ui";
+import { cn, ScrollArea, Popover, PopoverTrigger, PopoverContent } from "@archmax/ui";
 import type { SemanticModelFull, ModelDiff, FieldFull, MetricFull, RelationshipFull } from "./types";
 import { getExpressionString, getRelationshipColumns, getFieldDataType } from "./types";
 

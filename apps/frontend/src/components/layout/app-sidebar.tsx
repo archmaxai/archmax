@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
   TooltipContent,
   TooltipProvider,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { ProjectSelector } from "./project-selector";
 import { UserMenu } from "./user-menu";
 import type { Project } from "@/lib/project-context";
@@ -105,7 +105,7 @@ export function AppSidebar({
         <div className="flex h-14 items-center justify-between px-3">
           {!collapsed && (
             <span className="text-lg font-semibold tracking-tight pl-1">
-              archsem
+              archmax
             </span>
           )}
           <button

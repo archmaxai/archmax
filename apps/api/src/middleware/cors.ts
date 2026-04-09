@@ -1,5 +1,5 @@
 import { cors } from "hono/cors";
-import { getEnv } from "@archsem/core/config/env";
+import { getEnv } from "@archmax/core/config/env";
 
 export const corsMiddleware = cors({
   origin: getEnv().corsOrigins,

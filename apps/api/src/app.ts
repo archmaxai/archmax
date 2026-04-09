@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "hono/logger";
-import { getEnv } from "@archsem/core/config/env";
+import { getEnv } from "@archmax/core/config/env";
 import { corsMiddleware } from "./middleware/cors";
 import { AppError } from "./utils/errors";
 import { auth } from "./lib/auth";
@@ -22,7 +22,7 @@ import testCases from "./routes/test-cases";
 import testRuns from "./routes/test-runs";
 import playground from "./routes/playground";
 import improvements from "./routes/improvements";
-import archsemMcp from "./mcp/archsem-route";
+import archmaxMcp from "./mcp/archmax-route";
 
 const app = new Hono()
   .use("*", logger())
@@ -40,8 +40,8 @@ const app = new Hono()
   })
   .on(["POST", "GET"], "/api/auth/**", (c) => auth.handler(c.req.raw))
   .route("/api/github", githubCallback)
-  .route("/mcp/:slug/mcp", archsemMcp)
-  .route("/mcp/:slug/test/mcp", archsemMcp)
+  .route("/mcp/:slug/mcp", archmaxMcp)
+  .route("/mcp/:slug/test/mcp", archmaxMcp)
   .use("/api/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return c.json({ error: "Unauthorized" }, 401);

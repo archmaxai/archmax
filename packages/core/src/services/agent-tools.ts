@@ -163,7 +163,7 @@ export function makeCpTool(backend: ValidatingFilesystemBackend) {
 }
 
 export function makeReadDocumentTool(projectId: string) {
-  const docSvc = new DocumentFileService(getEnv().ARCHSEM_DATA_DIR);
+  const docSvc = new DocumentFileService(getEnv().ARCHMAX_DATA_DIR);
   return tool(
     async ({ filename }: { filename: string }) => {
       if (!filename) {

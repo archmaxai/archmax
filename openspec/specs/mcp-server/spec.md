@@ -66,7 +66,7 @@ The MCP endpoint SHALL rate limit requests per client IP, defaulting to `MCP_RAT
 
 ### Requirement: Semantic Layer Tools
 
-The MCP server SHALL expose the following tools for AI agent consumption. The MCP server SHALL identify itself as `"archsem"` in the server name field. All tools operate within the scope of the project identified by the URL slug — `projectId` is no longer a tool parameter. Tools that return semantic model data SHALL filter results based on the authenticated token's `scopes` array. Tools SHALL always read semantic model data from assembled single-file YAMLs — never from split source files directly. In production, the assembled files are read from the `build/` directory (populated by an explicit publish). In testing mode, the tools read from a temporary assembly of the current `src/` files. The MCP tool registration, digest generation, and scope filtering code SHALL be shared between both modes with no conditional branches. If no published build exists in production (the `build/` directory is empty or missing), model-related tools SHALL return an informational message indicating that the project has no published models.
+The MCP server SHALL expose the following tools for AI agent consumption. The MCP server SHALL identify itself as `"archmax"` in the server name field. All tools operate within the scope of the project identified by the URL slug — `projectId` is no longer a tool parameter. Tools that return semantic model data SHALL filter results based on the authenticated token's `scopes` array. Tools SHALL always read semantic model data from assembled single-file YAMLs — never from split source files directly. In production, the assembled files are read from the `build/` directory (populated by an explicit publish). In testing mode, the tools read from a temporary assembly of the current `src/` files. The MCP tool registration, digest generation, and scope filtering code SHALL be shared between both modes with no conditional branches. If no published build exists in production (the `build/` directory is empty or missing), model-related tools SHALL return an informational message indicating that the project has no published models.
 
 - `list_connections` — List all active connections for the project
 - `list_semantic_models` — List semantic models the token has access to (filtered by scopes, reads assembled YAMLs)
@@ -108,11 +108,11 @@ The MCP server SHALL expose the following tools for AI agent consumption. The MC
 - **AND** the same tool code, digest logic, and scope filtering is used as in production
 - **AND** the result reflects the latest source state, not the last publish
 
-#### Scenario: MCP client configuration uses archsem server name
+#### Scenario: MCP client configuration uses archmax server name
 
 - **WHEN** an external MCP client connects to the server
-- **THEN** the server identifies itself with name `"archsem"`
-- **AND** documentation examples show `mcpServers.archsem` as the configuration key
+- **THEN** the server identifies itself with name `"archmax"`
+- **AND** documentation examples show `mcpServers.archmax` as the configuration key
 
 ### Requirement: MCP Execute Query Tool
 

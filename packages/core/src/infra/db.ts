@@ -3,11 +3,6 @@ import { getEnv } from "../config/env";
 
 function getMongoUri(): string {
   const uri = getEnv().MONGODB_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGODB_URI is not set. Set it in .env (local dev) or omit it inside Docker to use the embedded MongoDB.",
-    );
-  }
   if (!uri.includes("retryWrites")) {
     const separator = uri.includes("?") ? "&" : "?";
     return `${uri}${separator}retryWrites=false`;
@@ -38,7 +33,7 @@ export async function connectDB() {
 
   if (!cached.promise) {
     cached.promise = mongoose.connect(getMongoUri(), {
-      dbName: "archsem",
+      dbName: "archmax",
       bufferCommands: false,
     });
   }

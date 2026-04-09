@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { username } from "better-auth/plugins";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { MongoClient } from "mongodb";
-import { getEnv } from "@archsem/core/config/env";
+import { getEnv } from "@archmax/core/config/env";
 
 const env = getEnv();
 

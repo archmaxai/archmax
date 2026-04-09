@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Code, TreePine, Network, Loader2 } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@archsem/ui";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@archmax/ui";
 import { ModelYamlView } from "./model-yaml-view";
 import { ModelTreeView } from "./model-tree-view";
 import { ModelGraphView } from "./model-graph-view";

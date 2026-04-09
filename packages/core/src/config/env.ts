@@ -3,14 +3,13 @@ import { z } from "zod/v4";
 const envSchema = z.object({
   NODE_ENV: z.string().optional(),
 
-  // Optional — the Docker image embeds MongoDB when unset (entrypoint sets the URI)
-  MONGODB_URI: z.string().optional(),
+  MONGODB_URI: z.string(),
 
   PORT: z.string().optional().default("3000"),
 
   CORS_ORIGINS: z.string().optional().default("http://localhost:5173"),
 
-  ARCHSEM_DATA_DIR: z.string().optional().default("data/projects"),
+  ARCHMAX_DATA_DIR: z.string().optional().default("data/projects"),
 
   MCP_RATE_LIMIT_MAX: z.string().optional().default("120"),
 
@@ -23,7 +22,7 @@ const envSchema = z.object({
 
   AGENT_API_BASE_URL: z.string().optional().default("https://openrouter.ai/api/v1"),
   AGENT_API_KEY: z.string().optional(),
-  AGENT_MODEL: z.string().optional().default("anthropic/claude-sonnet-4"),
+  AGENT_MODEL: z.string().optional().default("anthropic/claude-sonnet-4.6"),
   AGENT_TITLE_MODEL: z.string().optional().default("anthropic/claude-haiku-4-5-20250929"),
 
   // Redis / Worker queue (optional — without Redis the agent runs in-process)

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Loader2 } from "lucide-react";
-import { cn, Button, ScrollArea } from "@archsem/ui";
+import { cn, Button, ScrollArea } from "@archmax/ui";
 import { toast } from "sonner";
 import { MarkdownContent } from "./markdown-components";
 import { ToolCallCard } from "./tool-call-card";

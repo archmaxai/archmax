@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { McpCallLog, Improvement } from "@archsem/core/models/index";
-import { connectDB } from "@archsem/core/infra/db";
-import { SemanticModelFileService } from "@archsem/core/services/semantic-model-files";
+import { McpCallLog, Improvement } from "@archmax/core/models/index";
+import { connectDB } from "@archmax/core/infra/db";
+import { SemanticModelFileService } from "@archmax/core/services/semantic-model-files";
 import {
   listSemanticModels,
   getSemanticModelOverview,
@@ -10,7 +10,7 @@ import {
   executeScopedQuery,
   EXECUTE_QUERY_DESCRIPTION,
   type ToolResult,
-} from "@archsem/core/services/mcp-tools";
+} from "@archmax/core/services/mcp-tools";
 
 export interface McpAuthContext {
   projectId: string;
@@ -61,7 +61,7 @@ function logCall(
   }).catch((err) => console.error("[MCP] Failed to write call log:", err));
 }
 
-export async function registerArchsemTools(server: McpServer, ctx: McpToolContext): Promise<void> {
+export async function registerArchmaxTools(server: McpServer, ctx: McpToolContext): Promise<void> {
   const { projectId, scopes, fileSvc } = ctx;
 
   server.registerTool("list_semantic_models", {

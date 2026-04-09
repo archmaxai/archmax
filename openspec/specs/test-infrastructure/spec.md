@@ -93,12 +93,12 @@ The Dockerfile SHALL include a `test` stage that runs the full test suite (`pnpm
 - **AND** the image is built directly from dependencies
 
 ### Requirement: Contributor Testing Documentation
-The project SHALL provide a testing section in `CONTRIBUTING.md` that documents: how to run the full test suite (`pnpm test`), how to run tests for a specific package (`pnpm --filter @archsem/core test`), how to run tests in watch mode, how to view coverage reports, the project's test file naming convention (`*.test.ts` colocated with source), the mocking strategy (when to use `vi.mock` vs shared `mockDb`), and examples of writing unit tests and integration tests. The documentation SHALL include a quick-start example that a new contributor can follow to write their first test.
+The project SHALL provide a testing section in `CONTRIBUTING.md` that documents: how to run the full test suite (`pnpm test`), how to run tests for a specific package (`pnpm --filter @archmax/core test`), how to run tests in watch mode, how to view coverage reports, the project's test file naming convention (`*.test.ts` colocated with source), the mocking strategy (when to use `vi.mock` vs shared `mockDb`), and examples of writing unit tests and integration tests. The documentation SHALL include a quick-start example that a new contributor can follow to write their first test.
 
 #### Scenario: New contributor writes a unit test
 - **WHEN** a new contributor reads `CONTRIBUTING.md` and follows the testing quick-start
 - **THEN** they can create a `*.test.ts` file next to the source file they want to test
-- **AND** they can import shared test utilities from `@archsem/core/test-utils`
+- **AND** they can import shared test utilities from `@archmax/core/test-utils`
 - **AND** they can run `pnpm test` and see their test pass or fail
 
 #### Scenario: Contributor checks coverage locally

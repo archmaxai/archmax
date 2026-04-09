@@ -1,7 +1,7 @@
 import { createDeepAgent } from "deepagents";
 import { ChatOpenAI } from "@langchain/openai";
-import { tool } from "@langchain/core/tools";
-import { z } from "zod/v4";
+import { tool, StructuredTool } from "@langchain/core/tools";
+import { z } from "zod";
 import { connectDB } from "../infra/db";
 import { decrypt } from "../infra/crypto";
 import { getEnv } from "../config/env";
@@ -137,20 +137,18 @@ export function getTestAgentRecursionLimit(): number {
   return configured > 0 ? configured : DEFAULT_MAX_ITERATIONS;
 }
 
-type AnyTool = ReturnType<typeof tool>;
-
-function withToolBudget(tools: AnyTool[], maxCalls: number): AnyTool[] {
+function withToolBudget(tools: StructuredTool[], maxCalls: number): StructuredTool[] {
   const counter = { value: 0 };
   return tools.map((t) =>
     tool(
-      async (input: any) => {
+      async (input: Record<string, unknown>) => {
         counter.value++;
         if (counter.value > maxCalls) {
           return `Tool call budget of ${maxCalls} reached. You MUST provide your final answer now using the information already gathered. Do NOT call any more tools.`;
         }
-        return t.invoke(input);
+        return String(await t.invoke(input));
       },
-      { name: t.name, description: t.description, schema: t.schema },
+      { name: t.name, description: t.description, schema: t.schema as z.ZodObject<any> },
     ),
   );
 }
@@ -176,11 +174,11 @@ export async function createPlaygroundAgent(
     configuration: { baseURL: agent.llmBaseUrl },
   });
 
-  const fileSvc = new SemanticModelFileService(env.ARCHSEM_DATA_DIR);
+  const fileSvc = new SemanticModelFileService(env.ARCHMAX_DATA_DIR);
   const projectId = agent.project.toString();
   const scopes = agent.semanticModels;
 
-  let tools: AnyTool[] = [
+  let tools: StructuredTool[] = [
     makeListModelsTool(fileSvc, projectId, scopes),
     makeGetOverviewTool(fileSvc, projectId, scopes),
     makeGetDatasetsTool(fileSvc, projectId, scopes),

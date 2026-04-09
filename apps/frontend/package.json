@@ -1,5 +1,5 @@
 {
-  "name": "@archsem/frontend",
+  "name": "@archmax/frontend",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@archsem/api": "workspace:*",
-    "@archsem/ui": "workspace:*",
+    "@archmax/api": "workspace:*",
+    "@archmax/ui": "workspace:*",
     "@tanstack/react-query": "^5",
     "@tanstack/react-router": "^1",
     "@xyflow/react": "^12.10.2",

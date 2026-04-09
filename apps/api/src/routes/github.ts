@@ -2,10 +2,10 @@ import { createHmac, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { OAuthApp } from "@octokit/oauth-app";
 import { Octokit } from "octokit";
-import { connectDB } from "@archsem/core/infra/db";
-import { Project } from "@archsem/core/models/index";
-import { getEnv } from "@archsem/core/config/env";
-import { encrypt, decrypt } from "@archsem/core/infra/crypto";
+import { connectDB } from "@archmax/core/infra/db";
+import { Project } from "@archmax/core/models/index";
+import { getEnv } from "@archmax/core/config/env";
+import { encrypt, decrypt } from "@archmax/core/infra/crypto";
 import { AppError } from "../utils/errors";
 
 function getOAuthApp() {

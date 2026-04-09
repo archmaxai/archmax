@@ -1,11 +1,11 @@
 {
-  "name": "@archsem/api",
+  "name": "@archmax/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/app.ts",
-    "./mcp/archsem-server": "./src/mcp/archsem-server.ts"
+    "./mcp/archmax-server": "./src/mcp/archmax-server.ts"
   },
   "scripts": {
     "dev": "node --watch --import tsx src/index.ts",
@@ -23,7 +23,7 @@
     "@modelcontextprotocol/hono": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "@octokit/oauth-app": "^8.0.3",
-    "@archsem/core": "workspace:*",
+    "@archmax/core": "workspace:*",
     "better-auth": "^1.5.6",
     "deepagents": "^1.8.8",
     "dotenv": "^17.3.1",

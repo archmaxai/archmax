@@ -28,7 +28,7 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import {
   Dialog,
   DialogContent,
@@ -36,20 +36,20 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 

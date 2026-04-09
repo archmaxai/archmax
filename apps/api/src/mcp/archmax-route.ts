@@ -4,12 +4,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
-import { connectDB } from "@archsem/core/infra/db";
-import { Project, McpToken, hashMcpToken } from "@archsem/core/models/index";
-import { getEnv } from "@archsem/core/config/env";
-import { SemanticModelFileService } from "@archsem/core/services/semantic-model-files";
-import { PublishService } from "@archsem/core/services/publish";
-import { registerArchsemTools, type McpAuthContext, type McpToolContext } from "./archsem-server";
+import { connectDB } from "@archmax/core/infra/db";
+import { Project, McpToken, hashMcpToken } from "@archmax/core/models/index";
+import { getEnv } from "@archmax/core/config/env";
+import { SemanticModelFileService } from "@archmax/core/services/semantic-model-files";
+import { PublishService } from "@archmax/core/services/publish";
+import { registerArchmaxTools, type McpAuthContext, type McpToolContext } from "./archmax-server";
 
 const _env = getEnv();
 const MCP_RATE_WINDOW_MS = 60_000;
@@ -120,12 +120,12 @@ app.all("/", async (c) => {
   if (!authCtx) return c.json(UNAUTHORIZED, 401);
 
   const isTestRoute = c.req.path.includes("/test/");
-  const dataDir = getEnv().ARCHSEM_DATA_DIR;
+  const dataDir = getEnv().ARCHMAX_DATA_DIR;
   let fileSvc: SemanticModelFileService;
   let tempDir: string | null = null;
 
   if (isTestRoute) {
-    tempDir = await mkdtemp(join(tmpdir(), "archsem-test-build-"));
+    tempDir = await mkdtemp(join(tmpdir(), "archmax-test-build-"));
     const publishSvc = new PublishService(dataDir);
     const assembledDir = join(tempDir, authCtx.projectId);
     await publishSvc.assemble(authCtx.projectId, assembledDir);
@@ -137,7 +137,7 @@ app.all("/", async (c) => {
   const toolCtx: McpToolContext = { ...authCtx, fileSvc };
 
   const mcpServer = new McpServer({
-    name: "archsem",
+    name: "archmax",
     version: "1.0.0",
     description: "Semantic layer tools for querying data models and connections",
   });
@@ -150,7 +150,7 @@ app.all("/", async (c) => {
     },
   });
 
-  await registerArchsemTools(mcpServer, toolCtx);
+  await registerArchmaxTools(mcpServer, toolCtx);
   await mcpServer.connect(transport);
 
   transport.onclose = () => {

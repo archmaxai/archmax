@@ -10,7 +10,7 @@ All persistent state MUST reside under `/app/data/` so that a single volume moun
 
 - **WHEN** the container starts without `MONGODB_URI` or `REDIS_URL` set
 - **THEN** the entrypoint starts embedded `mongod` (binding to `127.0.0.1:27017`, data at `/app/data/mongodb`) and `redis-server` (binding to `127.0.0.1:6379`, data at `/tmp/redis`)
-- **AND** sets `MONGODB_URI=mongodb://127.0.0.1:27017/archsem` and `REDIS_URL=redis://127.0.0.1:6379` for the application processes
+- **AND** sets `MONGODB_URI=mongodb://127.0.0.1:27017/archmax` and `REDIS_URL=redis://127.0.0.1:6379` for the application processes
 - **AND** waits for `mongod` to be ready before starting the API and worker
 
 #### Scenario: External MongoDB provided
@@ -35,7 +35,7 @@ All persistent state MUST reside under `/app/data/` so that a single volume moun
 
 All persistent application data MUST reside under a single root directory (`/app/data/` in Docker). The directory layout SHALL be:
 
-- `/app/data/projects/` — semantic model YAML files (`ARCHSEM_DATA_DIR`)
+- `/app/data/projects/` — semantic model YAML files (`ARCHMAX_DATA_DIR`)
 - `/app/data/mongodb/` — embedded MongoDB data files (only when using embedded MongoDB)
 
 Redis data SHALL be stored in `/tmp/redis` and is explicitly ephemeral (not backed up).
@@ -54,16 +54,16 @@ Redis data SHALL be stored in `/tmp/redis` and is explicitly ephemeral (not back
 
 The repository SHALL include a `docker-compose.yml` at the project root providing a production-oriented multi-service deployment with separate MongoDB and Redis containers. The Compose file SHALL define:
 
-- A `archsem` service using the project Docker image with `MONGODB_URI` and `REDIS_URL` pointing to companion services
-- A `mongo` service using `mongo:7` with a named volume for data persistence
-- A `redis` service using `redis:7-alpine` with no persistence
-- Named volumes for `archsem-data` and `mongo-data`
+- A `archmax` service using the project Docker image with `MONGODB_URI` and `REDIS_URL` pointing to companion services
+- A `mongo` service using `mongo:8` with a named volume for data persistence
+- A `redis` service using `redis:8-alpine` with no persistence
+- Named volumes for `archmax-data` and `mongo-data`
 
 #### Scenario: Compose stack starts successfully
 
 - **WHEN** a user runs `docker compose up -d` with required environment variables set
-- **THEN** all three services start and the archsem application connects to the external MongoDB and Redis instances
-- **AND** the embedded services inside the archsem container are NOT started (because `MONGODB_URI` and `REDIS_URL` are provided)
+- **THEN** all three services start and the archmax application connects to the external MongoDB and Redis instances
+- **AND** the embedded services inside the archmax container are NOT started (because `MONGODB_URI` and `REDIS_URL` are provided)
 
 ### Requirement: Deployment Documentation
 
@@ -112,7 +112,7 @@ The documentation site SHALL provide comprehensive deployment guidance across mu
 
 ### Requirement: Docker Reference Page
 
-The documentation site SHALL include a dedicated Docker reference page (`reference/docker`) that serves as the canonical, in-depth resource for running archsem via Docker. The page MUST cover:
+The documentation site SHALL include a dedicated Docker reference page (`reference/docker`) that serves as the canonical, in-depth resource for running archmax via Docker. The page MUST cover:
 
 - **Image contents**: what is bundled (API server, BullMQ worker, frontend SPA, nginx reverse proxy, embedded MongoDB 7.x, embedded Redis)
 - **Exposed ports**: `8080` (nginx → API + SPA)

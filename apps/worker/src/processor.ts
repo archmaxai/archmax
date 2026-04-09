@@ -1,19 +1,19 @@
 import { UnrecoverableError, type Job } from "bullmq";
 import Redis from "ioredis";
-import { connectDB } from "@archsem/core/infra/db";
-import { Conversation } from "@archsem/core/models/index";
-import { createSemlayerAgent } from "@archsem/core/services/agent";
-import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archsem/core/services/playground-agent";
-import { processAgentStream } from "@archsem/core/services/agent-stream";
+import { connectDB } from "@archmax/core/infra/db";
+import { Conversation } from "@archmax/core/models/index";
+import { createSemlayerAgent } from "@archmax/core/services/agent";
+import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
+import { processAgentStream } from "@archmax/core/services/agent-stream";
 import {
   getRedis,
   isCancelFlagSet,
   clearCancelFlag,
-} from "@archsem/core/infra/redis";
-import { JOB_CANCEL_CHANNEL_PREFIX } from "@archsem/core/queue/constants";
-import { publishStreamEvent, clearStreamBuffer } from "@archsem/core/streaming/stream-bridge";
-import type { AgentJobData, AgentJobResult } from "@archsem/core/queue/types";
-import type { IToolCallRecord, IContentSegment } from "@archsem/core/models/Conversation";
+} from "@archmax/core/infra/redis";
+import { JOB_CANCEL_CHANNEL_PREFIX } from "@archmax/core/queue/constants";
+import { publishStreamEvent, clearStreamBuffer } from "@archmax/core/streaming/stream-bridge";
+import type { AgentJobData, AgentJobResult } from "@archmax/core/queue/types";
+import type { IToolCallRecord, IContentSegment } from "@archmax/core/models/Conversation";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
 async function publishDone(

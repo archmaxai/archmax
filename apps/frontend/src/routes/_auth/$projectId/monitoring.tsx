@@ -25,7 +25,7 @@ import {
   SheetTitle,
   SheetDescription,
   ScrollArea,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 

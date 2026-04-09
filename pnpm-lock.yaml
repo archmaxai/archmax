@@ -24,7 +24,7 @@ importers:
 
   apps/api:
     dependencies:
-      '@archsem/core':
+      '@archmax/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@hono/node-server':
@@ -97,10 +97,10 @@ importers:
 
   apps/frontend:
     dependencies:
-      '@archsem/api':
+      '@archmax/api':
         specifier: workspace:*
         version: link:../api
-      '@archsem/ui':
+      '@archmax/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@dagrejs/dagre':
@@ -176,7 +176,7 @@ importers:
 
   apps/worker:
     dependencies:
-      '@archsem/core':
+      '@archmax/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@langchain/core':

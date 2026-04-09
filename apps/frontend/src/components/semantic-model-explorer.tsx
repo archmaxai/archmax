@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Database, Loader2 } from "lucide-react";
-import { cn } from "@archsem/ui";
+import { cn } from "@archmax/ui";
 import { api } from "@/lib/api";
 
 interface SemanticModelSummary {

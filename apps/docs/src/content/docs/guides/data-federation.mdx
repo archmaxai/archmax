@@ -3,11 +3,11 @@ title: Data Federation
 description: Query across multiple databases from a single project using DuckDB.
 ---
 
-archsem uses [DuckDB](https://duckdb.org/) as an in-process query engine that can federate queries across multiple database connections. Each project gets its own DuckDB instance with connections attached as named schemas.
+archmax uses [DuckDB](https://duckdb.org/) as an in-process query engine that can federate queries across multiple database connections. Each project gets its own DuckDB instance with connections attached as named schemas.
 
 ## How It Works
 
-When you add a connection to a project and mark it as active, archsem attaches it to the project's DuckDB instance using DuckDB's extension system:
+When you add a connection to a project and mark it as active, archmax attaches it to the project's DuckDB instance using DuckDB's extension system:
 
 | Database Type | DuckDB Extension |
 |---------------|-----------------|

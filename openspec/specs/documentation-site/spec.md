@@ -5,7 +5,7 @@ TBD - created by archiving change add-documentation-site. Update Purpose after a
 ## Requirements
 ### Requirement: Documentation Workspace
 
-The system SHALL include a documentation site as the `apps/docs` workspace package (`@archsem/docs`) built with Astro Starlight.
+The system SHALL include a documentation site as the `apps/docs` workspace package (`@archmax/docs`) built with Astro Starlight.
 
 The workspace MUST integrate with Turborepo so that `pnpm build` builds the docs and `pnpm dev` starts the docs dev server alongside other apps.
 
