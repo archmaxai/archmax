@@ -2,6 +2,10 @@
 
 A semantic layer for your databases — describe your data once, let AI agents query it intelligently.
 
+> **Heads up — archmax is experimental.** The core ideas are stable, but APIs, file formats, and configuration may change between releases. We try to avoid breaking changes, but can't guarantee stability yet. Pin your version and check the changelog before upgrading.
+
+Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax is the runtime that turns OSI models into a live, queryable semantic layer for AI agents.
+
 ## The Problem
 
 Connecting AI agents to databases today is a gamble. You either hand over raw SQL access and hope the LLM doesn't hallucinate column names, run destructive queries, or leak sensitive data — or you spend weeks writing bespoke tool integrations that break the moment your schema changes.
@@ -19,7 +23,7 @@ Instead of raw database access, agents get:
 - **Business context** — field descriptions, synonyms, examples, and enum values so the agent knows `amt_01` is "gross revenue in EUR"
 - **Guardrails** — read-only queries scoped to sandboxed VIEWs, not raw tables; token-based access with model-level permissions
 - **Federation** — a single query interface across Postgres, MySQL, MSSQL, SQLite, and DuckDB, powered by DuckDB's in-process engine
-- **Structure** — typed datasets, explicit relationships, and reusable metric definitions following the [OSI spec](https://github.com/open-semantic-interchange/OSI)
+- **Structure** — typed datasets, explicit relationships, and reusable metric definitions grounded in the OSI spec
 
 The result: AI agents that query your data reliably, safely, and with understanding — not guesswork.
 
