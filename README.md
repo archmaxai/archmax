@@ -148,4 +148,4 @@ See the [Contributing guide](apps/docs/src/content/docs/contributing/openspec.md
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)
