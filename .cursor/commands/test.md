@@ -7,7 +7,7 @@ description: Ensure recent changes are covered by tests and all tests pass.
 
 **Context**
 
-This is a pnpm + Turborepo monorepo with a Vitest 4 workspace (`vitest.workspace.ts`) spanning four projects: `core`, `api`, `frontend`, and `worker`. Tests are colocated with source (`my-service.ts` → `my-service.test.ts`). Integration tests use `.integration.test.ts`. API integration tests use `app.request()` via the helper in `apps/api/src/test-utils/api-client.ts`. Shared test utilities (factories, mocks) live in `packages/core/src/test-utils/`.
+This is a pnpm + Turborepo monorepo with a Vitest 4 workspace (`vitest.config.ts`) spanning four projects: `core`, `api`, `frontend`, and `worker`. Tests are colocated with source (`my-service.ts` → `my-service.test.ts`). Integration tests use `.integration.test.ts`. API integration tests use `app.request()` via the helper in `apps/api/src/test-utils/api-client.ts`. Shared test utilities (factories, mocks) live in `packages/core/src/test-utils/`.
 
 **Steps**
 

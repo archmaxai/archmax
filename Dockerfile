@@ -22,7 +22,7 @@ FROM deps AS test
 
 COPY apps/ ./apps/
 COPY packages/ ./packages/
-COPY vitest.workspace.ts vitest.config.ts ./
+COPY vitest.config.ts ./
 
 RUN pnpm test:coverage
 

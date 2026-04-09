@@ -149,3 +149,6 @@ data/
 
 # Generated route tree
 routeTree.gen.ts
+
+# Cursor agent skills lockfile
+skills-lock.json
