@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
   PNPM_VERSION: "10.30.3"
 
 jobs:
@@ -47,11 +47,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mongo:
-        image: mongo:7
+        image: mongo:8
         ports:
           - 27017:27017
     env:
-      MONGODB_URI: mongodb://localhost:27017/archsem-test
+      MONGODB_URI: mongodb://localhost:27017/archmax-test
       BETTER_AUTH_SECRET: ci-test-secret-32chars-xxxxxxxxx
       ENCRYPTION_KEY: ci-test-encrypt-key-32chars-xxxx
     steps:

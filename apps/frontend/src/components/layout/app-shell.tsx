@@ -10,13 +10,13 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(() => {
-    return localStorage.getItem("archsem-sidebar-collapsed") === "true";
+    return localStorage.getItem("archmax-sidebar-collapsed") === "true";
   });
 
   const toggle = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem("archsem-sidebar-collapsed", String(next));
+      localStorage.setItem("archmax-sidebar-collapsed", String(next));
       return next;
     });
   }, []);

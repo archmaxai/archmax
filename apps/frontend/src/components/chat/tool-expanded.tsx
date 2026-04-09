@@ -6,7 +6,7 @@ import {
   Loader2,
   Check,
 } from "lucide-react";
-import { cn } from "@archsem/ui";
+import { cn } from "@archmax/ui";
 import type { ToolCallInfo } from "../../lib/chat-types";
 import { MarkdownContent } from "./markdown-components";
 import { safeParse, getArgs } from "./tool-call-helpers";

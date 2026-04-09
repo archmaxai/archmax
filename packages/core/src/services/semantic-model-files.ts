@@ -267,6 +267,28 @@ export class SemanticModelFileService {
     return yaml.dump(stripEmptyExtensions({ ...model } as Record<string, unknown>), YAML_OPTS);
   }
 
+  async updateModelExtensions(
+    projectId: string,
+    modelName: string,
+    extensions: Array<{ vendor_name: string; data: string }>,
+  ): Promise<boolean> {
+    assertSafeSegment(modelName, "model name");
+    const dir = await this.resolveWorkDir(projectId);
+    const filePath = join(dir, `${modelName}.yaml`);
+    let rawContent: string;
+    try {
+      rawContent = await readFile(filePath, "utf-8");
+    } catch {
+      return false;
+    }
+
+    const root = yaml.load(rawContent) as Record<string, unknown>;
+    root.custom_extensions = extensions.length > 0 ? extensions : undefined;
+    if (!root.custom_extensions) delete root.custom_extensions;
+    await this.atomicWrite(filePath, yaml.dump(root, YAML_OPTS));
+    return true;
+  }
+
   async updateDatasetExtensions(
     projectId: string,
     modelName: string,

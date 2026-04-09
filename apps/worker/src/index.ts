@@ -1,16 +1,16 @@
 import "./env";
 
 import { Worker } from "bullmq";
-import { connectDB } from "@archsem/core/infra/db";
-import { closeRedis } from "@archsem/core/infra/redis";
-import { getQueueConnectionOptions } from "@archsem/core/queue/connection";
+import { connectDB } from "@archmax/core/infra/db";
+import { closeRedis } from "@archmax/core/infra/redis";
+import { getQueueConnectionOptions } from "@archmax/core/queue/connection";
 import {
   AGENT_RUNS_QUEUE,
   TEST_RUNS_QUEUE,
   DEFAULT_WORKER_CONCURRENCY,
-} from "@archsem/core/queue/constants";
-import type { AgentJobData, AgentJobResult, TestRunJobData, TestRunJobResult } from "@archsem/core/queue/types";
-import { getEnv } from "@archsem/core/config/env";
+} from "@archmax/core/queue/constants";
+import type { AgentJobData, AgentJobResult, TestRunJobData, TestRunJobResult } from "@archmax/core/queue/types";
+import { getEnv } from "@archmax/core/config/env";
 import { processAgentJob } from "./processor";
 import { processTestRunJob } from "./test-processor";
 

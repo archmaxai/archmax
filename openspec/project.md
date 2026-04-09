@@ -2,7 +2,7 @@
 
 ## Purpose
 
-archsem — a tool for managing semantic descriptions of database schemas, tables, columns, and relationships. Provides an admin UI for project and connection management, a DuckDB federation layer for cross-connection queries, and an MCP server that AI agents can query to understand database structure and meaning.
+archmax — a tool for managing semantic descriptions of database schemas, tables, columns, and relationships. Provides an admin UI for project and connection management, a DuckDB federation layer for cross-connection queries, and an MCP server that AI agents can query to understand database structure and meaning.
 
 ## Tech Stack
 
@@ -13,7 +13,7 @@ archsem — a tool for managing semantic descriptions of database schemas, table
 - **MCP**: JSON-RPC endpoint on Hono with bearer token auth, rate limiting
 - **Database**: MongoDB via Mongoose 9
 - **Query federation**: DuckDB (in-process, per project) via `@duckdb/node-api`
-- **UI Kit**: Radix UI primitives + CVA variants in `@archsem/ui`
+- **UI Kit**: Radix UI primitives + CVA variants in `@archmax/ui`
 - **Fonts**: Geist Sans / Geist Mono
 - **Deployment**: Docker (multi-stage) with nginx reverse proxy on port 8080
 
@@ -85,15 +85,32 @@ archsem — a tool for managing semantic descriptions of database schemas, table
 - **No redundant section sub-headings**: If a page has a single content section below the header (one list or table), do not add an `h2` that restates the page title. The `h1` in the header already provides sufficient context.
 - **Multiple content sections may use sub-headings**: When a page contains genuinely distinct groups (e.g., MCP Access shows endpoint cards and a token list), lightweight sub-headings are acceptable to separate them — but primary actions still belong in the page header.
 
+### Build Verification
+
+After making code changes, run the CI checks locally before committing:
+
+```bash
+pnpm typecheck          # turbo typecheck across all packages (tsc --noEmit)
+pnpm lint               # turbo lint/build across all packages
+```
+
+Both commands must exit 0. If either fails, fix the errors before pushing. These are the same checks the GitHub Actions CI pipeline runs on every PR.
+
+When modifying `apps/api`, also run its build directly to catch declaration/emit issues that `--noEmit` misses:
+
+```bash
+pnpm --filter @archmax/api build   # tsc (emits JS to dist/)
+```
+
 ### Architecture Patterns
 
-- **Shared packages**: `@archsem/core` for models/DB/config/services, `@archsem/ui` for React components
+- **Shared packages**: `@archmax/core` for models/DB/config/services, `@archmax/ui` for React components
 - **Mongoose models**: Interface → Schema → hot-reload-safe export (`mongoose.models.X || mongoose.model()`) — used for Project and Connection
 - **Soft delete**: Mongoose models use a shared plugin (`softDeletePlugin`) that adds `deleted`/`deletedAt` fields and auto-filters deleted records
-- **Semantic model file service**: `SemanticModelFileService` in `@archsem/core/services/semantic-model-files` handles all YAML file I/O (list, read, write, delete) with atomic writes (temp file + rename)
-- **Env config**: Zod schema validation via `getEnv()` singleton in `@archsem/core/config/env`
-- **DB connection**: Singleton `connectDB()` with global mongoose cache in `@archsem/core/infra/db`
-- **DuckDB service**: Lazy per-project DuckDB instances in `@archsem/core/services/duckdb` — connections attached as named schemas via postgres/mysql/mssql extensions
+- **Semantic model file service**: `SemanticModelFileService` in `@archmax/core/services/semantic-model-files` handles all YAML file I/O (list, read, write, delete) with atomic writes (temp file + rename)
+- **Env config**: Zod schema validation via `getEnv()` singleton in `@archmax/core/config/env`
+- **DB connection**: Singleton `connectDB()` with global mongoose cache in `@archmax/core/infra/db`
+- **DuckDB service**: Lazy per-project DuckDB instances in `@archmax/core/services/duckdb` — connections attached as named schemas via postgres/mysql/mssql extensions
 - **API structure**: Hono app exports `AppType` for typed RPC client in frontend
 - **Frontend API client**: `hc<AppType>` from `hono/client` — fully typed end-to-end
 - **Error handling**: `AppError` class with static factory methods (badRequest, notFound, etc.)
@@ -136,7 +153,7 @@ A connection represents a database connection (Postgres, MySQL, MSSQL, SQLite, D
 
 ### Semantic Models (DuckDB-native, file-based)
 
-Semantic models are stored as YAML files on disk, one file per model, in a per-project directory (`<ARCHSEM_DATA_DIR>/<projectId>/`). Semantic models are project-scoped (not connection-scoped) and follow the [OSI (Open Semantic Interchange)](https://github.com/open-semantic-interchange/OSI) spec with snake_case naming. Each YAML file is self-contained:
+Semantic models are stored as YAML files on disk, one file per model, in a per-project directory (`<ARCHMAX_DATA_DIR>/<projectId>/`). Semantic models are project-scoped (not connection-scoped) and follow the [OSI (Open Semantic Interchange)](https://github.com/open-semantic-interchange/OSI) spec with snake_case naming. Each YAML file is self-contained:
 
 - **Datasets** — logical representations of tables/views with source references (`<connection>.<schema>.<table>`), `primary_key`, `unique_keys`, and inline fields
 - **Fields** — row-level attributes within a dataset, with an OSI `expression` object (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), optional `dimension` (`{ is_time: true }` for temporal fields), and `custom_extensions` for project-specific metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`)
@@ -159,7 +176,7 @@ Exposes semantic metadata as MCP tools for AI agent consumption:
 
 - Single-user system — no multi-tenancy
 - MongoDB stores projects and connections; semantic models are stored as YAML files on disk
-- `ARCHSEM_DATA_DIR` env var configures the base directory for project folders (defaults to `./data/projects`)
+- `ARCHMAX_DATA_DIR` env var configures the base directory for project folders (defaults to `./data/projects`)
 - DuckDB is used for federated querying across connections (in-process, per project)
 - MCP bearer token auth is the only security boundary for AI agents
 - Better Auth session-based login for admin UI

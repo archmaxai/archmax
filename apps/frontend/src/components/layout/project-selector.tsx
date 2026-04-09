@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/project-context";
 import { CreateProjectDialog } from "@/components/create-project-dialog";

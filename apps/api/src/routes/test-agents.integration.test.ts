@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createTestAgent } from "@archsem/core/test-utils/factories";
+import { createTestAgent } from "@archmax/core/test-utils/factories";
 
 const mocks = vi.hoisted(() => ({
   find: vi.fn(),
@@ -8,15 +8,15 @@ const mocks = vi.hoisted(() => ({
   findOneAndUpdate: vi.fn(),
 }));
 
-vi.mock("@archsem/core/infra/db", () => ({ connectDB: vi.fn() }));
-vi.mock("@archsem/core/config/env", () => ({
+vi.mock("@archmax/core/infra/db", () => ({ connectDB: vi.fn() }));
+vi.mock("@archmax/core/config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "test-key-32-chars-long-xxxxxxxx" })),
 }));
-vi.mock("@archsem/core/infra/crypto", () => ({
+vi.mock("@archmax/core/infra/crypto", () => ({
   encrypt: vi.fn((val: string) => `enc_${val}`),
   decrypt: vi.fn((val: string) => val.replace("enc_", "")),
 }));
-vi.mock("@archsem/core/models/index", () => ({
+vi.mock("@archmax/core/models/index", () => ({
   TestAgent: {
     find: mocks.find,
     findOne: mocks.findOne,

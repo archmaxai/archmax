@@ -1,9 +1,8 @@
 import "./env";
 import { serve } from "@hono/node-server";
 import app from "./app";
-import { getEnv } from "@archsem/core/config/env";
+import { getEnv } from "@archmax/core/config/env";
 import { seedAdmin } from "./lib/seed-admin";
-import { migrateSrcLayout } from "./scripts/migrate-src-layout";
 
 const PORT = parseInt(getEnv().PORT, 10);
 
@@ -11,10 +10,6 @@ console.log(`Starting server on port ${PORT}...`);
 
 seedAdmin().catch((err) => {
   console.error("Failed to seed admin user:", err);
-});
-
-migrateSrcLayout().catch((err) => {
-  console.error("Failed to run src layout migration:", err);
 });
 
 const server = serve({

@@ -15,7 +15,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import {
   ALL_FILTER,

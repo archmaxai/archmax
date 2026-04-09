@@ -163,7 +163,7 @@ export function makeCpTool(backend: ValidatingFilesystemBackend) {
 }
 
 export function makeReadDocumentTool(projectId: string) {
-  const docSvc = new DocumentFileService(getEnv().ARCHSEM_DATA_DIR);
+  const docSvc = new DocumentFileService(getEnv().ARCHMAX_DATA_DIR);
   return tool(
     async ({ filename }: { filename: string }) => {
       if (!filename) {
@@ -260,6 +260,17 @@ export function makeCreateTestCaseTool(projectId: string) {
 }
 
 export function buildConnectionContext(connections: IConnectionDocument[]): string {
+  if (connections.length === 0) {
+    return [
+      "## Data Connections",
+      "",
+      "**No data connections are configured for this project.**",
+      "",
+      "The user must add at least one database connection before you can explore schemas or build a semantic model.",
+      "Guide them to the project settings to add a connection (see step 0 in your workflow).",
+    ].join("\n");
+  }
+
   const schemaLines = connections.map((c) => {
     const dbSchema = c.connectionConfig.schema || null;
     const suffix = c.description ? `: ${c.description}` : "";

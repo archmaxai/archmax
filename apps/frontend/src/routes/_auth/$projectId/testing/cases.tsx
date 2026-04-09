@@ -33,7 +33,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";

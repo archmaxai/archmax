@@ -1,8 +1,6 @@
 import { Hono } from "hono";
-import { connectDB } from "@archsem/core/infra/db";
-import { McpCallLog } from "@archsem/core/models/index";
-import type { FilterQuery } from "mongoose";
-import type { IMcpCallLogDocument } from "@archsem/core/models/McpCallLog";
+import { connectDB } from "@archmax/core/infra/db";
+import { McpCallLog } from "@archmax/core/models/index";
 
 const app = new Hono().get("/", async (c) => {
   await connectDB();
@@ -16,15 +14,16 @@ const app = new Hono().get("/", async (c) => {
   const from = c.req.query("from");
   const to = c.req.query("to");
 
-  const filter: FilterQuery<IMcpCallLogDocument> = { project: projectId };
+  const filter: Record<string, unknown> = { project: projectId };
 
   if (toolName) filter.toolName = toolName;
   if (tokenId) filter.tokenId = tokenId;
   if (errorOnly) filter.isError = true;
   if (from || to) {
-    filter.createdAt = {};
-    if (from) filter.createdAt.$gte = new Date(from);
-    if (to) filter.createdAt.$lte = new Date(to);
+    const dateFilter: Record<string, Date> = {};
+    if (from) dateFilter.$gte = new Date(from);
+    if (to) dateFilter.$lte = new Date(to);
+    filter.createdAt = dateFilter;
   }
 
   const [data, total] = await Promise.all([

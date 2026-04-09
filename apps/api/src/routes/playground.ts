@@ -3,18 +3,18 @@ import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { connectDB } from "@archsem/core/infra/db";
-import { Conversation, TestAgent } from "@archsem/core/models/index";
-import { isRedisConfigured, publishCancelSignal } from "@archsem/core/infra/redis";
-import { enqueueAgentJob } from "@archsem/core/queue/producer";
+import { connectDB } from "@archmax/core/infra/db";
+import { Conversation, TestAgent } from "@archmax/core/models/index";
+import { isRedisConfigured, publishCancelSignal } from "@archmax/core/infra/redis";
+import { enqueueAgentJob } from "@archmax/core/queue/producer";
 import {
   subscribeToStream,
   getBufferedStreamEvents,
   isStreamActive,
   type StreamEvent,
-} from "@archsem/core/streaming/stream-bridge";
-import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archsem/core/services/playground-agent";
-import { processAgentStream } from "@archsem/core/services/agent-stream";
+} from "@archmax/core/streaming/stream-bridge";
+import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
+import { processAgentStream, createStreamCollector } from "@archmax/core/services/agent-stream";
 import { generateTitle, truncateTitle } from "../services/title-agent";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
@@ -134,36 +134,39 @@ const app = new Hono()
           m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
         );
 
-      let result;
+      const collector = createStreamCollector();
+      let errorMessage: string | undefined;
       try {
         const events = agent.streamEvents(
           { messages: inputMessages },
           { version: "v2", recursionLimit: getTestAgentRecursionLimit() },
         );
-        result = await processAgentStream(
+        await processAgentStream(
           events,
           (event, data) => stream.writeSSE({ event, data }),
+          collector,
         );
       } catch (err) {
         console.error("[playground] Error during streaming:", err);
         const isRecursionError = err instanceof Error && /recursion limit/i.test(err.message);
-        const errorMessage = isRecursionError
+        errorMessage = isRecursionError
           ? `The agent exceeded the maximum number of iterations (${getTestAgentRecursionLimit()}). This usually means the model is stuck in a loop — try simplifying your question, adjusting the system prompt, or increasing TEST_AGENT_MAX_ITERATIONS.`
           : err instanceof Error ? err.message : "Unknown error";
-        result = result ?? { fullResponse: "The agent encountered an error processing your request.", toolCalls: [], segments: [] };
         await stream.writeSSE({
           event: "error",
           data: JSON.stringify({ error: errorMessage }),
         });
       }
 
-      conv.messages.push({
+      const msg: Record<string, unknown> = {
         role: "assistant",
-        content: result.fullResponse,
-        toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
-        segments: result.segments.length ? result.segments : undefined,
+        content: collector.fullResponse,
         timestamp: new Date(),
-      });
+      };
+      if (collector.toolCalls.length) msg.toolCalls = collector.toolCalls;
+      if (collector.segments.length) msg.segments = collector.segments;
+      if (errorMessage) msg.error = errorMessage;
+      conv.messages.push(msg as any);
       await conv.save();
 
       if (isNewConversation) {
@@ -266,11 +269,15 @@ const app = new Hono()
       if (!agentExists) return c.json({ error: "Test agent not found" }, 404);
     }
 
-    const conversations = await Conversation.find(filter)
+    const rawConversations = await Conversation.find(filter)
       .select("title testAgent createdAt updatedAt")
       .sort({ updatedAt: -1 })
       .lean();
 
+    const streamFlags = await Promise.all(
+      rawConversations.map((c) => isStreamActive(c._id.toString())),
+    );
+    const conversations = rawConversations.map((c, i) => ({ ...c, isStreaming: streamFlags[i] }));
     return c.json(conversations);
   })
   .get("/conversations/:conversationId", async (c) => {

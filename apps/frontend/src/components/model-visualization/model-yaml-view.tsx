@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Loader2 } from "lucide-react";
-import { cn, ScrollArea } from "@archsem/ui";
+import { cn, ScrollArea } from "@archmax/ui";
 import { api } from "@/lib/api";
 
 interface YamlBlock {

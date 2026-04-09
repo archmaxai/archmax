@@ -18,7 +18,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import type { TestCaseItem, TestAgentItem, SemanticModelSummary } from "./types";
 

@@ -5,21 +5,21 @@ The app shell layout for the admin UI: sidebar with project selector, navigation
 ## Requirements
 ### Requirement: App Shell Layout
 
-The frontend SHALL render a sidebar-based app shell with a fixed left sidebar and a main content area. The sidebar SHALL contain (top to bottom): the archsem logo, a project selector, navigation menu items, and a user profile menu.
+The frontend SHALL render a sidebar-based app shell with a fixed left sidebar and a main content area. The sidebar SHALL contain (top to bottom): the archmax logo, a project selector, navigation menu items, and a user profile menu.
 
 #### Scenario: Authenticated user sees sidebar shell
 
 - **WHEN** an authenticated user navigates to any project-scoped route
 - **THEN** the sidebar is rendered on the left
 - **AND** the main content area fills the remaining space
-- **AND** the archsem logo is displayed at the top of the sidebar
-- **AND** the browser tab title reads "archsem"
+- **AND** the archmax logo is displayed at the top of the sidebar
+- **AND** the browser tab title reads "archmax"
 
 #### Scenario: Unauthenticated user is redirected
 
 - **WHEN** an unauthenticated user navigates to any route
 - **THEN** they are redirected to the login page
-- **AND** the login page displays "archsem" as the product title
+- **AND** the login page displays "archmax" as the product title
 
 ### Requirement: Project Selector
 

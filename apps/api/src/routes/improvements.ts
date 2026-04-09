@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { connectDB } from "@archsem/core/infra/db";
-import { Improvement } from "@archsem/core/models/index";
+import { connectDB } from "@archmax/core/infra/db";
+import { Improvement } from "@archmax/core/models/index";
 import { AppError } from "../utils/errors";
 
 const app = new Hono()

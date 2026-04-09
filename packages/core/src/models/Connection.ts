@@ -8,7 +8,6 @@ export const CONNECTION_TYPES = [
   "sqlite",
   "duckdb",
   "motherduck",
-  "other",
 ] as const;
 
 export type ConnectionType = (typeof CONNECTION_TYPES)[number];

@@ -33,7 +33,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build docs
-        run: pnpm --filter @archsem/docs build
+        run: pnpm --filter @archmax/docs build
 
       - uses: actions/upload-pages-artifact@v3
         with:

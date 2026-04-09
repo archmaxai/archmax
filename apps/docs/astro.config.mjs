@@ -4,19 +4,19 @@ import starlight from "@astrojs/starlight";
 export default defineConfig({
   integrations: [
     starlight({
-      title: "archsem",
+      title: "archmax",
       description:
         "Manage semantic descriptions of your databases and expose them to AI agents via MCP.",
       social: [
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/archmaxai/archsem",
+          href: "https://github.com/archmaxai/archmax",
         },
       ],
       editLink: {
         baseUrl:
-          "https://github.com/archmaxai/archsem/edit/main/apps/docs/",
+          "https://github.com/archmaxai/archmax/edit/main/apps/docs/",
       },
       sidebar: [
         {

@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@archsem/core/infra/db";
-import { Project, type IProject, Connection, McpToken, generateUniqueSlug, PROJECT_SLUG_PATTERN } from "@archsem/core/models/index";
+import { connectDB } from "@archmax/core/infra/db";
+import { Project, type IProject, Connection, McpToken, generateUniqueSlug, PROJECT_SLUG_PATTERN } from "@archmax/core/models/index";
 import { AppError } from "../utils/errors";
 
 const createSchema = z.object({

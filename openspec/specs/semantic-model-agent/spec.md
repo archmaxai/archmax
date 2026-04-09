@@ -83,7 +83,7 @@ The Semantic Models page SHALL render a chat interface where the user can conver
 
 ### Requirement: Deep Agent Backend
 
-The API SHALL expose a streaming endpoint for the semantic model agent. The agent uses LangChain Deep Agents with `FilesystemBackend({ rootDir: "<ARCHSEM_DATA_DIR>/<projectId>", virtualMode: true })`, giving it sandboxed filesystem access to the project's YAML files. The agent system prompt SHALL document the OSI-compliant YAML schema including: snake_case keys (`ai_context`, `primary_key`, `unique_keys`, `from_columns`, `to_columns`), the OSI Expression object format (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), `custom_extensions` for project-specific field metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`), and the `dimension` property with `is_time` for temporal fields. The agent SHALL also have access to a `read_document` tool that reads uploaded documents from the project's `uploads/` directory and returns their content as markdown, enabling the agent to reference data dictionaries, ERDs, business glossaries, and other supplementary documentation when building semantic models.
+The API SHALL expose a streaming endpoint for the semantic model agent. The agent uses LangChain Deep Agents with `FilesystemBackend({ rootDir: "<ARCHMAX_DATA_DIR>/<projectId>", virtualMode: true })`, giving it sandboxed filesystem access to the project's YAML files. The agent system prompt SHALL document the OSI-compliant YAML schema including: snake_case keys (`ai_context`, `primary_key`, `unique_keys`, `from_columns`, `to_columns`), the OSI Expression object format (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), `custom_extensions` for project-specific field metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`), and the `dimension` property with `is_time` for temporal fields. The agent SHALL also have access to a `read_document` tool that reads uploaded documents from the project's `uploads/` directory and returns their content as markdown, enabling the agent to reference data dictionaries, ERDs, business glossaries, and other supplementary documentation when building semantic models.
 
 #### Scenario: Agent lists semantic models
 - **WHEN** the user asks "What semantic models exist?"
@@ -93,7 +93,7 @@ The API SHALL expose a streaming endpoint for the semantic model agent. The agen
 #### Scenario: Agent creates a new semantic model
 - **WHEN** the user asks "Create a model for the orders schema"
 - **THEN** the agent uses `write_file` to create a new YAML file conforming to the OSI schema with snake_case keys and Expression objects
-- **AND** the file is written to `<ARCHSEM_DATA_DIR>/<projectId>/<model-name>.yaml`
+- **AND** the file is written to `<ARCHMAX_DATA_DIR>/<projectId>/<model-name>.yaml`
 
 #### Scenario: Agent writes fields with extensions
 - **WHEN** the agent creates a dataset with fields that have data types and example data
@@ -441,4 +441,35 @@ The deep agent SHALL have access to a `cp` tool that copies a file or directory 
 #### Scenario: Symlink rejected
 - **WHEN** the agent invokes `cp` on a path that is a symbolic link
 - **THEN** the tool returns an error and no copy occurs
+
+### Requirement: Create Test Case Tool
+
+The deep agent SHALL have access to a `create_test_case` tool that creates a test case document in MongoDB for the current project. The tool accepts `title` (string, required — short description of what is being tested), `semanticModel` (string, required — the semantic model name the test targets), `inputMessage` (string, required — the natural-language question to send to a test agent), and `expectedFacts` (array of strings, min 1 — factual assertions the agent's response must satisfy).
+
+The tool SHALL automatically add "auto-generated" to the test case's `tags` array so that auto-generated cases are distinguishable from manually created ones. The test case SHALL be created without an assigned `testAgent` — users assign a test agent later through the UI before running a batch.
+
+The agent's system prompt SHALL document the tool and instruct the agent to only create test cases when the user explicitly provides ground-truth facts or expected answers. The agent SHALL NOT invent expected facts from its own data exploration or query results. After completing validated queries, the agent SHALL ask the user if they want to create test cases and request user-supplied expected answers before proceeding.
+
+#### Scenario: Agent creates a test case with user-provided facts
+- **WHEN** the agent has finished writing a semantic model with datasets, relationships, and metrics
+- **AND** the user provides ground-truth facts (e.g. "Total revenue for 2024 is 1.65 MEUR")
+- **AND** the agent invokes `create_test_case` with `{ "title": "Total revenue 2024", "semanticModel": "ecommerce", "inputMessage": "What is the total revenue for 2024?", "expectedFacts": ["Total revenue for 2024 is 1.65 MEUR"] }`
+- **THEN** a TestCase document is created in MongoDB with `project` set to the current project
+- **AND** the `tags` array contains "auto-generated"
+- **AND** the `testAgent` field is null (unassigned)
+
+#### Scenario: Agent does not create test cases without user-provided facts
+- **WHEN** the agent has finished writing a semantic model
+- **AND** the user has not provided any ground-truth facts or expected answers
+- **THEN** the agent SHALL NOT invoke `create_test_case` on its own
+- **AND** the agent MAY suggest creating test cases and ask the user to supply expected answers
+
+#### Scenario: Invalid input rejected
+- **WHEN** the agent invokes `create_test_case` with an empty `expectedFacts` array
+- **THEN** the tool returns an error indicating at least one expected fact is required
+- **AND** no TestCase document is created
+
+#### Scenario: Auto-generated tag always present
+- **WHEN** the agent invokes `create_test_case` for any test case
+- **THEN** the resulting TestCase always includes "auto-generated" in its `tags` array regardless of any other tags provided
 

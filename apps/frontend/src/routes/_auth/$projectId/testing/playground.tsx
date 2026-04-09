@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Plus, Trash2 } from "lucide-react";
-import { cn, Button, ScrollArea, Skeleton } from "@archsem/ui";
+import { Loader2, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { cn, Button, ScrollArea, Skeleton } from "@archmax/ui";
 import { toast } from "sonner";
 import { AgentChat, type ChatRequestFn, type CancelRequestFn } from "@/components/chat/agent-chat";
 import { InputPill, type InputPillOption } from "@/components/chat/chat-input";
@@ -28,6 +28,7 @@ interface ConversationListItem {
   title: string;
   createdAt: string;
   updatedAt: string;
+  isStreaming?: boolean;
 }
 
 interface ConversationFull {
@@ -43,8 +44,8 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 function PlaygroundPage() {
   const { project } = useProject();
   const queryClient = useQueryClient();
-  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("archsem-playground-panel-width", 256);
-  const storageKey = `archsem-playground-agent-${project._id}`;
+  const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel("archmax-playground-panel-width", 256);
+  const storageKey = `archmax-playground-agent-${project._id}`;
   const [selectedAgentId, setSelectedAgentId] = useState<string>(() => localStorage.getItem(storageKey) ?? "");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [chatKey, setChatKey] = useState(0);
@@ -90,6 +91,7 @@ function PlaygroundPage() {
       if (!res.ok) throw new Error("Failed to load conversations");
       return res.json() as Promise<ConversationListItem[]>;
     },
+    refetchInterval: 10_000,
   });
 
   const shouldFetch = !!conversationId && conversationId !== ownedConvIdRef.current;
@@ -217,7 +219,11 @@ function PlaygroundPage() {
                     }}
                     className="flex items-center gap-2 flex-1 min-w-0 text-left"
                   >
-                    <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                    {c.isStreaming ? (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                    ) : (
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                    )}
                     <span className="flex-1 truncate">
                       {c.title && c.title.length > 25 ? c.title.slice(0, 25) + "…" : c.title}
                     </span>

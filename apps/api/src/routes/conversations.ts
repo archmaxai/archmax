@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { connectDB } from "@archsem/core/infra/db";
-import { Conversation } from "@archsem/core/models/index";
-import { isStreamActive } from "@archsem/core/streaming/stream-bridge";
+import { connectDB } from "@archmax/core/infra/db";
+import { Conversation } from "@archmax/core/models/index";
+import { isStreamActive } from "@archmax/core/streaming/stream-bridge";
 import { AppError } from "../utils/errors";
 
 const app = new Hono()
@@ -12,7 +12,7 @@ const app = new Hono()
     const skip = Math.max(parseInt(c.req.query("skip") ?? "0", 10) || 0, 0);
 
     const filter = { project: projectId, testAgent: null };
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       Conversation.find(filter)
         .select("title createdAt updatedAt")
         .sort({ updatedAt: -1 })
@@ -21,6 +21,10 @@ const app = new Hono()
         .lean(),
       Conversation.countDocuments(filter),
     ]);
+    const streamFlags = await Promise.all(
+      rawItems.map((it) => isStreamActive(it._id.toString())),
+    );
+    const items = rawItems.map((it, i) => ({ ...it, isStreaming: streamFlags[i] }));
     return c.json({ items, total });
   })
   .get("/:id", async (c) => {

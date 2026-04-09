@@ -28,7 +28,7 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import {
   Dialog,
   DialogContent,
@@ -36,20 +36,20 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 
@@ -82,7 +82,6 @@ const CONNECTION_TYPES = [
   "sqlite",
   "duckdb",
   "motherduck",
-  "other",
 ] as const;
 
 function ConnectionsPage() {
@@ -284,6 +283,24 @@ function ConnectionFormDialog({
   const [uri, setUri] = useState("");
   const [description, setDescription] = useState("");
 
+  const uriPlaceholders: Record<string, string> = {
+    postgres: "postgres://user:pass@host:5432/db",
+    mysql: "mysql://user:pass@host:3306/db",
+    mssql: "Server=host,1433;Database=db;User Id=user;Password=pass",
+    sqlite: "/path/to/database.db",
+    duckdb: "/path/to/database.duckdb",
+    motherduck: "md:my_database?token=...",
+  };
+
+  const defaultPorts: Record<string, string> = {
+    postgres: "5432",
+    mysql: "3306",
+    mssql: "1433",
+    sqlite: "",
+    duckdb: "",
+    motherduck: "",
+  };
+
   function autoSlug(n: string): string {
     let s = n.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/_{2,}/g, "_").replace(/^_+|_+$/g, "");
     if (/^[0-9]/.test(s)) s = `_${s}`;
@@ -429,7 +446,7 @@ function ConnectionFormDialog({
           </div>
 
           <div className="content-tight">
-            <Label htmlFor="conn-slug">Slug (DuckDB prefix)</Label>
+            <Label htmlFor="conn-slug">Database Prefix</Label>
             <Input
               id="conn-slug"
               value={slug || (!slugTouched ? autoSlug(name) : "")}
@@ -441,7 +458,7 @@ function ConnectionFormDialog({
               className="font-mono"
             />
             <p className="text-muted-foreground text-xs">
-              Used as the schema name when querying via DuckDB
+              Used as the schema prefix when querying across data sources
             </p>
           </div>
 
@@ -464,7 +481,7 @@ function ConnectionFormDialog({
                 id="conn-uri"
                 value={uri}
                 onChange={(e) => setUri(e.target.value)}
-                placeholder="postgres://user:pass@host:5432/db"
+                placeholder={uriPlaceholders[type] ?? ""}
               />
             </TabsContent>
 
@@ -485,7 +502,7 @@ function ConnectionFormDialog({
                     id="conn-port"
                     value={port}
                     onChange={(e) => setPort(e.target.value)}
-                    placeholder="5432"
+                    placeholder={defaultPorts[type] ?? ""}
                     type="number"
                   />
                 </div>

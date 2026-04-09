@@ -1,6 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
-import { getEnv } from "@archsem/core/config/env";
+import { getEnv } from "@archmax/core/config/env";
 
 const SYSTEM_PROMPT =
   "Generate a short, descriptive title (max 60 characters) for a conversation that starts with the following user message. " +

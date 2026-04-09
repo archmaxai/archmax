@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, Check, ArrowRight, Calendar, Bot } from "lucide-react";
-import { Button, Badge, Card } from "@archsem/ui";
+import { Button, Badge, Card } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 

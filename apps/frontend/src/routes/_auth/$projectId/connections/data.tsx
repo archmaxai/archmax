@@ -25,7 +25,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 import { useResizablePanel, PanelResizeHandle } from "@/components/layout/panel-resize-handle";
@@ -69,7 +69,7 @@ function DataBrowserPage() {
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const { width: panelWidth, onMouseDown: onResizeStart } = useResizablePanel(
-    "archsem-data-browser-panel-width",
+    "archmax-data-browser-panel-width",
     256,
   );
 

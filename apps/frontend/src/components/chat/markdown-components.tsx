@@ -1,11 +1,15 @@
-import { useState, type ComponentPropsWithoutRef } from "react";
+import { useState, useMemo, type ComponentPropsWithoutRef } from "react";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { cn, Button } from "@archsem/ui";
+import { cn, Button } from "@archmax/ui";
 import { Check, Copy } from "lucide-react";
+import type { ToolCallInfo } from "../../lib/chat-types";
+import { ToolCallCard } from "./tool-call-card";
+import { remarkToolCalls } from "./remark-tool-calls";
 
-const remarkPlugins = [remarkGfm];
+const baseRemarkPlugins = [remarkGfm];
+const toolCallRemarkPlugins = [remarkGfm, remarkToolCalls];
 
 export const markdownComponents: Components = {
   code: function Code({
@@ -152,10 +156,35 @@ function CodeBlock({
   );
 }
 
-export function MarkdownContent({ content, className }: { content: string; className?: string }) {
+export function MarkdownContent({
+  content,
+  className,
+  toolCalls,
+}: {
+  content: string;
+  className?: string;
+  toolCalls?: Map<string, ToolCallInfo>;
+}) {
+  const plugins = toolCalls?.size ? toolCallRemarkPlugins : baseRemarkPlugins;
+
+  const components = useMemo(() => {
+    if (!toolCalls?.size) return markdownComponents;
+    return {
+      ...markdownComponents,
+      div: ({ node: _, ...props }: any) => {
+        const toolId = props["data-tool-id"] as string | undefined;
+        if (toolId) {
+          const tc = toolCalls.get(toolId);
+          return tc ? <ToolCallCard tc={tc} /> : null;
+        }
+        return <div {...props} />;
+      },
+    } as Components;
+  }, [toolCalls]);
+
   return (
     <div className={cn("prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0", className)}>
-      <Markdown remarkPlugins={remarkPlugins} components={markdownComponents}>
+      <Markdown remarkPlugins={plugins} components={components}>
         {content}
       </Markdown>
     </div>

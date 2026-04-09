@@ -14,12 +14,14 @@ export interface ChatMessage {
   role: "user" | "assistant";
   segments: ContentSegment[];
   isStreaming?: boolean;
+  error?: string;
 }
 
 export interface ConversationSummary {
   _id: string;
   title: string;
   updatedAt: string;
+  isStreaming?: boolean;
 }
 
 export interface ConversationListResponse {
@@ -106,10 +108,13 @@ export function updateToolCall(
 }
 
 export function normalizeMessage(msg: ChatMessage): ChatMessage {
+  const raw = msg as unknown as { content?: string; toolCalls?: ToolCallInfo[]; segments?: ContentSegment[]; error?: string };
+  const error = msg.error ?? raw.error;
   if (msg.segments?.length) {
     return {
       role: msg.role,
       isStreaming: msg.isStreaming,
+      error,
       segments: msg.segments.map((s) =>
         s.type === "tool_call"
           ? { type: "tool_call" as const, toolCall: { ...s.toolCall, status: s.toolCall.status ?? ("completed" as const) } }
@@ -117,11 +122,11 @@ export function normalizeMessage(msg: ChatMessage): ChatMessage {
       ),
     };
   }
-  const raw = msg as unknown as { content?: string; toolCalls?: ToolCallInfo[]; segments?: ContentSegment[] };
   return {
     role: msg.role,
     segments: toSegments(raw.content ?? "", raw.toolCalls, raw.segments),
     isStreaming: msg.isStreaming,
+    error,
   };
 }
 

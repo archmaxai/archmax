@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@archsem/core/infra/db";
-import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archsem/core/models/index";
-import { getProjectInstance } from "@archsem/core/services/duckdb";
+import { connectDB } from "@archmax/core/infra/db";
+import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
+import { getProjectInstance } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
 const connectionConfigSchema = z.object({

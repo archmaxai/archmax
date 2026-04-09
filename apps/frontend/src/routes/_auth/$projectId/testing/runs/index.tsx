@@ -21,7 +21,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@archsem/ui";
+} from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 import { RunBatchDialog } from "@/components/testing/run-batch-dialog";

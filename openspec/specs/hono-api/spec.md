@@ -55,5 +55,5 @@ The API SHALL export an `AppType` type from `app.ts` so the frontend can create 
 
 #### Scenario: Frontend imports AppType
 
-- **WHEN** the frontend imports `AppType` from `@archsem/api`
+- **WHEN** the frontend imports `AppType` from `@archmax/api`
 - **THEN** `hc<AppType>` provides full type inference for all API routes

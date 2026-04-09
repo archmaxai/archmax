@@ -24,7 +24,7 @@ The frontend SHALL use Tailwind CSS 4 with OKLCH color tokens for light and dark
 
 ### Requirement: Shared UI Components
 
-The frontend SHALL consume UI components from the `@archsem/ui` package, which exports Radix-based primitives with CVA variants.
+The frontend SHALL consume UI components from the `@archmax/ui` package, which exports Radix-based primitives with CVA variants.
 
 #### Scenario: Button component renders correctly
 

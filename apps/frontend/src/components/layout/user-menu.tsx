@@ -11,8 +11,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-} from "@archsem/ui";
-import { Avatar, AvatarFallback } from "@archsem/ui";
+} from "@archmax/ui";
+import { Avatar, AvatarFallback } from "@archmax/ui";
 import { authClient } from "@/lib/auth-client";
 import { useTheme, type Theme } from "@/lib/use-theme";
 

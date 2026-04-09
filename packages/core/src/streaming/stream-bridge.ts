@@ -1,4 +1,3 @@
-import Redis from "ioredis";
 import { getRedis } from "../infra/redis";
 import {
   STREAM_EVENTS_CHANNEL_PREFIX,
@@ -44,10 +43,14 @@ export async function getBufferedStreamEvents(
   const client = getRedis();
   if (!client) return { events: [], nextIndex: fromIndex };
 
-  const bufferKey = `${STREAM_BUFFER_PREFIX}${conversationId}`;
-  const raw = await client.lrange(bufferKey, fromIndex, -1);
-  const events = raw.map((s) => JSON.parse(s) as StreamEvent);
-  return { events, nextIndex: fromIndex + events.length };
+  try {
+    const bufferKey = `${STREAM_BUFFER_PREFIX}${conversationId}`;
+    const raw = await client.lrange(bufferKey, fromIndex, -1);
+    const events = raw.map((s) => JSON.parse(s) as StreamEvent);
+    return { events, nextIndex: fromIndex + events.length };
+  } catch {
+    return { events: [], nextIndex: fromIndex };
+  }
 }
 
 /**
@@ -58,9 +61,13 @@ export async function isStreamActive(
 ): Promise<boolean> {
   const client = getRedis();
   if (!client) return false;
-  const bufferKey = `${STREAM_BUFFER_PREFIX}${conversationId}`;
-  const len = await client.llen(bufferKey);
-  return len > 0;
+  try {
+    const bufferKey = `${STREAM_BUFFER_PREFIX}${conversationId}`;
+    const len = await client.llen(bufferKey);
+    return len > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**

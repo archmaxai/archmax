@@ -1,4 +1,4 @@
-# Contributing to archsem
+# Contributing to archmax
 
 ## Getting Started
 
@@ -28,12 +28,12 @@ pnpm test
 pnpm test:coverage
 
 # Single package
-pnpm --filter @archsem/core test
-pnpm --filter @archsem/api test
-pnpm --filter @archsem/frontend test
+pnpm --filter @archmax/core test
+pnpm --filter @archmax/api test
+pnpm --filter @archmax/frontend test
 
 # Watch mode (single package)
-pnpm --filter @archsem/core exec vitest
+pnpm --filter @archmax/core exec vitest
 ```
 
 ### Test File Conventions
@@ -95,8 +95,8 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
 }));
 
-vi.mock("@archsem/core/infra/db", () => ({ connectDB: vi.fn() }));
-vi.mock("@archsem/core/models/index", () => ({
+vi.mock("@archmax/core/infra/db", () => ({ connectDB: vi.fn() }));
+vi.mock("@archmax/core/models/index", () => ({
   MyModel: { find: mocks.find, create: mocks.create },
 }));
 
@@ -130,15 +130,15 @@ describe("GET /my-route", () => {
 |---|---|
 | Database connection | `vi.mock("../infra/db", () => ({ connectDB: vi.fn() }))` |
 | Mongoose models | Inline in `vi.mock("../models/index", () => ({ ... }))` |
-| LLM calls | `createMockLlm()` from `@archsem/core/test-utils` |
-| Env config | `vi.mock("@archsem/core/config/env", () => ({ getEnv: vi.fn(() => ({...})) }))` |
+| LLM calls | `createMockLlm()` from `@archmax/core/test-utils` |
+| Env config | `vi.mock("@archmax/core/config/env", () => ({ getEnv: vi.fn(() => ({...})) }))` |
 | External HTTP | Mock the function that calls `fetch`, not `fetch` itself |
 
 **Important:** `vi.mock()` factories are hoisted above all imports. You cannot reference module-scope variables inside them. Use `vi.hoisted()` to create values that both `vi.mock` factories and test bodies can access.
 
 ### Shared Test Utilities
 
-Available from `@archsem/core/test-utils`:
+Available from `@archmax/core/test-utils`:
 
 - **Factories** — `createProject()`, `createConnection()`, `createTestAgent()`, `createTestCase()`, `createTestRun()`, `createTestCaseResult()`, `createImprovement()`, `createConversation()`, `createMcpToken()` — each returns a plain object with sensible defaults. Pass overrides: `createProject({ title: "Custom" })`.
 - **`createMockLlm(response?)`** — returns `{ invoke, stream }` stubs. Pass `{ content: "..." }` for success or `new Error(...)` for failure.
@@ -199,8 +199,8 @@ Released images are pushed to GitHub Container Registry:
 
 ```bash
 # Latest release
-docker pull ghcr.io/<org>/archmax_semlayer:latest
+docker pull ghcr.io/archmaxai/archmax:latest
 
 # Pinned version
-docker pull ghcr.io/<org>/archmax_semlayer:1.2.3
+docker pull ghcr.io/archmaxai/archmax:1.2.3
 ```

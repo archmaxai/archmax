@@ -1,6 +1,6 @@
 ---
 title: Development Setup
-description: Set up a local development environment for contributing to archsem.
+description: Set up a local development environment for contributing to archmax.
 ---
 
 import { Steps } from "@astrojs/starlight/components";
@@ -19,8 +19,8 @@ import { Steps } from "@astrojs/starlight/components";
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/archmaxai/archsem.git
-   cd archsem
+   git clone https://github.com/archmaxai/archmax.git
+   cd archmax
    ```
 
 2. **Install dependencies**
@@ -53,15 +53,15 @@ import { Steps } from "@astrojs/starlight/components";
 ## Monorepo Structure
 
 ```
-archsem/
+archmax/
 ├── apps/
 │   ├── api/          # Hono API server
 │   ├── frontend/     # React SPA (Vite + TanStack Router)
 │   ├── worker/       # BullMQ worker for agent jobs
 │   └── docs/         # Documentation site (Astro Starlight)
 ├── packages/
-│   ├── core/         # Shared models, services, config (@archsem/core)
-│   └── ui/           # React UI components (@archsem/ui)
+│   ├── core/         # Shared models, services, config (@archmax/core)
+│   └── ui/           # React UI components (@archmax/ui)
 ├── openspec/         # Specifications and change proposals
 └── turbo.json        # Turborepo pipeline config
 ```
@@ -79,7 +79,7 @@ archsem/
 
 ```bash
 pnpm test              # Run all tests
-pnpm test --filter @archsem/core   # Run core package tests only
+pnpm test --filter @archmax/core   # Run core package tests only
 ```
 
 Tests are colocated with source files or in `__tests__/` directories.
@@ -97,4 +97,4 @@ pnpm typecheck         # Type-check all workspaces
 - Functional React components only
 - `cn()` utility for Tailwind class composition
 - No comments that narrate what the code does
-- CVA for component variants in `@archsem/ui`
+- CVA for component variants in `@archmax/ui`

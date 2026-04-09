@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Loader2 } from "lucide-react";
-import { cn, Button, ScrollArea } from "@archsem/ui";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { cn, Button, ScrollArea } from "@archmax/ui";
 import { toast } from "sonner";
 import { MarkdownContent } from "./markdown-components";
-import { ToolCallCard } from "./tool-call-card";
+import { combineSegments } from "./remark-tool-calls";
 import { ChatInput, type UploadedFile } from "./chat-input";
 import {
   getTextContent,
@@ -20,18 +20,26 @@ import { consumeSSEStream } from "../../lib/sse";
 import { api } from "@/lib/api";
 
 function MessageSegments({ segments }: { segments: ContentSegment[] }) {
+  const hasToolCalls = segments.some((s) => s.type === "tool_call");
+
+  const { markdown, toolCallMap } = useMemo(() => {
+    if (!hasToolCalls) {
+      const text = segments
+        .filter((s): s is Extract<ContentSegment, { type: "text" }> => s.type === "text")
+        .map((s) => s.content)
+        .join("");
+      return { markdown: text, toolCallMap: new Map() };
+    }
+    return combineSegments(segments);
+  }, [segments, hasToolCalls]);
+
+  if (!markdown && toolCallMap.size === 0) return null;
+
   return (
-    <>
-      {segments.map((seg, i) => {
-        if (seg.type === "text" && seg.content) {
-          return <MarkdownContent key={i} content={seg.content} />;
-        }
-        if (seg.type === "tool_call") {
-          return <ToolCallCard key={seg.toolCall.id} tc={seg.toolCall} />;
-        }
-        return null;
-      })}
-    </>
+    <MarkdownContent
+      content={markdown}
+      toolCalls={toolCallMap.size > 0 ? toolCallMap : undefined}
+    />
   );
 }
 
@@ -374,10 +382,7 @@ export function AgentChat({
     } else if (event === "error") {
       updateLastAssistant((m) => ({
         ...m,
-        segments: appendToken(
-          m.segments,
-          `\n\n**Error:** ${parsed.error ?? "Unknown error"}`,
-        ),
+        error: (parsed.error as string) ?? "Unknown error",
       }));
     } else if (event === "text" && typeof parsed.content === "string") {
       updateLastAssistant((m) => ({
@@ -470,6 +475,13 @@ export function AgentChat({
                               <span className="text-xs">Thinking…</span>
                             </div>
                           ) : null}
+
+                          {!isUser && msg.error && (
+                            <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-destructive text-xs">
+                              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span>{msg.error}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

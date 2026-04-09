@@ -18,6 +18,7 @@ export interface IMessage {
   content: string;
   toolCalls?: IToolCallRecord[];
   segments?: IContentSegment[];
+  error?: string;
   toolCallId?: string;
   timestamp: Date;
 }
@@ -48,6 +49,7 @@ const MessageSchema = new Schema<IMessage>(
       },
     ],
     segments: [{ type: Schema.Types.Mixed, _id: false }],
+    error: { type: String },
     toolCallId: { type: String },
     timestamp: { type: Date, default: Date.now },
   },

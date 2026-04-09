@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
-import { connectDB } from "@archsem/core/infra/db";
-import { TestAgent } from "@archsem/core/models/index";
-import { encrypt, decrypt } from "@archsem/core/infra/crypto";
-import { getEnv } from "@archsem/core/config/env";
+import { connectDB } from "@archmax/core/infra/db";
+import { TestAgent } from "@archmax/core/models/index";
+import { encrypt, decrypt } from "@archmax/core/infra/crypto";
+import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
 
 export function maskApiKey(encryptedKey: string): string {
@@ -44,7 +44,7 @@ const app = new Hono()
     await connectDB();
     const projectId = c.req.param("projectId")!;
     const agents = await TestAgent.find({ project: projectId }).sort({ createdAt: -1 }).lean();
-    return c.json(agents.map((a: Record<string, unknown>) => stripApiKey(a)));
+    return c.json(agents.map((a) => stripApiKey(a as unknown as Record<string, unknown>)));
   })
   .get("/:agentId", async (c) => {
     await connectDB();

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { cn } from "@archsem/ui";
+import { cn } from "@archmax/ui";
 
 export function AccordionSection({
   title,

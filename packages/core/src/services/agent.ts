@@ -25,7 +25,7 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
     throw new Error("Invalid projectId");
   }
   const env = getEnv();
-  const dataDir = resolve(env.ARCHSEM_DATA_DIR, projectId);
+  const dataDir = resolve(env.ARCHMAX_DATA_DIR, projectId);
 
   await connectDB();
   const project = await Project.findById(projectId).lean();

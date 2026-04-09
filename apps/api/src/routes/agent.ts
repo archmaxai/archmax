@@ -3,18 +3,18 @@ import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { connectDB } from "@archsem/core/infra/db";
-import { Conversation } from "@archsem/core/models/index";
-import { createSemlayerAgent } from "@archsem/core/services/agent";
-import { processAgentStream } from "@archsem/core/services/agent-stream";
-import { isRedisConfigured, publishCancelSignal } from "@archsem/core/infra/redis";
-import { enqueueAgentJob } from "@archsem/core/queue/producer";
+import { connectDB } from "@archmax/core/infra/db";
+import { Conversation } from "@archmax/core/models/index";
+import { createSemlayerAgent } from "@archmax/core/services/agent";
+import { processAgentStream, createStreamCollector } from "@archmax/core/services/agent-stream";
+import { isRedisConfigured, publishCancelSignal } from "@archmax/core/infra/redis";
+import { enqueueAgentJob } from "@archmax/core/queue/producer";
 import {
   subscribeToStream,
   getBufferedStreamEvents,
   isStreamActive,
   type StreamEvent,
-} from "@archsem/core/streaming/stream-bridge";
+} from "@archmax/core/streaming/stream-bridge";
 import { generateTitle, truncateTitle } from "../services/title-agent";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
@@ -144,34 +144,36 @@ const app = new Hono()
             : new AIMessage(m.content),
         );
 
-      let result;
+      const collector = createStreamCollector();
+      let errorMessage: string | undefined;
       try {
         const events = agent.streamEvents(
           { messages: inputMessages },
           { version: "v2" },
         );
-        result = await processAgentStream(
+        await processAgentStream(
           events,
           (event, data) => stream.writeSSE({ event, data }),
+          collector,
         );
       } catch (err) {
         console.error("[agent] Error during streaming:", err);
-        result = result ?? { fullResponse: "The agent encountered an error processing your request.", toolCalls: [], segments: [] };
+        errorMessage = err instanceof Error ? err.message : "Unknown error";
         await stream.writeSSE({
           event: "error",
-          data: JSON.stringify({
-            error: err instanceof Error ? err.message : "Unknown error",
-          }),
+          data: JSON.stringify({ error: errorMessage }),
         });
       }
 
-      conv.messages.push({
+      const msg: Record<string, unknown> = {
         role: "assistant",
-        content: result.fullResponse,
-        toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
-        segments: result.segments.length ? result.segments : undefined,
+        content: collector.fullResponse,
         timestamp: new Date(),
-      });
+      };
+      if (collector.toolCalls.length) msg.toolCalls = collector.toolCalls;
+      if (collector.segments.length) msg.segments = collector.segments;
+      if (errorMessage) msg.error = errorMessage;
+      conv.messages.push(msg as any);
       await conv.save();
 
       if (isNewConversation) {

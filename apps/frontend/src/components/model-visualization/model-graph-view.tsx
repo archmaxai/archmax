@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -8,20 +8,32 @@ import {
   useEdgesState,
   type Edge,
   type Node,
+  type OnNodesChange,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { cn } from "@archsem/ui";
+import { cn } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { DatasetNode, type DatasetNodeType, type DatasetNodeData, type FieldPreview } from "./dataset-node";
-import type { SemanticModelFull, ModelDiff, CustomExtension } from "./types";
-import { getRelationshipColumns, getFieldDataType } from "./types";
+import { GroupBoxNode, type GroupBoxNodeType } from "./group-box-node";
+import { GraphContextMenu, CreateGroupPopover, RenameGroupPopover, type ContextMenuState } from "./graph-context-menu";
+import type { SemanticModelFull, ModelDiff, CustomExtension, DatasetGroup } from "./types";
+import {
+  getRelationshipColumns,
+  getFieldDataType,
+  parseDatasetGroups,
+  serializeDatasetGroups,
+  getGroupColor,
+  GROUP_COLORS,
+} from "./types";
 
 const POSITION_VENDOR = "COMMON";
 const FIELD_PREVIEW_COUNT = 5;
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 180;
+const GROUP_PADDING = 28;
+const GROUP_LABEL_HEIGHT = 24;
 
-const nodeTypes = { dataset: DatasetNode };
+const nodeTypes = { dataset: DatasetNode, "group-box": GroupBoxNode };
 
 function parsePosition(extensions?: CustomExtension[]): { x: number; y: number } | null {
   if (!extensions) return null;
@@ -48,13 +60,27 @@ function getDescription(ds: SemanticModelFull["datasets"][number]): string | und
   return undefined;
 }
 
-function autoLayout(nodes: DatasetNodeType[], edges: Edge[]): DatasetNodeType[] {
-  const g = new dagre.graphlib.Graph();
+function autoLayout(
+  nodes: DatasetNodeType[],
+  edges: Edge[],
+  groups: DatasetGroup[],
+): DatasetNodeType[] {
+  const g = new dagre.graphlib.Graph({ compound: true });
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", ranksep: 80, nodesep: 40 });
 
+  const datasetToGroup = new Map<string, string>();
+  for (const group of groups) {
+    g.setNode(`cluster_${group.id}`, {});
+    for (const ds of group.datasets) {
+      datasetToGroup.set(ds, group.id);
+    }
+  }
+
   for (const node of nodes) {
     g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    const grpId = datasetToGroup.get(node.id);
+    if (grpId) g.setParent(node.id, `cluster_${grpId}`);
   }
   for (const edge of edges) {
     g.setEdge(edge.source, edge.target);
@@ -84,6 +110,7 @@ function buildNodesAndEdges(
       id: ds.name,
       type: "dataset" as const,
       position: saved ?? { x: 0, y: 0 },
+      zIndex: 1,
       data: {
         label: ds.name,
         source: ds.source,
@@ -109,15 +136,77 @@ function buildNodesAndEdges(
     };
   });
 
+  const groups = parseDatasetGroups(model.custom_extensions);
   const needsLayout = nodesWithSaved.some(
-    (n) => n.position.x === 0 && n.position.y === 0 && !parsePosition(model.datasets.find((d) => d.name === n.id)?.custom_extensions),
+    (n) =>
+      n.position.x === 0 &&
+      n.position.y === 0 &&
+      !parsePosition(model.datasets.find((d) => d.name === n.id)?.custom_extensions),
   );
 
   if (needsLayout) {
-    return { nodes: autoLayout(nodesWithSaved, edges), edges, didAutoLayout: true };
+    return { nodes: autoLayout(nodesWithSaved, edges, groups), edges, didAutoLayout: true };
   }
 
   return { nodes: nodesWithSaved, edges, didAutoLayout: false };
+}
+
+function computeGroupBoxNodes(
+  groups: DatasetGroup[],
+  datasetNodes: DatasetNodeType[],
+  onRename: (groupId: string, newName: string) => void,
+  onContextMenu: (e: React.MouseEvent, groupId: string) => void,
+): GroupBoxNodeType[] {
+  const nodeMap = new Map(datasetNodes.map((n) => [n.id, n]));
+
+  return groups
+    .map((group, idx) => {
+      const members = group.datasets
+        .map((name) => nodeMap.get(name))
+        .filter((n): n is DatasetNodeType => !!n);
+      if (members.length === 0) return null;
+
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const m of members) {
+        minX = Math.min(minX, m.position.x);
+        minY = Math.min(minY, m.position.y);
+        maxX = Math.max(maxX, m.position.x + NODE_WIDTH);
+        maxY = Math.max(maxY, m.position.y + NODE_HEIGHT);
+      }
+
+      const color = getGroupColor(group.color ?? GROUP_COLORS[idx % GROUP_COLORS.length].name);
+      const w = maxX - minX + GROUP_PADDING * 2;
+      const h = maxY - minY + GROUP_PADDING * 2 + GROUP_LABEL_HEIGHT;
+
+      const node: GroupBoxNodeType = {
+        id: `group-${group.id}`,
+        type: "group-box" as const,
+        position: { x: minX - GROUP_PADDING, y: minY - GROUP_PADDING - GROUP_LABEL_HEIGHT },
+        selectable: false,
+        draggable: false,
+        connectable: false,
+        focusable: false,
+        zIndex: 0,
+        width: w,
+        height: h,
+        data: {
+          label: group.name,
+          width: w,
+          height: h,
+          bgColor: color.bg as string,
+          borderColor: color.border as string,
+          groupId: group.id,
+          onRename,
+          onContextMenu,
+        },
+      };
+      return node;
+    })
+    .filter((n): n is GroupBoxNodeType => n !== null);
+}
+
+function generateGroupId() {
+  return `grp_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 interface ModelGraphViewProps {
@@ -136,9 +225,31 @@ export function ModelGraphView({
   className,
 }: ModelGraphViewProps) {
   const initial = useMemo(() => buildNodesAndEdges(model, diff), [model, diff]);
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
+  const [nodes, , onNodesChange] = useNodesState(initial.nodes);
   const [edges, , onEdgesChange] = useEdgesState(initial.edges);
   const hasSavedAutoLayout = useRef(false);
+
+  const [groups, setGroups] = useState<DatasetGroup[]>(() =>
+    parseDatasetGroups(model.custom_extensions),
+  );
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const pendingDatasetRef = useRef<string | null>(null);
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const renamePositionRef = useRef<{ x: number; y: number }>({ x: 100, y: 100 });
+
+  const persistGroups = useCallback(
+    (updated: DatasetGroup[]) => {
+      const extensions = serializeDatasetGroups(updated, model.custom_extensions);
+      api.api.projects[":projectId"]["semantic-models"][":name"].extensions.$patch({
+        param: { projectId, name: modelName },
+        json: { custom_extensions: extensions },
+      }).catch(() => {});
+    },
+    [projectId, modelName, model.custom_extensions],
+  );
 
   const saveNodePositions = useCallback(
     (nodesToSave: DatasetNodeType[]) => {
@@ -180,19 +291,163 @@ export function ModelGraphView({
 
   const handleNodeDragStop = useCallback(
     (_event: React.MouseEvent, _node: Node, allNodes: Node[]) => {
-      saveNodePositions(allNodes as DatasetNodeType[]);
+      saveNodePositions(allNodes.filter((n) => n.type === "dataset") as DatasetNodeType[]);
     },
     [saveNodePositions],
   );
 
+  const handleGroupRename = useCallback(
+    (groupId: string, newName: string) => {
+      setGroups((prev) => {
+        const updated = prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g));
+        persistGroups(updated);
+        return updated;
+      });
+    },
+    [persistGroups],
+  );
+
+  const handleGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
+    setContextMenu({ x: e.clientX, y: e.clientY, groupId });
+  }, []);
+
+  const groupBoxNodes = useMemo(
+    () => computeGroupBoxNodes(groups, nodes as DatasetNodeType[], handleGroupRename, handleGroupContextMenu),
+    [groups, nodes, handleGroupRename, handleGroupContextMenu],
+  );
+
+  const allNodes = useMemo(
+    () => [...groupBoxNodes, ...nodes] as Node[],
+    [groupBoxNodes, nodes],
+  );
+
+  const handleNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: Node) => {
+      if (node.type !== "dataset") return;
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, datasetName: node.id });
+    },
+    [],
+  );
+
+  const dismissMenu = useCallback(() => {
+    setContextMenu(null);
+    setCreatingGroup(false);
+    setRenamingGroupId(null);
+  }, []);
+
+  const findGroupForDataset = useCallback(
+    (dsName: string) => groups.find((g) => g.datasets.includes(dsName)),
+    [groups],
+  );
+
+  const handleCreateGroup = useCallback(
+    (dsName: string) => {
+      pendingDatasetRef.current = dsName;
+      setNewGroupName("");
+      setCreatingGroup(true);
+      setContextMenu(null);
+    },
+    [],
+  );
+
+  const commitCreateGroup = useCallback(() => {
+    const trimmed = newGroupName.trim();
+    const dsName = pendingDatasetRef.current;
+    if (!trimmed || !dsName) {
+      setCreatingGroup(false);
+      return;
+    }
+    setGroups((prev) => {
+      const cleaned = prev.map((g) => ({
+        ...g,
+        datasets: g.datasets.filter((d) => d !== dsName),
+      })).filter((g) => g.datasets.length > 0);
+
+      const colorIdx = cleaned.length % GROUP_COLORS.length;
+      const updated = [
+        ...cleaned,
+        { id: generateGroupId(), name: trimmed, datasets: [dsName], color: GROUP_COLORS[colorIdx].name },
+      ];
+      persistGroups(updated);
+      return updated;
+    });
+    setCreatingGroup(false);
+    pendingDatasetRef.current = null;
+  }, [newGroupName, persistGroups]);
+
+  const handleAddToGroup = useCallback(
+    (dsName: string, groupId: string) => {
+      setGroups((prev) => {
+        const updated = prev.map((g) => {
+          const withoutDs = g.datasets.filter((d) => d !== dsName);
+          if (g.id === groupId) return { ...g, datasets: [...withoutDs, dsName] };
+          return { ...g, datasets: withoutDs };
+        }).filter((g) => g.datasets.length > 0);
+        persistGroups(updated);
+        return updated;
+      });
+      setContextMenu(null);
+    },
+    [persistGroups],
+  );
+
+  const handleRemoveFromGroup = useCallback(
+    (dsName: string) => {
+      setGroups((prev) => {
+        const updated = prev
+          .map((g) => ({ ...g, datasets: g.datasets.filter((d) => d !== dsName) }))
+          .filter((g) => g.datasets.length > 0);
+        persistGroups(updated);
+        return updated;
+      });
+      setContextMenu(null);
+    },
+    [persistGroups],
+  );
+
+  const handleDeleteGroup = useCallback(
+    (groupId: string) => {
+      setGroups((prev) => {
+        const updated = prev.filter((g) => g.id !== groupId);
+        persistGroups(updated);
+        return updated;
+      });
+      setContextMenu(null);
+    },
+    [persistGroups],
+  );
+
+  const handleRenameGroupFromMenu = useCallback(
+    (groupId: string) => {
+      const group = groups.find((g) => g.id === groupId);
+      if (!group) return;
+      if (contextMenu) renamePositionRef.current = { x: contextMenu.x, y: contextMenu.y };
+      setRenameValue(group.name);
+      setRenamingGroupId(groupId);
+      setContextMenu(null);
+    },
+    [groups, contextMenu],
+  );
+
+  const commitRenameGroup = useCallback(() => {
+    const trimmed = renameValue.trim();
+    if (trimmed && renamingGroupId) {
+      handleGroupRename(renamingGroupId, trimmed);
+    }
+    setRenamingGroupId(null);
+  }, [renameValue, renamingGroupId, handleGroupRename]);
+
   return (
-    <div className={cn("h-full", className)}>
-      <ReactFlow<DatasetNodeType>
-        nodes={nodes}
+    <div className={cn("h-full relative", className)}>
+      <ReactFlow
+        nodes={allNodes}
         edges={edges}
-        onNodesChange={onNodesChange}
+        onNodesChange={onNodesChange as OnNodesChange<Node>}
         onEdgesChange={onEdgesChange}
         onNodeDragStop={handleNodeDragStop}
+        onNodeContextMenu={handleNodeContextMenu}
+        onPaneClick={dismissMenu}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
@@ -200,13 +455,48 @@ export function ModelGraphView({
         minZoom={0.2}
         maxZoom={2}
       >
-        <Background gap={16} size={1} />
+        <Background gap={10} size={1} />
         <Controls showInteractive={false} />
         <MiniMap
           nodeStrokeWidth={3}
           className="!bg-muted/50 !border-border rounded-lg"
         />
       </ReactFlow>
+
+      {contextMenu && (
+        <GraphContextMenu
+          state={contextMenu}
+          groups={groups}
+          onCreateGroup={handleCreateGroup}
+          onAddToGroup={handleAddToGroup}
+          onRemoveFromGroup={handleRemoveFromGroup}
+          onRenameGroup={handleRenameGroupFromMenu}
+          onDeleteGroup={handleDeleteGroup}
+          findGroupForDataset={findGroupForDataset}
+        />
+      )}
+
+      {creatingGroup && (
+        <CreateGroupPopover
+          x={contextMenu?.x ?? 100}
+          y={contextMenu?.y ?? 100}
+          value={newGroupName}
+          onChange={setNewGroupName}
+          onCommit={commitCreateGroup}
+          onCancel={() => setCreatingGroup(false)}
+        />
+      )}
+
+      {renamingGroupId && (
+        <RenameGroupPopover
+          x={renamePositionRef.current.x}
+          y={renamePositionRef.current.y}
+          value={renameValue}
+          onChange={setRenameValue}
+          onCommit={commitRenameGroup}
+          onCancel={() => setRenamingGroupId(null)}
+        />
+      )}
     </div>
   );
 }
