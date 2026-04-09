@@ -32,7 +32,9 @@ FROM deps AS build-api
 COPY apps/api/ ./apps/api/
 COPY packages/core/ ./packages/core/
 
-RUN mkdir -p apps/frontend/src apps/worker/src && pnpm --filter @archmax/api build && pnpm --filter @archmax/core build \
+RUN mkdir -p apps/frontend/src apps/worker/src \
+ && pnpm --filter @archmax/core build \
+ && pnpm --filter @archmax/api exec tsc --declaration false --composite false --declarationMap false \
  && EXTERNALS=$(node -e " \
       var a=require('./apps/api/package.json'), c=require('./packages/core/package.json'); \
       var deps=[...new Set([...Object.keys(a.dependencies),...Object.keys(c.dependencies)])] \
@@ -49,7 +51,9 @@ COPY apps/api/ ./apps/api/
 COPY apps/worker/ ./apps/worker/
 COPY packages/core/ ./packages/core/
 
-RUN mkdir -p apps/frontend/src && pnpm --filter @archmax/worker build && pnpm --filter @archmax/api build && pnpm --filter @archmax/core build \
+RUN mkdir -p apps/frontend/src \
+ && pnpm --filter @archmax/core build \
+ && pnpm --filter @archmax/worker exec tsc --declaration false --composite false --declarationMap false \
  && EXTERNALS=$(node -e " \
       var w=require('./apps/worker/package.json'), o=require('./apps/api/package.json'), c=require('./packages/core/package.json'); \
       var deps=[...new Set([...Object.keys(w.dependencies),...Object.keys(o.dependencies),...Object.keys(c.dependencies)])] \
@@ -67,7 +71,7 @@ COPY apps/frontend/ ./apps/frontend/
 COPY packages/core/ ./packages/core/
 COPY packages/ui/ ./packages/ui/
 
-RUN pnpm --filter @archmax/frontend... build
+RUN pnpm --filter @archmax/frontend exec vite build
 
 # ---------- production ----------
 FROM base AS production
