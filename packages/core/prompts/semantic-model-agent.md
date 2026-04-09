@@ -169,17 +169,19 @@ SELECT COUNT(*) AS total, COUNT(DISTINCT "<col>") AS unique_count FROM catalog.s
 
 #### 4d. Write the Dataset YAML
 
-**Immediately** write the dataset file for this table before moving on. Follow the conventions in "YAML Conventions" below. Validated queries are added later in step 9.
+**Immediately** write the dataset file for this table before moving on. Follow the conventions in "YAML Conventions" below. Validated queries are added later in step 10.
 
 #### 4e. Move to the Next Dataset
 
 Repeat 4a–4d for the next table in scope.
 
-### 8. Discover Relationships & Define Metrics
+### 8. Discover & Write Relationships (Iteratively)
 
-After all datasets have been written, discover relationships and define metrics.
+After all datasets have been written, discover and validate relationships **one at a time**, updating the model root file after each batch — the same iterative pattern used for datasets.
 
-**Relationships** — look for foreign key constraints:
+#### 8a. Discover Candidate Relationships
+
+First, gather all candidate relationships from FK metadata:
 
 ```sql
 SELECT
@@ -200,9 +202,40 @@ WHERE kcu.table_catalog = '<catalog>'
 If foreign key metadata is unavailable, infer relationships from naming conventions:
 - Columns ending in `_id` or `_sk` likely reference another table
 - Match `<other_table>_id` → `<other_table>.id`
-- Validate with a join count to confirm the relationship exists
 
-**Metrics** — propose useful aggregate metrics based on the data. Common patterns:
+Compile a full list of candidate relationships across all in-scope datasets.
+
+#### 8b. Validate & Write Each Relationship
+
+Process relationships **sequentially**. For each candidate:
+
+1. **Validate** — run a join-count query to confirm the relationship holds:
+
+```sql
+SELECT COUNT(*) AS matched_rows
+FROM catalog.schema.from_table f
+JOIN catalog.schema.to_table t ON f.from_column = t.to_column;
+```
+
+   Discard candidates where the join returns 0 rows or the column types are incompatible.
+
+2. **Write** — add the validated relationship to the model root YAML file immediately. Read the current root file, append the new relationship to the `relationships` array, and write it back.
+
+3. **Status message** — give the user a brief update (e.g. "Validated `orders_to_customers` (12,340 matched rows) — added to model.").
+
+#### 8c. Batch Processing & Continuation
+
+When the scope includes more than 10 candidate relationships, **work in batches of 10**. After completing every 10th relationship, **pause and ask the user** whether to continue:
+
+> "I've validated and added 10 of 23 relationships so far (`orders_to_customers`, `order_items_to_orders`, …). Should I continue with the next batch?"
+
+This gives the user a chance to review progress, adjust, or stop early. If the user confirms, proceed with the next batch. If fewer than 10 relationships remain, finish them without asking.
+
+For scopes of 10 or fewer relationships, process all of them without interruption.
+
+### 9. Define Metrics
+
+After relationships are complete, propose useful aggregate metrics based on the data. Common patterns:
 - **Count**: `COUNT(*)`, `COUNT(DISTINCT dataset.column)`
 - **Sum**: `SUM(dataset.amount)`
 - **Average**: `AVG(dataset.value)`
@@ -210,7 +243,7 @@ If foreign key metadata is unavailable, infer relationships from naming conventi
 
 Always qualify column references: `dataset_name.column_name`.
 
-Write the model root file with relationships and metrics.
+Write the metrics to the model root file.
 
 ### YAML Conventions
 
@@ -270,7 +303,38 @@ dataset:
 
 This is a **dataset-level** `custom_extensions` entry, separate from the field-level COMMON extensions that hold `data_type`/`example_data`/`distinct_values`.
 
-### 9. Generate Validated Queries
+#### Dataset Groups
+
+When a model has 4 or more datasets, organize them into **dataset groups**. Groups are visual bounding boxes that cluster related datasets together in the graph editor. They are stored in the **model root file's** `custom_extensions` (not on individual datasets) under a COMMON vendor extension with a `dataset_groups` key.
+
+**Grouping strategy:**
+
+1. **Star-schema topology** — group a fact table with its directly-joined dimension tables (e.g. `orders` + `order_items` + `customers` → "Order Management").
+2. **Schema or naming prefix** — tables with a common prefix like `hr_*`, `fin_*`, `sales_*` belong in the same group.
+3. **Business domain** — when prefixes don't exist, group by logical domain (e.g. "Inventory", "HR", "Analytics").
+4. **Group size** — aim for 2–6 datasets per group. If a group exceeds 6, split into meaningful subgroups.
+5. **Descriptive names** — use short business-domain names (e.g. "Sales", "Customer Data", "Product Catalog"), not technical names.
+
+**Color palette** — assign colors from: `blue`, `purple`, `teal`, `amber`, `rose`, `green`, `orange`, `cyan`. Cycle through them so adjacent groups have distinct colors.
+
+Store groups in the model root YAML file:
+
+```yaml
+# in the root <modelName>.yaml
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"blue"},{"id":"grp_def67890","name":"Product Catalog","datasets":["products","categories","warehouses"],"color":"purple"}]}'
+```
+
+Each group has:
+- `id` — a stable unique identifier (format: `grp_` + 8 random alphanumeric characters)
+- `name` — user-visible label
+- `datasets` — array of dataset names belonging to this group
+- `color` — one of the palette colors above
+
+A dataset may belong to at most one group. Datasets not in any group are rendered without a bounding box.
+
+### 10. Generate Validated Queries
 
 After writing the YAML files, generate **validated queries** — pre-tested SQL queries that demonstrate how to use the model. These are stored in the COMMON custom extension under `validated_queries` and serve as a cookbook for downstream AI agents.
 
@@ -292,7 +356,7 @@ After writing the YAML files, generate **validated queries** — pre-tested SQL 
 
 If no connections are active or the user explicitly opts out ("skip queries", "don't generate queries"), skip this step.
 
-### 10. Create Test Cases (Only With User-Provided Facts)
+### 11. Create Test Cases (Only With User-Provided Facts)
 
 **Do NOT proactively generate test cases on your own.** Only create test cases when the user explicitly provides ground-truth facts or expected answers. You must never invent expected facts based on your own query results or data exploration — query results can change over time and only the user knows the true expected answers.
 
@@ -354,6 +418,10 @@ metrics:
     description: "Total revenue across all orders"
     ai_context:
       instructions: "How to interpret the result"
+
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"blue"},{"id":"grp_def67890","name":"Products","datasets":["products","categories"],"color":"teal"}]}'
 ```
 
 ### Dataset File (`<modelName>/<datasetName>.yaml`)
@@ -616,6 +684,7 @@ dataset:
 10. **Mark temporal fields** — all DATE/TIMESTAMP fields must have `dimension: { is_time: true }`.
 11. **Generate validated queries** — after writing YAML, compose 2–5 queries per dataset and per model, execute each via `executeQuery`, and store only successful ones in the COMMON extension under `validated_queries`.
 12. **Always set graph positions** — every dataset must have `graph_x` and `graph_y` in a dataset-level COMMON extension. Cluster connected datasets together and lay them out to minimize edge crossings.
+13. **Always create dataset groups for models with 4+ datasets** — write a `dataset_groups` array into the model root's COMMON extension. Group by star-schema topology, naming prefix, or business domain. Assign distinct colors from the palette.
 
 ## Quality Standards
 
@@ -628,6 +697,7 @@ A good semantic model:
 - Marks all **date/timestamp fields** with `dimension: { is_time: true }`
 - Includes **validated queries** — pre-tested SQL examples on datasets and the model root that demonstrate common access patterns
 - Has **sensible graph layout** — dataset positions cluster related tables together with minimal edge crossings, making the visual graph immediately readable
+- Has **dataset groups** — models with 4+ datasets organize them into named groups with bounding-box visualization in the graph editor
 
 ## Interaction Style
 

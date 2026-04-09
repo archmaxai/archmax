@@ -60,6 +60,77 @@ export interface ModelDiff {
   modifiedFields: Map<string, Set<string>>;
 }
 
+export interface DatasetGroup {
+  id: string;
+  name: string;
+  datasets: string[];
+  color?: string;
+}
+
+export const GROUP_COLORS = [
+  { name: "blue",    bg: "oklch(0.91 0.06 250)",  border: "oklch(0.70 0.12 250)"  },
+  { name: "purple",  bg: "oklch(0.91 0.06 300)",  border: "oklch(0.70 0.12 300)"  },
+  { name: "teal",    bg: "oklch(0.92 0.05 180)",  border: "oklch(0.72 0.10 180)"  },
+  { name: "amber",   bg: "oklch(0.93 0.05 85)",   border: "oklch(0.75 0.12 85)"   },
+  { name: "rose",    bg: "oklch(0.92 0.05 15)",   border: "oklch(0.72 0.12 15)"   },
+  { name: "green",   bg: "oklch(0.92 0.05 145)",  border: "oklch(0.72 0.10 145)"  },
+  { name: "orange",  bg: "oklch(0.92 0.05 55)",   border: "oklch(0.72 0.12 55)"   },
+  { name: "cyan",    bg: "oklch(0.92 0.05 210)",  border: "oklch(0.72 0.10 210)"  },
+] as const;
+
+export function getGroupColor(colorName?: string) {
+  if (colorName) {
+    const found = GROUP_COLORS.find((c) => c.name === colorName);
+    if (found) return found;
+  }
+  return GROUP_COLORS[0];
+}
+
+export function parseDatasetGroups(extensions?: CustomExtension[]): DatasetGroup[] {
+  if (!extensions) return [];
+  for (const ext of extensions) {
+    if (ext.vendor_name !== "COMMON") continue;
+    try {
+      const d = JSON.parse(ext.data);
+      if (Array.isArray(d.dataset_groups)) return d.dataset_groups;
+    } catch {
+      // ignore malformed JSON
+    }
+  }
+  return [];
+}
+
+function isGroupExtension(ext: CustomExtension): boolean {
+  if (ext.vendor_name !== "COMMON") return false;
+  try {
+    return "dataset_groups" in JSON.parse(ext.data);
+  } catch {
+    return false;
+  }
+}
+
+export function serializeDatasetGroups(
+  groups: DatasetGroup[],
+  existingExtensions?: CustomExtension[],
+): CustomExtension[] {
+  const all = existingExtensions ?? [];
+  const other = all.filter((ext) => !isGroupExtension(ext));
+
+  if (groups.length === 0) return other;
+
+  const existing = all.find(isGroupExtension);
+  let mergedData: Record<string, unknown> = {};
+  if (existing) {
+    try { mergedData = JSON.parse(existing.data); } catch { /* empty */ }
+  }
+  mergedData.dataset_groups = groups;
+
+  return [
+    ...other,
+    { vendor_name: "COMMON", data: JSON.stringify(mergedData) },
+  ];
+}
+
 export function getFieldDataType(field: FieldFull): string | null {
   const ext = field.custom_extensions?.find((e) => e.vendor_name === "COMMON");
   if (!ext) return null;

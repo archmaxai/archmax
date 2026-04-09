@@ -4,7 +4,7 @@ import { connectDB } from "@archmax/core/infra/db";
 import { Conversation } from "@archmax/core/models/index";
 import { createSemlayerAgent } from "@archmax/core/services/agent";
 import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
-import { processAgentStream } from "@archmax/core/services/agent-stream";
+import { processAgentStream, createStreamCollector } from "@archmax/core/services/agent-stream";
 import {
   getRedis,
   isCancelFlagSet,
@@ -41,6 +41,7 @@ async function saveAssistantMessage(
   content: string,
   toolCalls?: IToolCallRecord[],
   segments?: IContentSegment[],
+  error?: string,
 ): Promise<void> {
   try {
     await connectDB();
@@ -54,6 +55,9 @@ async function saveAssistantMessage(
     }
     if (segments?.length) {
       msg.segments = segments;
+    }
+    if (error) {
+      msg.error = error;
     }
     await Conversation.updateOne(
       { _id: conversationId },
@@ -87,6 +91,8 @@ export async function processAgentJob(
 
   const abortController = new AbortController();
   let cancelSubscriber: Redis | null = null;
+
+  const collector = createStreamCollector();
 
   const cleanup = () => {
     if (cancelSubscriber) {
@@ -175,14 +181,15 @@ export async function processAgentJob(
       streamOptions,
     );
 
-    const { fullResponse, toolCalls, segments } = await processAgentStream(
+    await processAgentStream(
       events,
       (event, data) => publishStreamEvent(conversationId, { event, data }),
+      collector,
     );
 
     cleanup();
 
-    await saveAssistantMessage(conversationId, fullResponse, toolCalls, segments);
+    await saveAssistantMessage(conversationId, collector.fullResponse, collector.toolCalls, collector.segments);
     await publishDone(conversationId);
     await clearStreamBuffer(conversationId);
 
@@ -223,14 +230,16 @@ export async function processAgentJob(
       err,
     );
 
+    const errorMessage = err instanceof Error ? err.message : String(err);
     await saveAssistantMessage(
       conversationId,
-      "The agent encountered an error processing your request.",
+      collector.fullResponse,
+      collector.toolCalls.length ? collector.toolCalls : undefined,
+      collector.segments.length ? collector.segments : undefined,
+      errorMessage,
     );
     await publishDone(conversationId, "internal_error");
     await clearStreamBuffer(conversationId);
-    throw new UnrecoverableError(
-      err instanceof Error ? err.message : String(err),
-    );
+    throw new UnrecoverableError(errorMessage);
   }
 }

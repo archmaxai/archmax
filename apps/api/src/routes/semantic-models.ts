@@ -65,6 +65,21 @@ const app = new Hono()
     return c.text(yamlContent);
   })
   .patch(
+    "/:name/extensions",
+    zValidator("json", z.object({ custom_extensions: z.array(customExtensionSchema) })),
+    async (c) => {
+      const svc = getFileService();
+      const body = c.req.valid("json");
+      const updated = await svc.updateModelExtensions(
+        param(c, "projectId"),
+        param(c, "name"),
+        body.custom_extensions,
+      );
+      if (!updated) throw AppError.notFound("Semantic model not found");
+      return c.json({ ok: true });
+    },
+  )
+  .patch(
     "/:name/datasets/:datasetName/extensions",
     zValidator("json", z.object({ custom_extensions: z.array(customExtensionSchema) })),
     async (c) => {

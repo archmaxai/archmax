@@ -90,6 +90,30 @@ fields:
           data_type: TIMESTAMP
 ```
 
+## Dataset Groups
+
+When a model contains many datasets, you can organize them into **groups** — visual bounding-box rectangles in the graph view. Groups are stored in the root YAML file's `custom_extensions`:
+
+```yaml
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"blue"}]}'
+```
+
+### Managing Groups in the Graph View
+
+- **Right-click a dataset** → "Create group" to start a new group containing that dataset
+- **Right-click a dataset** → "Add to group" to move it into an existing group
+- **Right-click a dataset** → "Remove from group" to ungroup it
+- **Right-click a group box** → "Rename group" or "Delete group"
+- **Double-click a group label** to rename it inline
+
+The AI builder automatically creates groups when building models with 4 or more datasets, clustering by schema prefix, star-schema topology, or business domain.
+
+### Available Group Colors
+
+Groups use an 8-color palette: `blue`, `purple`, `teal`, `amber`, `rose`, `green`, `orange`, `cyan`. Colors are assigned automatically when creating groups.
+
 ## AI Context
 
 Every entity (model, dataset, field, relationship, metric) supports `ai_context` — either a plain string or a structured object with `instructions`, `synonyms`, and `examples`. This metadata is surfaced to AI agents through MCP tools, helping them understand what the data means and how to use it.

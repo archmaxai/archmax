@@ -77,6 +77,7 @@ function ModelsLayout() {
       const loaded = allPages.reduce((sum, p) => sum + p.items.length, 0);
       return loaded < lastPage.total ? loaded : undefined;
     },
+    refetchInterval: 10_000,
   });
 
   const conversations = convPages?.pages.flatMap((p) => p.items);
@@ -169,7 +170,11 @@ function ModelsLayout() {
                       params={{ projectId: project._id, conversationId: c._id }}
                       className="flex items-center gap-2 flex-1 min-w-0"
                     >
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                      {c.isStreaming ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                      ) : (
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                      )}
                       <span className="flex-1 truncate">
                         {c.title && c.title.length > 25 ? c.title.slice(0, 25) + "…" : c.title}
                       </span>

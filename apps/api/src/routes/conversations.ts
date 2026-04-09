@@ -12,7 +12,7 @@ const app = new Hono()
     const skip = Math.max(parseInt(c.req.query("skip") ?? "0", 10) || 0, 0);
 
     const filter = { project: projectId, testAgent: null };
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       Conversation.find(filter)
         .select("title createdAt updatedAt")
         .sort({ updatedAt: -1 })
@@ -21,6 +21,10 @@ const app = new Hono()
         .lean(),
       Conversation.countDocuments(filter),
     ]);
+    const streamFlags = await Promise.all(
+      rawItems.map((it) => isStreamActive(it._id.toString())),
+    );
+    const items = rawItems.map((it, i) => ({ ...it, isStreaming: streamFlags[i] }));
     return c.json({ items, total });
   })
   .get("/:id", async (c) => {

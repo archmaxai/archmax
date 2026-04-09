@@ -181,6 +181,11 @@
   .react-flow {
     --xy-background-color: var(--muted);
   }
+
+  /* Edges render above group-box nodes (z-index: 0) but below dataset nodes (z-index: 1) */
+  .react-flow .react-flow__edges {
+    z-index: 1;
+  }
 }
 
 @layer components {
