@@ -85,6 +85,23 @@ archmax — a tool for managing semantic descriptions of database schemas, table
 - **No redundant section sub-headings**: If a page has a single content section below the header (one list or table), do not add an `h2` that restates the page title. The `h1` in the header already provides sufficient context.
 - **Multiple content sections may use sub-headings**: When a page contains genuinely distinct groups (e.g., MCP Access shows endpoint cards and a token list), lightweight sub-headings are acceptable to separate them — but primary actions still belong in the page header.
 
+### Build Verification
+
+After making code changes, run the CI checks locally before committing:
+
+```bash
+pnpm typecheck          # turbo typecheck across all packages (tsc --noEmit)
+pnpm lint               # turbo lint/build across all packages
+```
+
+Both commands must exit 0. If either fails, fix the errors before pushing. These are the same checks the GitHub Actions CI pipeline runs on every PR.
+
+When modifying `apps/api`, also run its build directly to catch declaration/emit issues that `--noEmit` misses:
+
+```bash
+pnpm --filter @archmax/api build   # tsc (emits JS to dist/)
+```
+
 ### Architecture Patterns
 
 - **Shared packages**: `@archmax/core` for models/DB/config/services, `@archmax/ui` for React components
