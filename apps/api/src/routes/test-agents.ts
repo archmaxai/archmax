@@ -44,7 +44,7 @@ const app = new Hono()
     await connectDB();
     const projectId = c.req.param("projectId")!;
     const agents = await TestAgent.find({ project: projectId }).sort({ createdAt: -1 }).lean();
-    return c.json(agents.map((a: Record<string, unknown>) => stripApiKey(a)));
+    return c.json(agents.map((a) => stripApiKey(a as unknown as Record<string, unknown>)));
   })
   .get("/:agentId", async (c) => {
     await connectDB();

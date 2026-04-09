@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod/v4";
 import { zValidator } from "@hono/zod-validator";
 import { connectDB } from "@archmax/core/infra/db";
@@ -6,7 +6,7 @@ import { Connection, Project, type IConnectionDocument } from "@archmax/core/mod
 import { getProjectInstance } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
-function safeJson(c: { newResponse: (body: string, status: number, headers: Record<string, string>) => Response }, data: unknown): Response {
+function safeJson(c: Context, data: unknown): Response {
   const body = JSON.stringify(data, (_k, v) => typeof v === "bigint" ? Number(v) : v);
   return c.newResponse(body, 200, { "Content-Type": "application/json" });
 }

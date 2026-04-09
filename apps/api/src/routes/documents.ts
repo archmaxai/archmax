@@ -54,7 +54,7 @@ const app = new Hono()
     }
 
     const buf = await svc.get(projectId, filename);
-    return new Response(buf, {
+    return new Response(new Uint8Array(buf), {
       headers: { "Content-Disposition": `attachment; filename="${filename}"` },
     });
   })

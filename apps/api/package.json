@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "node --watch --import tsx src/index.ts",
-    "build": "tsc --build",
+    "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
