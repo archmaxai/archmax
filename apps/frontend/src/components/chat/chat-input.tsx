@@ -153,7 +153,7 @@ export function ChatInput({
               autoResize();
             }}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder ?? "Ask about your database or describe a semantic model..."}
+            placeholder={placeholder ?? "Describe the semantic model you want to build and how it relates to your data..."}
             disabled={isStreaming || disableSend}
             rows={1}
             className="min-h-[80px] max-h-[50vh] resize-none rounded-[inherit] border-0 bg-transparent pb-12 shadow-none focus-visible:ring-0 overflow-y-auto text-base md:text-sm"

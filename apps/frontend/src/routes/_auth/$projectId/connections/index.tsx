@@ -429,7 +429,7 @@ function ConnectionFormDialog({
           </div>
 
           <div className="content-tight">
-            <Label htmlFor="conn-slug">Slug (DuckDB prefix)</Label>
+            <Label htmlFor="conn-slug">Database Prefix</Label>
             <Input
               id="conn-slug"
               value={slug || (!slugTouched ? autoSlug(name) : "")}
@@ -441,7 +441,7 @@ function ConnectionFormDialog({
               className="font-mono"
             />
             <p className="text-muted-foreground text-xs">
-              Used as the schema name when querying via DuckDB
+              Used as the schema prefix when querying across data sources
             </p>
           </div>
 
