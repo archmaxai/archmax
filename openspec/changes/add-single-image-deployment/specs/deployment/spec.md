@@ -144,3 +144,33 @@ The page MUST be linked in the documentation sidebar under "Reference".
 - **WHEN** a user's container fails to start and they consult the Docker reference
 - **THEN** they find a troubleshooting section with common issues and remedies
 - **AND** log file locations (`/var/log/mongod.log`) are documented
+
+### Requirement: CI Docker Image Builds
+
+The CI pipeline SHALL build the Docker image on every pull request to catch build failures before merge. A dedicated GitHub Actions workflow (`.github/workflows/pr-docker-build.yml`) SHALL:
+
+- Trigger on `pull_request` events (`opened`, `synchronize`) targeting `main`
+- Build the Docker image using BuildKit with GitHub Actions layer caching (`type=gha`)
+- Push the image to `ghcr.io/<repository>:pr-<number>` so reviewers can test the exact PR build
+- Post (or update) a comment on the PR with the `docker pull` command for the built image
+
+On release (merged PR with a `release` label), a separate workflow SHALL build and push the final image tagged with both `latest` and the semver version (`ghcr.io/<repository>:<version>`).
+
+#### Scenario: PR opened or updated
+
+- **WHEN** a pull request is opened or a new commit is pushed to a PR targeting `main`
+- **THEN** the CI workflow builds the Docker image
+- **AND** pushes it to `ghcr.io/<repository>:pr-<pr-number>`
+- **AND** posts a comment on the PR with the pull command
+
+#### Scenario: PR comment is updated on subsequent pushes
+
+- **WHEN** a PR already has a Docker image comment from a previous push
+- **AND** a new commit is pushed to the PR
+- **THEN** the existing comment is updated (not duplicated) with the latest image reference
+
+#### Scenario: Release build on merge
+
+- **WHEN** a PR with a `release`, `release:minor`, or `release:major` label is merged to `main`
+- **THEN** the release workflow creates a GitHub release with a semver tag
+- **AND** builds and pushes the Docker image tagged as `latest` and `<version>` to ghcr.io

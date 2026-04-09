@@ -69,10 +69,10 @@ export function PublishButton() {
       <button
         disabled={publishMutation.isPending}
         onClick={() => setDialogOpen(true)}
-        className="flex w-full items-center gap-2 rounded-full px-3 py-1.5 text-[13px] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground transition-colors disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium bg-foreground text-background hover:bg-foreground/80 transition-colors disabled:opacity-50"
       >
-        <Upload className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">Publish Models</span>
+        <Upload className="h-3 w-3" />
+        Publish
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

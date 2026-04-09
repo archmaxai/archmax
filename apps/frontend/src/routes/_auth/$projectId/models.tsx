@@ -122,14 +122,11 @@ function ModelsLayout() {
     <div className="flex h-full">
       <div className="flex shrink-0 flex-col bg-muted min-h-0" style={{ width: panelWidth }}>
         <ScrollArea className="flex-1 min-h-0 pt-1.5">
-            <AccordionSection title="Semantic Models">
+            <AccordionSection title="Semantic Models" action={<PublishButton />}>
               <SemanticModelExplorer
                 projectId={project._id}
                 selectedModel={selectedModelName}
               />
-              <div className="px-1 pb-1">
-                <PublishButton />
-              </div>
             </AccordionSection>
 
             <div className="divider-subtle mx-3" />
