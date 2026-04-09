@@ -2,18 +2,37 @@
 
 A semantic layer for your databases — describe your data once, let AI agents query it intelligently.
 
-archmax helps you create semantic descriptions of your database schemas (tables, columns, relationships, metrics) and expose them to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Instead of giving AI agents raw database access, you give them a curated, documented view of your data.
+## The Problem
+
+Connecting AI agents to databases today is a gamble. You either hand over raw SQL access and hope the LLM doesn't hallucinate column names, run destructive queries, or leak sensitive data — or you spend weeks writing bespoke tool integrations that break the moment your schema changes.
+
+Even when agents *can* query your database, they have no idea what the data actually means. A column called `amt_01` could be revenue, tax, or a refund. A table called `dim_cust` is meaningless without business context. Without that context, agents guess — and guessing on real data has real consequences.
+
+The gap between "AI can write SQL" and "AI understands our data" is where most agent-database projects stall.
+
+## How archmax Solves This
+
+archmax puts a **semantic layer** between your databases and AI agents. You describe your data once — what tables mean, how they relate, what metrics matter — and archmax exposes that knowledge through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+
+Instead of raw database access, agents get:
+
+- **Business context** — field descriptions, synonyms, examples, and enum values so the agent knows `amt_01` is "gross revenue in EUR"
+- **Guardrails** — read-only queries scoped to sandboxed VIEWs, not raw tables; token-based access with model-level permissions
+- **Federation** — a single query interface across Postgres, MySQL, MSSQL, SQLite, and DuckDB, powered by DuckDB's in-process engine
+- **Structure** — typed datasets, explicit relationships, and reusable metric definitions following the [OSI spec](https://github.com/open-semantic-interchange/OSI)
+
+The result: AI agents that query your data reliably, safely, and with understanding — not guesswork.
 
 ## Features
 
-- **Semantic Models** — describe tables as datasets with typed fields, relationships, and metrics using YAML ([OSI spec](https://github.com/open-semantic-interchange/OSI))
-- **MCP Server** — expose your semantic layer to AI agents via MCP tools for discovery and scoped SQL queries
-- **Data Federation** — query across Postgres, MySQL, MSSQL, SQLite, and DuckDB from a single project using DuckDB
-- **AI-Assisted Model Builder** — an agent discovers schemas, maps fields, detects enums, and infers relationships
-- **Scoped Query Execution** — AI agents run read-only SQL against sandboxed VIEWs, not raw tables
+- **Semantic Models** — describe tables as datasets with typed fields, relationships, and metrics in YAML
+- **MCP Server** — expose your semantic layer to any MCP-compatible AI agent (Claude, Cursor, custom agents)
+- **Data Federation** — query across Postgres, MySQL, MSSQL, SQLite, and DuckDB from a single project
+- **AI-Assisted Model Builder** — a built-in agent discovers schemas, maps fields, detects enums, and infers relationships
+- **Scoped Query Execution** — agents run read-only SQL against sandboxed VIEWs, never raw tables
 - **Token-Based Access Control** — MCP tokens with configurable model scopes and expiry
-- **Testing Suite** — test agents and cases to validate that AI agents can use your semantic models correctly
-- **Self-Hosted** — deploy with Docker in minutes
+- **Testing Suite** — test cases that validate whether agents can use your semantic models correctly
+- **Self-Hosted** — deploy with Docker in minutes, keep your data on your infrastructure
 
 ## Quick Start
 
