@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-export ARCHMAX_DATA_DIR="${ARCHMAX_DATA_DIR:-${ARCHSEM_DATA_DIR:-${SEMLAYER_DATA_DIR:-/app/data/projects}}}"
+export ARCHMAX_DATA_DIR="${ARCHMAX_DATA_DIR:-/app/data/projects}"
 
 # --- Embedded MongoDB (when MONGODB_URI is not provided) ---
 if [ -z "$MONGODB_URI" ]; then

@@ -42,11 +42,14 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
+  -e AGENT_API_KEY=your-api-key \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 MongoDB and Redis are embedded and start automatically. To use an external MongoDB, pass `MONGODB_URI`. To use an external Redis, pass `REDIS_URL`.
+
+`AGENT_API_KEY` is required for the AI-powered Semantic Model Builder and Testing Playground. The default provider is [OpenRouter](https://openrouter.ai); see the [Configuration](/reference/configuration/#ai-agent) reference for alternative providers.
 
 <Aside type="caution">
 Save your `BETTER_AUTH_SECRET` value somewhere safe. If you lose it or change it on a restart, all existing sessions and authentication data become invalid. You will need to re-authenticate, and any Better Auth data tied to the old secret is lost.
@@ -146,14 +149,15 @@ docker compose start
 For standalone Docker:
 
 ```bash
-docker pull archmaxai/archmax:latest
+docker pull ghcr.io/archmaxai/archmax:latest
 docker stop archmax && docker rm archmax
 docker run -d --name archmax -p 8080:8080 \
   -e BETTER_AUTH_SECRET=your-existing-secret \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=your-password \
+  -e AGENT_API_KEY=your-api-key \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 <Aside type="caution">

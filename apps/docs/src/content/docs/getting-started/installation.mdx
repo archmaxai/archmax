@@ -28,6 +28,10 @@ AGENT_API_KEY=your-api-key
 Save your `BETTER_AUTH_SECRET` somewhere safe (e.g. a password manager or secrets vault). If you lose this value or change it later, all existing sessions and authentication data become invalid. You will need this exact value when upgrading or restarting the container.
 </Aside>
 
+<Aside type="note">
+`AGENT_API_KEY` is required for the AI-powered Semantic Model Builder, Testing Playground, and automatic title generation. The default provider is [OpenRouter](https://openrouter.ai). You can also use OpenAI, Azure OpenAI, Ollama, or any OpenAI-compatible endpoint by changing `AGENT_API_BASE_URL`. Without this key, agent features will be unavailable.
+</Aside>
+
 Then start the stack:
 
 ```bash
@@ -51,8 +55,9 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
+  -e AGENT_API_KEY=your-api-key \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 Open `http://localhost:8080` and log in with username `admin` and the password you set.

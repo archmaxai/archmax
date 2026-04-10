@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import { cn, Button, ScrollArea } from "@archmax/ui";
 import { toast } from "sonner";
 import { MarkdownContent } from "./markdown-components";
@@ -105,6 +106,16 @@ export function AgentChat({
   disableSend,
   initialInput,
 }: AgentChatProps) {
+  const { data: appConfig } = useQuery({
+    queryKey: ["app-config"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      return res.json() as Promise<{ githubEnabled: boolean; agentConfigured: boolean }>;
+    },
+    staleTime: Infinity,
+  });
+  const agentConfigured = appConfig?.agentConfigured !== false;
+
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages.map(normalizeMessage),
   );
@@ -434,10 +445,30 @@ export function AgentChat({
                       <h3 className="text-heading text-lg">
                         {emptyStateTitle ?? "Semantic Model Builder"}
                       </h3>
-                      <p className="text-foreground/60 text-sm mt-1.5">
-                        {emptyStateDescription ??
-                          "Ask me to explore your database schemas and create semantic models. I can read tables, run queries, and write model definitions."}
-                      </p>
+                      {!agentConfigured ? (
+                        <div className="mt-4 flex flex-col items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-5 py-4 text-left text-sm">
+                          <div className="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="h-4 w-4 shrink-0" />
+                            AI agent is not configured
+                          </div>
+                          <p className="text-foreground/70">
+                            Set an API key for an OpenAI-compatible provider to enable the agent. Add the following to your <code className="rounded bg-muted px-1 py-0.5 text-xs">.env</code> file or Docker Compose environment:
+                          </p>
+                          <div className="w-full rounded-lg bg-muted/60 px-3 py-2 font-mono text-xs leading-relaxed text-foreground/80">
+                            <div><span className="text-amber-700 dark:text-amber-400">AGENT_API_KEY</span>=your-api-key <span className="text-muted-foreground"># required</span></div>
+                            <div><span className="text-muted-foreground">AGENT_API_BASE_URL=https://openrouter.ai/api/v1</span></div>
+                            <div><span className="text-muted-foreground">AGENT_MODEL=anthropic/claude-sonnet-4</span></div>
+                          </div>
+                          <p className="text-foreground/60 text-xs">
+                            Supported providers: OpenRouter, OpenAI, Azure OpenAI, Ollama, or any OpenAI-compatible endpoint. Restart the server after updating.
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-foreground/60 text-sm mt-1.5">
+                          {emptyStateDescription ??
+                            "Ask me to explore your database schemas and create semantic models. I can read tables, run queries, and write model definitions."}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -513,7 +544,7 @@ export function AgentChat({
           focusRequestId={focusRequestId}
           placeholder={inputPlaceholder}
           bottomLeft={inputBottomLeft}
-          disableSend={disableSend}
+          disableSend={disableSend || !agentConfigured}
           {...(disableFileUpload ? {} : {
             onFileUpload: handleFileUpload,
             uploadedFiles,

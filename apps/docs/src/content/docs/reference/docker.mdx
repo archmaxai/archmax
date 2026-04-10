@@ -7,7 +7,7 @@ import { Aside } from "@astrojs/starlight/components";
 
 ## Image Contents
 
-The `archmaxai/archmax` Docker image bundles the application components needed to run archmax:
+The `ghcr.io/archmaxai/archmax` Docker image bundles the application components needed to run archmax:
 
 | Component | Description |
 |-----------|-------------|
@@ -71,12 +71,18 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 ### AI Agent
 
+<Aside type="caution">
+`AGENT_API_KEY` is required for all AI-powered features: the Semantic Model Builder, Testing Playground, and automatic conversation title generation. Without it, these features will be unavailable and the UI will display a configuration warning.
+</Aside>
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API endpoint. |
-| `AGENT_API_KEY` | - | API key for the agent endpoint. Without this, the AI model builder and chat are disabled. |
-| `AGENT_MODEL` | `anthropic/claude-sonnet-4` | Model identifier for the semantic model agent. |
+| `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API endpoint. Change this when using a provider other than OpenRouter. |
+| `AGENT_API_KEY` | - | **Required for agent features.** API key for your chosen provider. |
+| `AGENT_MODEL` | `anthropic/claude-sonnet-4` | Model identifier (must match your provider's naming convention). |
 | `AGENT_TITLE_MODEL` | `anthropic/claude-haiku-4-5-20250929` | Cheap/fast model for conversation title generation. |
+
+Supported providers: [OpenRouter](https://openrouter.ai) (default), OpenAI, Azure OpenAI, Ollama, or any OpenAI-compatible endpoint.
 
 ### Worker
 
@@ -178,10 +184,7 @@ services:
 
 ### CI Verification
 
-The repository includes automated health verification at two levels:
-
-- **E2E tests on every PR**: After the Docker image is built in CI, Playwright tests run against the image (started via `docker-compose.ci.yml` with local MongoDB and Redis) to validate login, navigation, and health before merge.
-- **Post-deploy smoke test**: After Railway deploys, a GitHub Actions workflow polls `/api/health` on the deployed service and marks the commit status as failed if the service is unhealthy.
+After the Docker image is built in CI, Playwright end-to-end tests run against the image (started via `docker-compose.ci.yml` with local MongoDB and Redis) to validate login, navigation, and health before merge.
 
 ## Resource Requirements
 
@@ -217,8 +220,9 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
+  -e AGENT_API_KEY=your-api-key \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 ### Standalone with External MongoDB
@@ -231,11 +235,12 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
+  -e AGENT_API_KEY=your-api-key \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
-### With AI Agent Configured
+### With Custom AI Provider
 
 ```bash
 docker run -d \
@@ -244,10 +249,11 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
-  -e AGENT_API_KEY=sk-or-v1-your-key \
-  -e AGENT_MODEL=anthropic/claude-sonnet-4 \
+  -e AGENT_API_KEY=sk-your-openai-key \
+  -e AGENT_API_BASE_URL=https://api.openai.com/v1 \
+  -e AGENT_MODEL=gpt-4o \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 ## Troubleshooting
@@ -294,7 +300,7 @@ Common causes:
 Map to a different host port:
 
 ```bash
-docker run -d -p 9090:8080 ... archmaxai/archmax:latest
+docker run -d -p 9090:8080 ... ghcr.io/archmaxai/archmax:latest
 ```
 
 ### Volume permission errors

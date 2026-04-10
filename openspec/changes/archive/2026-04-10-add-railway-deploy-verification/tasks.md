@@ -24,8 +24,13 @@
 - [x] 4.1 Add `apps/e2e/package.json` to Dockerfile deps and production stages (lockfile consistency)
 - [x] 4.2 Update `pnpm-lock.yaml` with new `@playwright/test` dependency
 
-## 5. Verification
+## 5. Documentation
 
-- [ ] 5.1 Run E2E tests locally against Docker Compose to confirm they pass
-- [ ] 5.2 Open a PR and confirm the E2E job runs and passes
-- [ ] 5.3 Confirm post-deploy health check triggers after Railway deploys
+- [x] 5.1 Update `contributing/development.mdx`: add `apps/e2e/` to monorepo structure, add E2E test instructions, add Playwright to tech stack
+- [x] 5.2 Update `reference/docker.mdx`: add CI verification section under Health Checks (E2E on PR, post-deploy smoke test)
+
+## 6. Verification
+
+- [x] 6.1 Run E2E tests locally against Docker Compose to confirm they pass
+- [x] 6.2 Open a PR and confirm the E2E job runs and passes
+- [x] 6.3 Confirm post-deploy health check triggers after Railway deploys

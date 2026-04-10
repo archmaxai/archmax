@@ -53,7 +53,10 @@ const app = new Hono()
   })
   .get("/api/config", (c) => {
     const env = getEnv();
-    return c.json({ githubEnabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) });
+    return c.json({
+      githubEnabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
+      agentConfigured: !!env.AGENT_API_KEY,
+    });
   })
   .on(["POST", "GET"], "/api/auth/**", (c) => auth.handler(c.req.raw))
   .route("/api/github", githubCallback)

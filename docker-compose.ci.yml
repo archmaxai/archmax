@@ -9,6 +9,7 @@ services:
     environment:
       MONGODB_URI: mongodb://mongo:27017/archmax-e2e
       REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: http://localhost:8080
       BETTER_AUTH_SECRET: e2e-test-secret-32chars-xxxxxxxxx
       UI_USERNAME: admin
       UI_PASSWORD: testpass123
@@ -18,7 +19,7 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3000/api/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 5s
       timeout: 5s
       start_period: 30s
@@ -26,6 +27,7 @@ services:
 
   mongo:
     image: mongo:8
+    command: ["mongod", "--quiet"]
 
   redis:
     image: redis:8-alpine
