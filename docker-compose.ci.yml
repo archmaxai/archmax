@@ -11,8 +11,8 @@ services:
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: http://localhost:8080
       BETTER_AUTH_SECRET: e2e-test-secret-32chars-xxxxxxxxx
-      UI_USERNAME: ${UI_USERNAME:-admin}
-      UI_PASSWORD: ${UI_PASSWORD:-testpass123}
+      UI_USERNAME: admin
+      UI_PASSWORD: testpass123
     depends_on:
       mongo:
         condition: service_started
