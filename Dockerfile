@@ -81,7 +81,6 @@ RUN apt-get update \
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
-COPY apps/e2e/package.json ./apps/e2e/
 COPY apps/frontend/package.json ./apps/frontend/
 COPY apps/worker/package.json ./apps/worker/
 COPY packages/core/package.json ./packages/core/
@@ -95,11 +94,9 @@ ENV PROMPTS_DIR=/app/prompts
 COPY --from=build-worker /app/apps/worker/worker.mjs ./apps/worker/worker.mjs
 COPY --from=build-spa /app/apps/frontend/dist /usr/share/nginx/html
 
-RUN useradd -r -m -s /bin/false archmax
-RUN HOME=/home/archmax corepack prepare pnpm@10.30.3 --activate \
- && chown -R archmax:archmax /home/archmax
-
-RUN mkdir -p /app/data/projects /app/data/mongodb /tmp/redis \
+RUN useradd -r -s /bin/false archmax \
+ && corepack disable \
+ && mkdir -p /app/data/projects /app/data/mongodb /tmp/redis \
  && chown -R archmax:archmax /app/data/projects /app/data/mongodb /tmp/redis /var/log
 
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
@@ -110,8 +107,7 @@ RUN rm -f /etc/nginx/sites-enabled/default \
  && chown -R archmax:archmax /var/cache/nginx /var/log/nginx /var/lib/nginx /etc/nginx \
  && touch /tmp/nginx.pid && chown archmax:archmax /tmp/nginx.pid
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
 
 USER archmax
 EXPOSE 8080
