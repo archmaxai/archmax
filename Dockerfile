@@ -73,7 +73,7 @@ ENV NODE_ENV=production
 RUN apt-get update \
  && apt-get install -y --no-install-recommends nginx redis-server gnupg curl ca-certificates \
  && curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg \
- && echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" \
+ && echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] http://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" \
       > /etc/apt/sources.list.d/mongodb-org-8.0.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends mongodb-org-server mongodb-mongosh \
@@ -96,11 +96,12 @@ ENV PROMPTS_DIR=/app/prompts
 COPY --from=build-worker /app/apps/worker/worker.mjs ./apps/worker/worker.mjs
 COPY --from=build-spa /app/apps/frontend/dist /usr/share/nginx/html
 
-RUN useradd -r -s /bin/false archmax
+RUN useradd -r -m -s /bin/false archmax
+RUN HOME=/home/archmax corepack prepare pnpm@10.30.3 --activate \
+ && chown -R archmax:archmax /home/archmax
 
 RUN mkdir -p /app/data/projects /app/data/mongodb /tmp/redis \
- && chown -R archmax:archmax /app/data/projects /app/data/mongodb /tmp/redis /var/log \
- && chown -R archmax:archmax /opt/corepack
+ && chown -R archmax:archmax /app/data/projects /app/data/mongodb /tmp/redis /var/log
 
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 RUN rm -f /etc/nginx/sites-enabled/default \
