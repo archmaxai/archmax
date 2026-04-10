@@ -176,6 +176,13 @@ services:
       start_period: 30s
 ```
 
+### CI Verification
+
+The repository includes automated health verification at two levels:
+
+- **E2E tests on every PR**: After the Docker image is built in CI, Playwright tests run against the image (started via `docker-compose.ci.yml` with local MongoDB and Redis) to validate login, navigation, and health before merge.
+- **Post-deploy smoke test**: After Railway deploys, a GitHub Actions workflow polls `/api/health` on the deployed service and marks the commit status as failed if the service is unhealthy.
+
 ## Resource Requirements
 
 | Deployment | Min RAM | Min Disk | Recommended CPU |
@@ -211,7 +218,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
-  archmax/archmax:latest
+  archmaxai/archmax:latest
 ```
 
 ### Standalone with External MongoDB
@@ -225,7 +232,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
-  archmax/archmax:latest
+  archmaxai/archmax:latest
 ```
 
 ### With AI Agent Configured
@@ -240,7 +247,7 @@ docker run -d \
   -e AGENT_API_KEY=sk-or-v1-your-key \
   -e AGENT_MODEL=anthropic/claude-sonnet-4 \
   -v archmax-data:/app/data \
-  archmax/archmax:latest
+  archmaxai/archmax:latest
 ```
 
 ## Troubleshooting
@@ -287,7 +294,7 @@ Common causes:
 Map to a different host port:
 
 ```bash
-docker run -d -p 9090:8080 ... archmax/archmax:latest
+docker run -d -p 9090:8080 ... archmaxai/archmax:latest
 ```
 
 ### Volume permission errors
