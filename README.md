@@ -4,6 +4,29 @@ A semantic layer for your databases. Describe your data once, let AI agents quer
 
 ### **[Read the docs &rarr;](https://docs.archmax.ai)**
 
+<table>
+<tr>
+<td width="33%"><img src="docs/images/screenshot-graph-view.png" alt="Semantic model graph view" /></td>
+<td width="33%"><img src="docs/images/screenshot-model-builder.png" alt="AI-assisted model builder" /></td>
+<td width="33%"><img src="docs/images/screenshot-data-browser.png" alt="Data browser" /></td>
+</tr>
+<tr>
+<td align="center"><b>Graph View</b></td>
+<td align="center"><b>Model Builder</b></td>
+<td align="center"><b>Data Browser</b></td>
+</tr>
+<tr>
+<td width="33%"><img src="docs/images/screenshot-test-agents.png" alt="Test agents configuration" /></td>
+<td width="33%"><img src="docs/images/screenshot-test-cases.png" alt="Test cases" /></td>
+<td width="33%"><img src="docs/images/screenshot-test-runs.png" alt="Test runs" /></td>
+</tr>
+<tr>
+<td align="center"><b>Test Agents</b></td>
+<td align="center"><b>Test Cases</b></td>
+<td align="center"><b>Test Runs</b></td>
+</tr>
+</table>
+
 > **Heads up: archmax is experimental.** The core ideas are stable, but APIs, file formats, and configuration may change between releases. We try to avoid breaking changes, but can't guarantee stability yet. Pin your version and check the changelog before upgrading.
 
 Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax is the runtime that turns OSI models into a live, queryable semantic layer for AI agents.
