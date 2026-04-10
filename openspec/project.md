@@ -17,6 +17,19 @@ archmax — a tool for managing semantic descriptions of database schemas, table
 - **Fonts**: Geist Sans / Geist Mono
 - **Deployment**: Docker (multi-stage) with nginx reverse proxy on port 8080
 
+## CI Colors
+
+The project uses a 4-color palette derived from the corporate identity:
+
+| Name | Hex |
+|------|---------|
+| sage | `#8c987f` |
+| rose | `#bca195` |
+| blue | `#c2d0e4` |
+| purple | `#8878a8` |
+
+These colors are used for dataset group boxes in the graph view (with lightened bg tints and darkened border variants for readability) and should be preferred whenever a categorical color palette is needed.
+
 ## Project Conventions
 
 ### Code Style

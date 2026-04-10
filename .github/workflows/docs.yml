@@ -3,9 +3,6 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths:
-      - "apps/docs/**"
-      - "openspec/specs/**"
   workflow_dispatch:
 
 permissions:

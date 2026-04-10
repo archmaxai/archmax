@@ -10,7 +10,23 @@ import type { SemanticModelFull } from "./types";
 import { api } from "@/lib/api";
 
 const DEFAULT_TAB = "graph";
-const tabPreferences = new Map<string, string>();
+const TAB_STORAGE_PREFIX = "archmax:model-tab:";
+
+function getTabPreference(modelName: string): string {
+  try {
+    return localStorage.getItem(`${TAB_STORAGE_PREFIX}${modelName}`) ?? DEFAULT_TAB;
+  } catch {
+    return DEFAULT_TAB;
+  }
+}
+
+function setTabPreference(modelName: string, tab: string) {
+  try {
+    localStorage.setItem(`${TAB_STORAGE_PREFIX}${modelName}`, tab);
+  } catch {
+    // ignore quota errors
+  }
+}
 
 interface ModelVisualizationProps {
   projectId: string;
@@ -21,16 +37,16 @@ export function ModelVisualization({
   projectId,
   modelName,
 }: ModelVisualizationProps) {
-  const [tab, setTab] = useState(() => tabPreferences.get(modelName) ?? DEFAULT_TAB);
+  const [tab, setTab] = useState(() => getTabPreference(modelName));
 
   useEffect(() => {
-    setTab(tabPreferences.get(modelName) ?? DEFAULT_TAB);
+    setTab(getTabPreference(modelName));
   }, [modelName]);
 
   const handleTabChange = useCallback(
     (value: string) => {
       setTab(value);
-      tabPreferences.set(modelName, value);
+      setTabPreference(modelName, value);
     },
     [modelName],
   );

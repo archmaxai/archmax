@@ -7,7 +7,7 @@ import { Aside } from "@astrojs/starlight/components";
 
 ## Docker Compose (Recommended)
 
-The fastest way to run archmax is with Docker Compose. This starts archmax with dedicated MongoDB and Redis services:
+The fastest way to run archmax is with Docker Compose. This starts archmax with dedicated MongoDB and Redis services, which is the recommended setup for production use:
 
 ```bash
 git clone https://github.com/archmaxai/archmax.git
@@ -19,9 +19,14 @@ Edit `.env` and set the required values:
 
 ```bash
 BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+UI_USERNAME=admin
 UI_PASSWORD=your-secure-password
 AGENT_API_KEY=your-api-key
 ```
+
+<Aside type="caution">
+Save your `BETTER_AUTH_SECRET` somewhere safe (e.g. a password manager or secrets vault). If you lose this value or change it later, all existing sessions and authentication data become invalid. You will need this exact value when upgrading or restarting the container.
+</Aside>
 
 Then start the stack:
 
@@ -29,7 +34,7 @@ Then start the stack:
 docker compose up -d
 ```
 
-Open `http://localhost:8080` and log in with username `admin` and the password you set.
+Open `http://localhost:8080` and log in with the username and password you configured (`UI_USERNAME` / `UI_PASSWORD`). The default username is `admin`.
 
 <Aside type="tip">
 The Compose stack runs MongoDB and Redis as separate containers alongside archmax. Project data is stored in the `archmax-data` volume and MongoDB data in `mongo-data`.
@@ -37,21 +42,33 @@ The Compose stack runs MongoDB and Redis as separate containers alongside archma
 
 ## Standalone Docker
 
-Run archmax as a single container with no external dependencies — MongoDB and Redis are embedded:
+Run archmax as a single container with no external dependencies. MongoDB and Redis are embedded in the image and start automatically:
 
 ```bash
 docker run -d \
   --name archmax \
   -p 8080:8080 \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
   archmax/archmax:latest
 ```
 
+Open `http://localhost:8080` and log in with username `admin` and the password you set.
+
+<Aside type="caution">
+Save your `BETTER_AUTH_SECRET` value before running this command. The subshell `$(openssl rand ...)` generates a random secret that is not displayed. Either generate it beforehand and paste the value, or retrieve it after starting with `docker inspect archmax --format '{{range .Config.Env}}{{println .}}{{end}}' | grep BETTER_AUTH_SECRET`.
+</Aside>
+
 <Aside type="note">
 MongoDB and Redis are both embedded in the image and start automatically when `MONGODB_URI` / `REDIS_URL` are not provided. To use external instances instead, pass `MONGODB_URI` and/or `REDIS_URL`. The volume mount at `/app/data` captures both project files and embedded MongoDB data.
 </Aside>
+
+### When to use which mode?
+
+- **Docker Compose** is recommended for production and long-term use. It separates MongoDB and Redis into their own containers, making backups, monitoring, and upgrades easier. You can also swap in a managed MongoDB service (Atlas, DocumentDB).
+- **Standalone Docker** is ideal for quick evaluation, demos, or simple single-user setups. Everything runs in one container with zero external dependencies.
 
 ## Local Development
 

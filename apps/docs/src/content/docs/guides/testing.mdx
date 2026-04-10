@@ -8,10 +8,10 @@ archmax includes a testing suite for validating that AI agents can successfully 
 ## Test Agents
 
 A test agent represents an AI configuration used for testing. Each agent has:
-- **Name** — descriptive label
-- **Model** — the LLM model to use (e.g., `anthropic/claude-sonnet-4.6`)
-- **System prompt** — optional custom instructions
-- **Max iterations** — tool call limit per test run
+- **Name**: descriptive label
+- **Model**: the LLM model to use (e.g., `anthropic/claude-sonnet-4`)
+- **System prompt**: optional custom instructions
+- **Max iterations**: tool call limit per test run
 
 Create test agents under **Testing > Test Agents** in the admin UI.
 
@@ -19,10 +19,10 @@ Create test agents under **Testing > Test Agents** in the admin UI.
 
 Test cases define questions that an AI agent should be able to answer using your semantic models:
 
-- **Title** — short description of what's being tested
-- **Prompt** — the question to ask the agent (e.g., "What was total revenue last quarter?")
-- **Semantic model** — which model the test targets
-- **Expected behavior** — optional notes on what a correct answer looks like
+- **Title**: short description of what's being tested
+- **Prompt**: the question to ask the agent (e.g., "What was total revenue last quarter?")
+- **Semantic model**: which model the test targets
+- **Expected behavior**: optional notes on what a correct answer looks like
 
 Create test cases under **Testing > Test Cases**.
 
@@ -38,7 +38,7 @@ Select multiple test cases and run them against a test agent in batch. Results a
 
 ## What to Test
 
-- **Discovery** — Can the agent find the right semantic model and datasets?
-- **Field understanding** — Does the agent use correct field names and understand their meaning?
-- **Query correctness** — Do the generated SQL queries return accurate results?
-- **Edge cases** — How does the agent handle ambiguous questions or missing data?
+- **Discovery**: Can the agent find the right semantic model and datasets?
+- **Field understanding**: Does the agent use correct field names and understand their meaning?
+- **Query correctness**: Do the generated SQL queries return accurate results?
+- **Edge cases**: How does the agent handle ambiguous questions or missing data?

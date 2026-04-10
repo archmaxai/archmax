@@ -30,7 +30,7 @@ const app = new Hono()
   .use("/api/*", corsMiddleware)
   .use("/api/*", async (c, next) => {
     const method = c.req.method;
-    if (method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") {
+    if (method === "POST" || method === "PUT" || method === "PATCH") {
       const ct = c.req.header("content-type") ?? "";
       const isJson = ct.startsWith("application/json");
       const isMultipart = ct.startsWith("multipart/");

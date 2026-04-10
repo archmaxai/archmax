@@ -7,9 +7,19 @@ import { Aside, Steps } from "@astrojs/starlight/components";
 
 ## Deployment Modes
 
+archmax supports two deployment modes. Choose the one that fits your needs:
+
+| | Docker Compose | Standalone Docker |
+|---|---|---|
+| **Services** | Separate containers for archmax, MongoDB, and Redis | Single container with embedded MongoDB and Redis |
+| **Setup** | Clone repo, configure `.env`, run `docker compose up` | Single `docker run` command |
+| **Backups** | Each service has its own volume; easy to back up individually | Single `/app/data` volume captures everything |
+| **Scaling** | Can scale services independently; swap in managed MongoDB (Atlas, DocumentDB) | All-in-one; simpler but less flexible |
+| **Best for** | Production deployments, teams, long-term use | Quick evaluation, demos, single-user setups |
+
 ### Docker Compose (Recommended)
 
-The recommended way to run archmax — separate containers for the app, MongoDB, and Redis:
+The recommended way to run archmax, with separate containers for the app, MongoDB, and Redis:
 
 ```bash
 git clone https://github.com/archmaxai/archmax.git
@@ -21,17 +31,16 @@ docker compose up -d
 
 The included `docker-compose.yml` runs archmax with dedicated MongoDB 8 and Redis 8 containers.
 
-**Best for**: all deployments, from evaluation to production.
-
 ### Standalone Docker
 
-Run archmax as a single container with embedded MongoDB and Redis — no external dependencies:
+Run archmax as a single container with embedded MongoDB and Redis, with no external dependencies:
 
 ```bash
 docker run -d \
   --name archmax \
   -p 8080:8080 \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
   archmax/archmax:latest
@@ -39,7 +48,9 @@ docker run -d \
 
 MongoDB and Redis are embedded and start automatically. To use an external MongoDB, pass `MONGODB_URI`. To use an external Redis, pass `REDIS_URL`.
 
-**Best for**: quick evaluation, simple deployments, and users who prefer a single-container setup.
+<Aside type="caution">
+Save your `BETTER_AUTH_SECRET` value somewhere safe. If you lose it or change it on a restart, all existing sessions and authentication data become invalid. You will need to re-authenticate, and any Better Auth data tied to the old secret is lost.
+</Aside>
 
 ## Data Backup
 
@@ -52,7 +63,7 @@ archmax stores two categories of persistent data:
 | External Database | MongoDB service/instance | Projects, connections, conversations, test data (when using Compose or external MongoDB) |
 
 <Aside type="tip">
-When using standalone Docker with embedded MongoDB, the single volume mount at `/app/data` captures everything — project files and database data. When using Docker Compose with external MongoDB, only project files live in the archmax container volume.
+When using standalone Docker with embedded MongoDB, the single volume mount at `/app/data` captures everything (project files and database data). When using Docker Compose with external MongoDB, only project files live in the archmax container volume.
 </Aside>
 
 ### Backing Up Project Files
@@ -139,13 +150,14 @@ docker pull archmax/archmax:latest
 docker stop archmax && docker rm archmax
 docker run -d --name archmax -p 8080:8080 \
   -e BETTER_AUTH_SECRET=your-existing-secret \
+  -e UI_USERNAME=admin \
   -e UI_PASSWORD=your-password \
   -v archmax-data:/app/data \
   archmax/archmax:latest
 ```
 
-<Aside type="tip">
-Keep your `BETTER_AUTH_SECRET` the same across upgrades — changing it invalidates all existing sessions.
+<Aside type="caution">
+Keep your `BETTER_AUTH_SECRET` the same across upgrades. Changing it invalidates all existing sessions and authentication data.
 </Aside>
 
 ## Resource Recommendations
@@ -157,11 +169,11 @@ Keep your `BETTER_AUTH_SECRET` the same across upgrades — changing it invalida
 | Docker Compose (small) | 2 GB total | 5 GB | 1 vCPU |
 | Docker Compose (production) | 4 GB total | 20 GB | 2 vCPU |
 
-The AI agent's resource usage depends on your configured model provider (OpenRouter, OpenAI, etc.) — it runs as API calls, not locally.
+The AI agent's resource usage depends on your configured model provider (OpenRouter, OpenAI, etc.) and runs as API calls, not locally.
 
 ## Security Considerations
 
 - The embedded MongoDB and Redis bind to `127.0.0.1` only (container-internal) and are not exposed outside the container.
-- Always set a strong `BETTER_AUTH_SECRET` (at least 32 characters).
+- Always set a strong `BETTER_AUTH_SECRET` (at least 32 characters) and save it for reuse across restarts and upgrades.
 - Change `UI_PASSWORD` from the default `changeme` before exposing to users.
 - Place a reverse proxy (nginx, Caddy, Traefik) with TLS in front of port 8080 for HTTPS.

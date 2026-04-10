@@ -6,15 +6,18 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Edge,
   type Node,
   type OnNodesChange,
+  type Viewport,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
+import { Maximize2 } from "lucide-react";
 import { cn } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { DatasetNode, type DatasetNodeType, type DatasetNodeData, type FieldPreview } from "./dataset-node";
-import { GroupBoxNode, type GroupBoxNodeType } from "./group-box-node";
+import { GroupBoxNode, type GroupBoxNodeType, type GroupBoxNodeData } from "./group-box-node";
 import { GraphContextMenu, CreateGroupPopover, RenameGroupPopover, type ContextMenuState } from "./graph-context-menu";
 import type { SemanticModelFull, ModelDiff, CustomExtension, DatasetGroup } from "./types";
 import {
@@ -32,6 +35,7 @@ const NODE_WIDTH = 260;
 const NODE_HEIGHT = 180;
 const GROUP_PADDING = 28;
 const GROUP_LABEL_HEIGHT = 24;
+const GRID_SIZE = 10;
 
 const nodeTypes = { dataset: DatasetNode, "group-box": GroupBoxNode };
 
@@ -183,9 +187,10 @@ function computeGroupBoxNodes(
         type: "group-box" as const,
         position: { x: minX - GROUP_PADDING, y: minY - GROUP_PADDING - GROUP_LABEL_HEIGHT },
         selectable: false,
-        draggable: false,
+        draggable: true,
         connectable: false,
         focusable: false,
+        deletable: false,
         zIndex: 0,
         width: w,
         height: h,
@@ -209,6 +214,39 @@ function generateGroupId() {
   return `grp_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const VIEWPORT_STORAGE_PREFIX = "archmax:graph-viewport:";
+
+function getSavedViewport(key: string): Viewport | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (typeof v.x === "number" && typeof v.y === "number" && typeof v.zoom === "number") {
+      return v as Viewport;
+    }
+  } catch {
+    // ignore malformed JSON
+  }
+  return null;
+}
+
+function ResetViewControl({ storageKey }: { storageKey: string }) {
+  const { fitView } = useReactFlow();
+  return (
+    <button
+      type="button"
+      className="react-flow__controls-button"
+      title="Reset view"
+      onClick={() => {
+        localStorage.removeItem(storageKey);
+        fitView({ padding: 0.2 });
+      }}
+    >
+      <Maximize2 />
+    </button>
+  );
+}
+
 interface ModelGraphViewProps {
   projectId: string;
   modelName: string;
@@ -225,13 +263,40 @@ export function ModelGraphView({
   className,
 }: ModelGraphViewProps) {
   const initial = useMemo(() => buildNodesAndEdges(model, diff), [model, diff]);
-  const [nodes, , onNodesChange] = useNodesState(initial.nodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, , onEdgesChange] = useEdgesState(initial.edges);
   const hasSavedAutoLayout = useRef(false);
+
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+
+  const groupDragRef = useRef<{
+    startPos: { x: number; y: number };
+    memberStarts: Map<string, { x: number; y: number }>;
+  } | null>(null);
+
+  const viewportKey = `${VIEWPORT_STORAGE_PREFIX}${projectId}:${modelName}`;
+  const savedViewport = useMemo(() => {
+    if (initial.didAutoLayout) return null;
+    return getSavedViewport(viewportKey);
+  }, [viewportKey, initial.didAutoLayout]);
+
+  const handleMoveEnd = useCallback(
+    (_event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
+      try {
+        localStorage.setItem(viewportKey, JSON.stringify(viewport));
+      } catch {
+        // ignore quota errors
+      }
+    },
+    [viewportKey],
+  );
 
   const [groups, setGroups] = useState<DatasetGroup[]>(() =>
     parseDatasetGroups(model.custom_extensions),
   );
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
@@ -289,9 +354,60 @@ export function ModelGraphView({
     }
   }, [initial.didAutoLayout, initial.nodes, saveNodePositions]);
 
+  const handleNodeDragStart = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      if (node.type !== "group-box") return;
+      const groupId = (node.data as GroupBoxNodeData).groupId;
+      const group = groupsRef.current.find((g) => g.id === groupId);
+      if (!group) return;
+
+      const memberStarts = new Map<string, { x: number; y: number }>();
+      for (const dsName of group.datasets) {
+        const dsNode = nodesRef.current.find((n) => n.id === dsName);
+        if (dsNode) memberStarts.set(dsName, { ...dsNode.position });
+      }
+
+      groupDragRef.current = { startPos: { ...node.position }, memberStarts };
+    },
+    [],
+  );
+
+  const handleNodeDrag = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      const drag = groupDragRef.current;
+      if (!drag || node.type !== "group-box") return;
+
+      const dx = node.position.x - drag.startPos.x;
+      const dy = node.position.y - drag.startPos.y;
+
+      setNodes((prev) =>
+        prev.map((n) => {
+          const start = drag.memberStarts.get(n.id);
+          if (!start) return n;
+          return { ...n, position: { x: start.x + dx, y: start.y + dy } };
+        }),
+      );
+    },
+    [setNodes],
+  );
+
   const handleNodeDragStop = useCallback(
-    (_event: React.MouseEvent, _node: Node, allNodes: Node[]) => {
-      saveNodePositions(allNodes.filter((n) => n.type === "dataset") as DatasetNodeType[]);
+    (_event: React.MouseEvent, node: Node, allNodes: Node[]) => {
+      if (groupDragRef.current && node.type === "group-box") {
+        const drag = groupDragRef.current;
+        const dx = node.position.x - drag.startPos.x;
+        const dy = node.position.y - drag.startPos.y;
+        const moved = Array.from(drag.memberStarts, ([id, start]) => ({
+          id,
+          type: "dataset" as const,
+          position: { x: start.x + dx, y: start.y + dy },
+          data: {} as DatasetNodeData,
+        })) as DatasetNodeType[];
+        saveNodePositions(moved);
+        groupDragRef.current = null;
+      } else {
+        saveNodePositions(allNodes.filter((n) => n.type === "dataset") as DatasetNodeType[]);
+      }
     },
     [saveNodePositions],
   );
@@ -445,18 +561,26 @@ export function ModelGraphView({
         edges={edges}
         onNodesChange={onNodesChange as OnNodesChange<Node>}
         onEdgesChange={onEdgesChange}
+        onNodeDragStart={handleNodeDragStart}
+        onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
         onNodeContextMenu={handleNodeContextMenu}
+        onMoveEnd={handleMoveEnd}
         onPaneClick={dismissMenu}
         nodeTypes={nodeTypes}
-        fitView
+        defaultViewport={savedViewport ?? undefined}
+        fitView={!savedViewport}
         fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}
+        snapToGrid
+        snapGrid={[GRID_SIZE, GRID_SIZE]}
         minZoom={0.2}
         maxZoom={2}
       >
-        <Background gap={10} size={1} />
-        <Controls showInteractive={false} />
+        <Background gap={GRID_SIZE} size={1} />
+        <Controls showInteractive={false} showFitView={false}>
+          <ResetViewControl storageKey={viewportKey} />
+        </Controls>
         <MiniMap
           nodeStrokeWidth={3}
           className="!bg-muted/50 !border-border rounded-lg"

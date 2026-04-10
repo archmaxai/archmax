@@ -1,6 +1,6 @@
 ---
 title: Docker Reference
-description: In-depth reference for running archmax as a Docker container — image contents, environment variables, volumes, entrypoint behavior, and troubleshooting.
+description: In-depth reference for running archmax as a Docker container, covering image contents, environment variables, volumes, entrypoint behavior, and troubleshooting.
 ---
 
 import { Aside } from "@astrojs/starlight/components";
@@ -14,9 +14,9 @@ The `archmax/archmax` Docker image bundles the application components needed to 
 | **API server** | Hono HTTP server on port 3000 (internal) |
 | **BullMQ worker** | Background job processor for AI agent tasks |
 | **Frontend SPA** | React admin UI served as static files |
-| **nginx** | Reverse proxy on port 8080 — routes `/api/` and `/mcp/` to the API, serves SPA for everything else |
-| **MongoDB** | Embedded `mongod` — starts automatically when `MONGODB_URI` is not set |
-| **Redis** | Embedded `redis-server` — starts automatically when `REDIS_URL` is not set |
+| **nginx** | Reverse proxy on port 8080; routes `/api/` and `/mcp/` to the API, serves SPA for everything else |
+| **MongoDB** | Embedded `mongod`; starts automatically when `MONGODB_URI` is not set |
+| **Redis** | Embedded `redis-server`; starts automatically when `REDIS_URL` is not set |
 
 Base image: `node:24-slim` (Debian Bookworm).
 
@@ -28,7 +28,7 @@ Both MongoDB and Redis are embedded and start automatically when their respectiv
 
 | Port | Protocol | Description |
 |------|----------|-------------|
-| `8080` | HTTP | nginx reverse proxy — the only port you need to expose |
+| `8080` | HTTP | nginx reverse proxy (the only port you need to expose) |
 
 Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.0.1` and are not accessible from outside the container.
 
@@ -38,7 +38,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 | Variable | Description |
 |----------|-------------|
-| `BETTER_AUTH_SECRET` | Session encryption secret. Min 32 characters. Generate with `openssl rand -base64 32`. Keep the same value across container restarts and upgrades. |
+| `BETTER_AUTH_SECRET` | Session encryption secret. Min 32 characters. Generate with `openssl rand -base64 32`. **Save this value and reuse it across container restarts and upgrades.** Changing or losing it invalidates all existing sessions and authentication data. |
 | `UI_PASSWORD` | Initial admin password. Used to seed the admin account on first run. |
 
 ### Optional Services
@@ -52,7 +52,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3000` | Internal API server port. Normally not changed — nginx proxies port 8080 to this. |
+| `PORT` | `3000` | Internal API server port. Normally not changed; nginx proxies port 8080 to this. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins. In Docker, the SPA is served by nginx on the same origin, so this is typically not needed. |
 | `AUTH_BASE_URL` | `http://localhost:3000` | Public URL for auth callbacks. Set to your external URL in production (e.g. `https://archmax.example.com`). |
 
@@ -61,7 +61,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UI_USERNAME` | `admin` | Initial admin username. |
-| `UI_PASSWORD` | — | **Required.** Initial admin password. |
+| `UI_PASSWORD` | - | **Required.** Initial admin password. |
 
 ### Data
 
@@ -74,7 +74,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API endpoint. |
-| `AGENT_API_KEY` | — | API key for the agent endpoint. Without this, the AI model builder and chat are disabled. |
+| `AGENT_API_KEY` | - | API key for the agent endpoint. Without this, the AI model builder and chat are disabled. |
 | `AGENT_MODEL` | `anthropic/claude-sonnet-4` | Model identifier for the semantic model agent. |
 | `AGENT_TITLE_MODEL` | `anthropic/claude-haiku-4-5-20250929` | Cheap/fast model for conversation title generation. |
 
@@ -100,9 +100,9 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GITHUB_CLIENT_ID` | — | GitHub OAuth app client ID. |
-| `GITHUB_CLIENT_SECRET` | — | GitHub OAuth app client secret. |
-| `ENCRYPTION_KEY` | — | Encryption key for OAuth token storage. |
+| `GITHUB_CLIENT_ID` | - | GitHub OAuth app client ID. |
+| `GITHUB_CLIENT_SECRET` | - | GitHub OAuth app client secret. |
+| `ENCRYPTION_KEY` | - | Encryption key for OAuth token storage. |
 
 ## Volumes
 
@@ -110,7 +110,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 |---------------|----------|-------------|-------|
 | `/app/data/projects/` | Semantic model YAML files | Yes | Core application data |
 | `/app/data/mongodb/` | Embedded MongoDB data files | Yes | Only used when `MONGODB_URI` is not set |
-| `/tmp/redis/` | Embedded Redis data | No | Ephemeral by design — queue data is transient |
+| `/tmp/redis/` | Embedded Redis data | No | Ephemeral by design; queue data is transient |
 
 ### Recommended Volume Mount
 
@@ -137,7 +137,7 @@ The container entrypoint (`/entrypoint.sh`) follows this startup sequence:
    └── Export REDIS_URL=redis://127.0.0.1:6379
 4. Start BullMQ worker (background)
 5. Start API server on port 3000 (background)
-6. Start nginx on port 8080 (foreground — PID 1)
+6. Start nginx on port 8080 (foreground, PID 1)
 ```
 
 ### Decision Matrix
@@ -208,6 +208,7 @@ docker run -d \
   --name archmax \
   -p 8080:8080 \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
   archmax/archmax:latest
@@ -221,6 +222,7 @@ docker run -d \
   -p 8080:8080 \
   -e MONGODB_URI=mongodb://mongo.example.com:27017/archmax \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
   archmax/archmax:latest
@@ -233,6 +235,7 @@ docker run -d \
   --name archmax \
   -p 8080:8080 \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=sk-or-v1-your-key \
   -e AGENT_MODEL=anthropic/claude-sonnet-4 \
@@ -253,7 +256,7 @@ docker logs archmax
 Common causes:
 - Missing required environment variable (`BETTER_AUTH_SECRET` or `UI_PASSWORD`)
 - `BETTER_AUTH_SECRET` is shorter than 32 characters
-- Embedded MongoDB failed to start — check the logs for `mongod` startup errors
+- Embedded MongoDB failed to start (check the logs for `mongod` startup errors)
 
 ### Cannot connect to MongoDB
 
@@ -277,7 +280,7 @@ Common causes:
 - DNS resolution failure (use IP address or ensure Docker DNS resolves the hostname)
 - Missing `?authSource=admin` for authenticated MongoDB instances
 - When using Docker Compose, ensure the `mongo` service is healthy before archmax starts (`depends_on`)
-- Embedded MongoDB fails on corrupted data — delete the `/app/data/mongodb` directory and restart
+- Embedded MongoDB fails on corrupted data; delete the `/app/data/mongodb` directory and restart
 
 ### Port 8080 already in use
 

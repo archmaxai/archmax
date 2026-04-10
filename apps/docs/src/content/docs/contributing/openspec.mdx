@@ -3,7 +3,7 @@ title: OpenSpec Workflow
 description: How to use the spec-driven development workflow for contributing changes.
 ---
 
-archmax uses **[OpenSpec](https://github.com/nicholasgriffintn/openspec)** for spec-driven development. **Every feature PR must include a corresponding spec change** — this is a hard requirement, not optional. A proposal with spec deltas gets reviewed first, and implementation only begins after approval.
+archmax uses **[OpenSpec](https://github.com/nicholasgriffintn/openspec)** for spec-driven development. **Every feature PR must include a corresponding spec change.** This is a hard requirement, not optional. A proposal with spec deltas gets reviewed first, and implementation only begins after approval.
 
 ## Install OpenSpec
 
@@ -48,7 +48,7 @@ PRs without spec changes will be rejected during review. Bug fixes, typo correct
 ```
 openspec/
 ├── project.md          # Project conventions and context
-├── specs/              # Current truth — what IS built
+├── specs/              # Current truth: what IS built
 │   └── <capability>/
 │       └── spec.md     # Requirements and scenarios
 ├── changes/            # Active proposals
@@ -76,11 +76,11 @@ Describe your change and invoke the `/openspec-proposal` command. The assistant 
 
 **Manual creation (if not using Cursor):**
 
-1. **Pick a change ID** — kebab-case, verb-led (e.g., `add-two-factor-auth`, `update-mcp-tools`)
+1. **Pick a change ID**: kebab-case, verb-led (e.g., `add-two-factor-auth`, `update-mcp-tools`)
 
-2. **Scaffold the files** — create `proposal.md`, `tasks.md`, and spec deltas under `openspec/changes/<change-id>/`
+2. **Scaffold the files**: create `proposal.md`, `tasks.md`, and spec deltas under `openspec/changes/<change-id>/`
 
-3. **Write spec deltas** — use `## ADDED`, `## MODIFIED`, or `## REMOVED Requirements` headers with `#### Scenario:` blocks:
+3. **Write spec deltas**: use `## ADDED`, `## MODIFIED`, or `## REMOVED Requirements` headers with `#### Scenario:` blocks:
 
    ```markdown
    ## ADDED Requirements
@@ -92,7 +92,7 @@ Describe your change and invoke the `/openspec-proposal` command. The assistant 
    - **THEN** an OTP challenge is required
    ```
 
-4. **Validate** — run `openspec validate <change-id> --strict` and fix any issues before opening a PR
+4. **Validate**: run `openspec validate <change-id> --strict` and fix any issues before opening a PR
 
 ## Documentation Sync
 

@@ -315,7 +315,7 @@ When a model has 4 or more datasets, organize them into **dataset groups**. Grou
 4. **Group size** — aim for 2–6 datasets per group. If a group exceeds 6, split into meaningful subgroups.
 5. **Descriptive names** — use short business-domain names (e.g. "Sales", "Customer Data", "Product Catalog"), not technical names.
 
-**Color palette** — assign colors from: `blue`, `purple`, `teal`, `amber`, `rose`, `green`, `orange`, `cyan`. Cycle through them so adjacent groups have distinct colors.
+**Color palette** — assign colors from: `sage`, `rose`, `blue`, `purple`. Cycle through them so adjacent groups have distinct colors.
 
 Store groups in the model root YAML file:
 
@@ -323,7 +323,7 @@ Store groups in the model root YAML file:
 # in the root <modelName>.yaml
 custom_extensions:
   - vendor_name: COMMON
-    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"blue"},{"id":"grp_def67890","name":"Product Catalog","datasets":["products","categories","warehouses"],"color":"purple"}]}'
+    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"sage"},{"id":"grp_def67890","name":"Product Catalog","datasets":["products","categories","warehouses"],"color":"rose"}]}'
 ```
 
 Each group has:
@@ -421,7 +421,7 @@ metrics:
 
 custom_extensions:
   - vendor_name: COMMON
-    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"blue"},{"id":"grp_def67890","name":"Products","datasets":["products","categories"],"color":"teal"}]}'
+    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"sage"},{"id":"grp_def67890","name":"Products","datasets":["products","categories"],"color":"blue"}]}'
 ```
 
 ### Dataset File (`<modelName>/<datasetName>.yaml`)

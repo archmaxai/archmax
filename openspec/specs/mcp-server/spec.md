@@ -90,12 +90,6 @@ The MCP server SHALL expose the following tools for AI agent consumption. The MC
 - **WHEN** `get_dataset_fields` is called for a dataset in an accessible published model
 - **THEN** the fields are returned normally from assembled YAML data
 
-#### Scenario: Read-only token blocks write operations
-
-- **WHEN** a tool that performs write operations is called
-- **AND** the token's permission is `"read"`
-- **THEN** an error content response is returned indicating insufficient permissions
-
 #### Scenario: No published models exist
 
 - **WHEN** `list_semantic_models` is called and the project's `build/` directory is empty or missing
@@ -228,19 +222,14 @@ Each `execute_query` invocation SHALL open a DuckDB connection with security har
 
 ### Requirement: MCP Request Improvement Tool
 
-The MCP server SHALL expose a `request_improvement` tool that allows external clients to submit structured improvement requests for a semantic model. The tool SHALL accept `modelName` (string, required), `title` (string, required, max 200 characters), and `description` (string, required, max 2000 characters). The tool SHALL validate that the specified `modelName` exists within the token's accessible scope before persisting. The tool SHALL reject calls from read-only tokens with an error indicating insufficient permissions. On success, an `Improvement` document SHALL be created with status `pending` and the token's name recorded as `createdVia`. The tool SHALL be logged via `McpCallLog` consistent with other tools.
+The MCP server SHALL expose a `request_improvement` tool that allows external clients to submit structured improvement requests for a semantic model. The tool SHALL accept `modelName` (string, required), `title` (string, required, max 200 characters), and `description` (string, required, max 2000 characters). The tool SHALL validate that the specified `modelName` exists within the token's accessible scope before persisting. On success, an `Improvement` document SHALL be created with status `pending` and the token's name recorded as `createdVia`. The tool SHALL be logged via `McpCallLog` consistent with other tools.
 
 #### Scenario: Successful improvement request
 
 - **WHEN** `request_improvement` is called with `modelName: "ecommerce"`, `title: "Missing shipping_address field"`, `description: "The orders dataset is missing the shipping_address column which exists in the source table"`
-- **AND** the token has write permission and `ecommerce` is in scope
+- **AND** `ecommerce` is in the token's scope
 - **THEN** an `Improvement` document is created with status `pending`, `modelName: "ecommerce"`, and `createdVia` set to the token's name
 - **AND** a success message is returned: "Improvement request submitted successfully"
-
-#### Scenario: Read-only token rejected
-
-- **WHEN** `request_improvement` is called with a read-only token
-- **THEN** an error content response with `isError: true` is returned indicating insufficient permissions
 
 #### Scenario: Model not in scope
 

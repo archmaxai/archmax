@@ -3,45 +3,72 @@ title: Quickstart
 description: Create your first project, connect a database, and build a semantic model.
 ---
 
-import { Steps } from "@astrojs/starlight/components";
+import { Steps, Aside } from "@astrojs/starlight/components";
 
 This guide walks you through creating your first project, connecting a database, and building a semantic model that AI agents can query.
 
+<Aside type="tip">
+Make sure you have archmax running first. See the [Installation](/getting-started/installation/) guide if you haven't set it up yet.
+</Aside>
+
 <Steps>
 
-1. **Create a Project**
+1. **Log in**
 
-   After logging in, click **New Project** on the dashboard. Give it a name and an optional description.
+   Open `http://localhost:8080` (or your configured URL) and log in with the credentials you set during installation. The default username is `admin` (configurable via `UI_USERNAME`), and the password is whatever you set in `UI_PASSWORD`.
 
-2. **Add a Connection**
+2. **Create a Project**
+
+   After logging in, click **New Project** on the dashboard. Give it a name and an optional description. A project groups related database connections and their semantic models.
+
+3. **Add a Connection**
 
    Navigate to **Data Federation** in the sidebar and click **New Connection**. Fill in:
-   - **Name** — a friendly label (e.g., "Production Postgres")
-   - **Type** — select your database type (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck)
-   - **Connection details** — host, port, database, user, and password (or paste a URI)
+   - **Name**: a friendly label (e.g., "Shopify Airbyte Postgres")
+   - **Type**: select your database type (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck)
+   - **Connection details**: host, port, database, user, and password (or paste a URI)
 
    Click **Test Connection** to verify, then save.
 
-3. **Build a Semantic Model**
+4. **Build a Semantic Model**
 
-   Go to **Semantic Models** and click **New Model**. The AI-assisted builder will:
+   Go to **Semantic Models** in the sidebar and start a new conversation. Describe what kind of model you want in natural language, for example:
+
+   > "Build a semantic model from the orders, customers, and products tables in my shopify connection, and connect this to the contacts data in my CRM connection."
+
+   The AI agent will:
    - Discover schemas and tables from your connection
    - Map columns to typed fields with expressions
    - Detect enum values and time dimensions
    - Infer relationships between datasets
    - Define metrics
 
-   Review the generated model, adjust as needed, and save.
+   Review the generated model in the graph or tree view, adjust as needed, and save.
 
-4. **Publish the Model**
+5. **Publish the Model**
 
-   Click **Publish** to make the model available to MCP clients. Publishing assembles the source YAML files into a single optimized build.
+   Once you are happy with the model, click **Publish** in the semantic model detail view. Publishing takes the individual source YAML files (root file + per-dataset files under `src/`) and assembles them into a single optimized YAML in the `build/` directory. The **production MCP endpoint** (`/mcp/<slug>/mcp`) always reads from the published build, so **any changes you make to a model are invisible to production AI agents until you publish**.
 
-5. **Create an MCP Token**
+   You can keep editing and re-publishing as often as needed. Each publish overwrites the previous build.
 
-   Go to **MCP Access** and create a token. Choose which semantic models the token can access (scopes) and set an optional expiry.
+   There is also a **test MCP endpoint** at `/mcp/<slug>/test/mcp` that assembles from the source files on-the-fly. This means you can iterate on a model and immediately test it with an AI agent without publishing first. The test endpoint is useful during development; the production endpoint is what you give to external agents.
 
-6. **Connect an AI Agent**
+6. **Add Test Cases**
+
+   Before connecting external agents, it's a good idea to verify your model works correctly. Go to **Testing** in the sidebar:
+
+   - Under **Test Agents**, create a test agent configuration. Pick a name, choose the LLM model to use, and optionally set a custom system prompt.
+   - Under **Test Cases**, create one or more questions that an AI agent should be able to answer using your semantic model, for example: *"What was total revenue last quarter?"* or *"Which customer placed the most orders?"*. Assign each test case to the semantic model it targets. **Treat test cases as ground truth**: before creating a test case, manually verify the expected answer by querying your database directly. If you add a test case claiming "total revenue last quarter was $142,000" but that number is wrong, every future test run will chase a phantom bug. Take the time to confirm metrics, counts, and edge cases against your actual data first.
+   - Use the **Playground** to run a single test case interactively and watch the agent's tool calls and reasoning in real time. The playground uses the test MCP endpoint, so it always reflects your latest saved changes, even if you haven't published yet.
+   - Use **Batch Runs** to run multiple test cases at once and review pass/fail results.
+
+   Testing helps you catch missing fields, ambiguous descriptions, and incorrect relationships before real agents hit your data. The quality of your test suite depends on the accuracy of the expected answers, so invest in verifying them upfront.
+
+7. **Create an MCP Token**
+
+   Go to **MCP Access** and create a token. Choose which semantic models the token can access (scopes) and set an optional expiry. All tokens are read-only by default.
+
+8. **Connect an AI Agent**
 
    Configure your AI agent's MCP client to use:
    - **Endpoint**: `http://your-server:8080/mcp/your-project-slug/mcp`
@@ -56,3 +83,4 @@ This guide walks you through creating your first project, connecting a database,
 - Learn how to [author semantic models](/guides/semantic-models/) in detail
 - Set up [MCP integration](/guides/mcp-integration/) for your AI tools
 - Explore [data federation](/guides/data-federation/) across multiple databases
+- Validate your models with the [testing suite](/guides/testing/)

@@ -92,12 +92,12 @@ fields:
 
 ## Dataset Groups
 
-When a model contains many datasets, you can organize them into **groups** — visual bounding-box rectangles in the graph view. Groups are stored in the root YAML file's `custom_extensions`:
+When a model contains many datasets, you can organize them into **groups**, which appear as visual bounding-box rectangles in the graph view. Groups are stored in the root YAML file's `custom_extensions`:
 
 ```yaml
 custom_extensions:
   - vendor_name: COMMON
-    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"blue"}]}'
+    data: '{"dataset_groups":[{"id":"grp_abc12345","name":"Order Management","datasets":["orders","order_items","customers"],"color":"sage"}]}'
 ```
 
 ### Managing Groups in the Graph View
@@ -112,21 +112,21 @@ The AI builder automatically creates groups when building models with 4 or more 
 
 ### Available Group Colors
 
-Groups use an 8-color palette: `blue`, `purple`, `teal`, `amber`, `rose`, `green`, `orange`, `cyan`. Colors are assigned automatically when creating groups.
+Groups use a 4-color CI palette: `sage`, `rose`, `blue`, `purple`. Colors are assigned automatically when creating groups.
 
 ## AI Context
 
-Every entity (model, dataset, field, relationship, metric) supports `ai_context` — either a plain string or a structured object with `instructions`, `synonyms`, and `examples`. This metadata is surfaced to AI agents through MCP tools, helping them understand what the data means and how to use it.
+Every entity (model, dataset, field, relationship, metric) supports `ai_context`, either a plain string or a structured object with `instructions`, `synonyms`, and `examples`. This metadata is surfaced to AI agents through MCP tools, helping them understand what the data means and how to use it.
 
 ## AI-Assisted Builder
 
-The admin UI includes an AI agent that can build semantic models by:
+The admin UI includes a chat-based AI agent that can build semantic models for you. Navigate to **Semantic Models** and start a new conversation describing what kind of model you want. The agent will:
 
-1. **Schema discovery** — listing tables and columns from your connections
-2. **Field mapping** — creating typed fields with correct SQL expressions
-3. **Enum detection** — finding columns with limited distinct values
-4. **Relationship inference** — detecting foreign keys and join paths
-5. **Metric definition** — suggesting common aggregations
+1. **Schema discovery**: list tables and columns from your connections
+2. **Field mapping**: create typed fields with correct SQL expressions
+3. **Enum detection**: find columns with limited distinct values
+4. **Relationship inference**: detect foreign keys and join paths
+5. **Metric definition**: suggest common aggregations
 
 You can also create and edit models manually through the YAML files or the admin UI editor.
 

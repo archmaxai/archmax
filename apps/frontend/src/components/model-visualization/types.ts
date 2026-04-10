@@ -68,14 +68,10 @@ export interface DatasetGroup {
 }
 
 export const GROUP_COLORS = [
-  { name: "blue",    bg: "oklch(0.91 0.06 250)",  border: "oklch(0.70 0.12 250)"  },
-  { name: "purple",  bg: "oklch(0.91 0.06 300)",  border: "oklch(0.70 0.12 300)"  },
-  { name: "teal",    bg: "oklch(0.92 0.05 180)",  border: "oklch(0.72 0.10 180)"  },
-  { name: "amber",   bg: "oklch(0.93 0.05 85)",   border: "oklch(0.75 0.12 85)"   },
-  { name: "rose",    bg: "oklch(0.92 0.05 15)",   border: "oklch(0.72 0.12 15)"   },
-  { name: "green",   bg: "oklch(0.92 0.05 145)",  border: "oklch(0.72 0.10 145)"  },
-  { name: "orange",  bg: "oklch(0.92 0.05 55)",   border: "oklch(0.72 0.12 55)"   },
-  { name: "cyan",    bg: "oklch(0.92 0.05 210)",  border: "oklch(0.72 0.10 210)"  },
+  { name: "sage",   bg: "#e8eae5", border: "#8c987f" },
+  { name: "rose",   bg: "#f2ecea", border: "#a38b7e" },
+  { name: "blue",   bg: "#edf2f8", border: "#7e96b5" },
+  { name: "purple", bg: "#e7e4ee", border: "#8878a8" },
 ] as const;
 
 export function getGroupColor(colorName?: string) {

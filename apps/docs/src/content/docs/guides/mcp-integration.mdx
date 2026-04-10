@@ -5,15 +5,20 @@ description: Connect AI agents to your semantic layer using the Model Context Pr
 
 archmax exposes your semantic models to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Agents discover available models, browse datasets and fields, and run scoped SQL queries.
 
-## Endpoint
+## Endpoints
 
-Each project has its own MCP endpoint:
+Each project has two MCP endpoints:
 
-```
-POST https://your-server/mcp/<project-slug>/mcp
-```
+| Endpoint | Reads from | Use case |
+|----------|-----------|----------|
+| `POST /mcp/<project-slug>/mcp` | Published build (`build/`) | Production: give this to external AI agents |
+| `POST /mcp/<project-slug>/test/mcp` | Source files (`src/`), assembled on-the-fly | Development: test changes immediately without publishing |
 
-The endpoint accepts JSON-RPC requests with `tools/list` and `tools/call` methods.
+The **production endpoint** serves the last published version of your semantic models. Changes you make in the editor are not visible to production agents until you click **Publish**.
+
+The **test endpoint** assembles the model from source files on every request, so it always reflects your latest saved changes. The built-in Playground and batch test runner use this endpoint. You can also point an external agent at the test endpoint during development to iterate quickly.
+
+Both endpoints accept JSON-RPC requests with `tools/list` and `tools/call` methods, and both require the same Bearer token authentication.
 
 ## Authentication
 
@@ -24,9 +29,8 @@ Authorization: Bearer <your-mcp-token>
 ```
 
 Tokens are created in the admin UI under **MCP Access**. Each token has:
-- **Scopes** — which semantic models the token can access
-- **Permission** — `read` (query only) or `readwrite` (query + request improvements)
-- **Expiry** — optional expiration date
+- **Scopes**: which semantic models the token can access
+- **Expiry**: optional expiration date
 
 ## Available Tools
 

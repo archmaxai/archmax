@@ -58,7 +58,7 @@ export const GroupBoxNode = memo(function GroupBoxNode({
         borderRadius: 12,
         pointerEvents: "all",
       }}
-      className="relative"
+      className="relative cursor-grab active:cursor-grabbing"
     >
       {editing ? (
         <input

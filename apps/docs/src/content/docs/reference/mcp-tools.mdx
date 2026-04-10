@@ -71,9 +71,9 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 ### Security Hardening
 
 Each query runs in a DuckDB connection with:
-- `enable_external_access = false` — no file reads, network access, or COPY operations
-- `threads = 2`, `memory_limit = '512MB'` — resource limits
-- `lock_configuration = true` — prevents setting changes via injected SQL
+- `enable_external_access = false`: no file reads, network access, or COPY operations
+- `threads = 2`, `memory_limit = '512MB'`: resource limits
+- `lock_configuration = true`: prevents setting changes via injected SQL
 
 ---
 
