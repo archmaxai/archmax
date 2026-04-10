@@ -1,7 +1,6 @@
 # ---------- base ----------
 FROM node:24-slim AS base
 ENV PNPM_HOME="/pnpm"
-ENV COREPACK_HOME="/opt/corepack"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
 
