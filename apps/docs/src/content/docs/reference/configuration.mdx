@@ -55,7 +55,7 @@ Inside the Docker image, persistent data lives under `/app/data/`:
 | `/app/data/mongodb/` | Embedded MongoDB data (when using embedded mode) | Yes |
 | `/tmp/redis/` | Embedded Redis data | No (ephemeral) |
 
-A single volume mount (`-v archmax-data:/app/data`) captures both project files and embedded MongoDB data. When using an external MongoDB via `MONGODB_URI`, the `mongodb/` directory is unused. See the [Docker Reference](/reference/docker/) for details.
+A single bind mount (`-v ~/.archmax:/app/data`) captures both project files and embedded MongoDB data in `~/.archmax` on the host. When using an external MongoDB via `MONGODB_URI`, the `mongodb/` directory is unused. See the [Docker Reference](/reference/docker/) for details.
 
 ## MCP Server
 

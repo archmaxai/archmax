@@ -70,3 +70,84 @@ jobs:
                 body,
               });
             }
+
+  e2e:
+    name: E2E Tests
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      APP_IMAGE: ghcr.io/${{ github.repository }}:pr-${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start application stack
+        run: |
+          docker compose -f docker-compose.ci.yml pull
+          docker compose -f docker-compose.ci.yml up -d
+          echo "Waiting for health endpoint..."
+          for i in $(seq 1 40); do
+            STATUS=$(curl -sf http://localhost:8080/api/health 2>/dev/null | jq -r '.status // empty') || true
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Application is healthy after ${i} attempts"
+              exit 0
+            fi
+            echo "  Attempt $i/40: ${STATUS:-not ready}"
+            sleep 5
+          done
+          echo "Application failed to become healthy"
+          docker compose -f docker-compose.ci.yml logs app
+          exit 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @archmax/e2e exec playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: pnpm --filter @archmax/e2e test
+        env:
+          CI: true
+          BASE_URL: http://localhost:8080
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Capture container logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.ci.yml logs app > /tmp/app-logs.txt 2>&1
+          docker compose -f docker-compose.ci.yml logs > /tmp/all-logs.txt 2>&1
+
+      - name: Upload container logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-logs
+          path: /tmp/*-logs.txt
+          retention-days: 14
+
+      - name: Stop stack
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v

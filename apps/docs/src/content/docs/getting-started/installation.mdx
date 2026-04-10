@@ -51,8 +51,8 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
-  -v archmax-data:/app/data \
-  archmax/archmax:latest
+  -v ~/.archmax:/app/data \
+  archmaxai/archmax:latest
 ```
 
 Open `http://localhost:8080` and log in with username `admin` and the password you set.

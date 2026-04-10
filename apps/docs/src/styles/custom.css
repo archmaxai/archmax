@@ -250,6 +250,20 @@ dialog {
   border-radius: 9999px !important;
 }
 
+/* ─── Sidebar — match content bg, no borders ─── */
+
+:root {
+  --sl-color-bg-sidebar: var(--sl-color-black);
+}
+
+.sidebar-pane {
+  border-inline-end: none !important;
+}
+
+.right-sidebar {
+  border-inline-start: none !important;
+}
+
 /* ─── Focus ─── */
 
 :root {
