@@ -1,6 +1,7 @@
 # ---------- base ----------
 FROM node:24-slim AS base
 ENV PNPM_HOME="/pnpm"
+ENV COREPACK_HOME="/opt/corepack"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
 
@@ -98,7 +99,8 @@ COPY --from=build-spa /app/apps/frontend/dist /usr/share/nginx/html
 RUN useradd -r -s /bin/false archmax
 
 RUN mkdir -p /app/data/projects /app/data/mongodb /tmp/redis \
- && chown -R archmax:archmax /app/data/projects /app/data/mongodb /tmp/redis /var/log
+ && chown -R archmax:archmax /app/data/projects /app/data/mongodb /tmp/redis /var/log \
+ && chown -R archmax:archmax /opt/corepack
 
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 RUN rm -f /etc/nginx/sites-enabled/default \
