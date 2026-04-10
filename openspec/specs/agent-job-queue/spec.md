@@ -46,6 +46,7 @@ The worker processor MUST:
 - Execute the agent pipeline (stream or invoke)
 - Publish streaming events to Redis pub/sub for the API's SSE endpoint
 - Finalize the assistant message in MongoDB on completion or error
+- On error, persist any partial content (text, tool calls, segments) accumulated before the failure alongside the error indicator, rather than replacing it with a generic error message
 
 The worker MUST handle graceful shutdown (`SIGTERM`, `SIGINT`) by stopping acceptance of new jobs, waiting for active jobs to complete, and closing Redis and MongoDB connections.
 
@@ -62,11 +63,20 @@ The number of concurrent jobs per worker instance MUST be configurable via the `
 
 #### Scenario: Worker handles pipeline error
 
-- **GIVEN** a job is being processed and the LLM returns an error
+- **GIVEN** a job is being processed and the agent pipeline throws an error after streaming partial content
 - **WHEN** the pipeline catches the error
-- **THEN** the assistant message is finalized with an error indicator
+- **THEN** the assistant message is finalized with all partial content preserved (text, tool calls, segments) plus an error text segment appended
+- **AND** an optional `error` field is set on the assistant message with the specific error message
 - **AND** a stream complete event is published to Redis
 - **AND** the BullMQ job fails with a descriptive error (UnrecoverableError, no retry)
+
+#### Scenario: Worker handles pipeline error with no prior content
+
+- **GIVEN** a job is being processed and the agent pipeline throws an error before producing any content
+- **WHEN** the pipeline catches the error
+- **THEN** the assistant message is finalized with an error text segment containing the specific error message
+- **AND** the `error` field is set on the assistant message
+- **AND** a stream complete event is published to Redis
 
 #### Scenario: Worker graceful shutdown
 

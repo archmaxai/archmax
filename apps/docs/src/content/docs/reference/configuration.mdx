@@ -13,7 +13,12 @@ archmax is configured through environment variables. Set them in your shell, `.e
 |----------|-------------|---------|
 | `BETTER_AUTH_SECRET` | Session encryption secret (min 32 chars) | Generate with `openssl rand -base64 32` |
 | `UI_PASSWORD` | Initial admin password | `changeme` |
-| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/archmax` |
+
+## Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MONGODB_URI` | _(embedded)_ | MongoDB connection string. **Optional in Docker** — when omitted, the container starts an embedded MongoDB instance at `/app/data/mongodb`. Set this to use an external MongoDB (e.g. `mongodb://localhost:27017/archmax`). |
 
 ## Server
 
@@ -41,9 +46,10 @@ Inside the Docker image, persistent data lives under `/app/data/`:
 | Path | Contents | Persistent? |
 |------|----------|-------------|
 | `/app/data/projects/` | Semantic model YAML files | Yes |
+| `/app/data/mongodb/` | Embedded MongoDB data (when using embedded mode) | Yes |
 | `/tmp/redis/` | Embedded Redis data | No (ephemeral) |
 
-A single volume mount (`-v archmax-data:/app/data`) captures project data. MongoDB data is managed separately — either by the Compose `mongo` service or your external MongoDB instance. See the [Docker Reference](/reference/docker/) for details.
+A single volume mount (`-v archmax-data:/app/data`) captures both project files and embedded MongoDB data. When using an external MongoDB via `MONGODB_URI`, the `mongodb/` directory is unused. See the [Docker Reference](/reference/docker/) for details.
 
 ## MCP Server
 

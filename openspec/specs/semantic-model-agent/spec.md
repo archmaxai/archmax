@@ -7,6 +7,8 @@ AI-powered chat agent for creating and editing semantic models. Provides a chat 
 
 The Semantic Models page SHALL render a chat interface where the user can converse with an AI agent to create, edit, and explore semantic models for the selected project. Assistant messages SHALL be rendered as markdown with support for headings, lists, code blocks (with language label and copy button), bold, italic, tables, blockquotes, links, and horizontal rules. User messages SHALL remain plain text. Tool calls SHALL be rendered inline within the assistant message in the order they occurred during the response, interleaved with text segments rather than grouped separately. Each tool type SHALL have a specialized compact visualization.
 
+When an assistant message has an associated error, the system SHALL render all partial content (text segments and tool call cards) normally, followed by a visual error banner at the bottom of the message. The error banner SHALL display the specific error message and use a destructive color treatment (icon + tinted background) to distinguish it from normal content. The partial content MUST NOT be hidden or replaced by the error indicator.
+
 #### Scenario: User sends a message
 
 - **WHEN** the user types a message and presses Enter or clicks Send
@@ -78,8 +80,20 @@ The Semantic Models page SHALL render a chat interface where the user can conver
 - **WHEN** the agent is actively streaming a response (processing, thinking, or executing tools)
 - **THEN** a glowing animated horizontal bar is displayed below the assistant message, indicating ongoing activity
 - **AND** the bar uses a sweeping gradient animation with a subtle glow effect
-- **AND** when streaming completes, the bar smoothly fades out and is removed from the DOM
-- **AND** the bar replaces the previous spinner-based "Thinking…" indicator
+
+#### Scenario: Agent error preserves partial content
+
+- **WHEN** the agent encounters an error during processing after streaming partial content (text tokens, tool calls)
+- **THEN** all partial content that was streamed before the error MUST be preserved in the message
+- **AND** a visual error banner is rendered below the partial content showing the specific error message
+- **AND** the error banner uses a destructive color treatment with an alert icon
+- **AND** the partial content and error state survive page reloads (persisted to the database)
+
+#### Scenario: Agent error with no prior content
+
+- **WHEN** the agent encounters an error before producing any content
+- **THEN** the error banner is shown as the only content in the assistant message
+- **AND** the banner displays the specific error message, not a generic placeholder
 
 ### Requirement: Deep Agent Backend
 
@@ -145,7 +159,7 @@ The agent's system prompt SHALL explicitly state the read-only constraint, instr
 - **AND** the dynamic connection context includes a read-only notice
 
 ### Requirement: Conversation Persistence
-Agent conversations SHALL be persisted in MongoDB. Each conversation belongs to a project and stores an ordered list of messages (user and assistant roles, tool calls, timestamps). Assistant messages SHALL include a `toolCalls` array that captures every tool invocation performed during the response — each entry records the tool `id`, `name`, `args` (truncated to 500 characters), `result` (truncated to 500 characters), and `status` (`"completed"` or `"error"`). The chat endpoint accepts an optional `conversationId` to continue an existing conversation; if omitted, a new conversation is created. The frontend SHALL display a list of past conversations for the current project, allowing the user to resume any previous session. When a past conversation is loaded, tool call cards SHALL be rendered from persisted data, identical in appearance to those shown during live streaming. When a new conversation is created, the system SHALL asynchronously generate a descriptive title using a lightweight LLM call (via `AGENT_TITLE_MODEL`) after the first assistant response. Title generation MUST NOT block the SSE response stream. If title generation fails, the system SHALL fall back to truncating the first user message.
+Agent conversations SHALL be persisted in MongoDB. Each conversation belongs to a project and stores an ordered list of messages (user and assistant roles, tool calls, timestamps). Assistant messages SHALL include a `toolCalls` array that captures every tool invocation performed during the response — each entry records the tool `id`, `name`, `args` (truncated to 500 characters), `result` (truncated to 500 characters), and `status` (`"completed"` or `"error"`). The chat endpoint accepts an optional `conversationId` to continue an existing conversation; if omitted, a new conversation is created. The frontend SHALL display a list of past conversations for the current project, allowing the user to resume any previous session. When a past conversation is loaded, tool call cards SHALL be rendered from persisted data, identical in appearance to those shown during live streaming. When a new conversation is created, the system SHALL asynchronously generate a descriptive title using a lightweight LLM call (via `AGENT_TITLE_MODEL`) after the first assistant response. Title generation MUST NOT block the SSE response stream. If title generation fails, the system SHALL fall back to truncating the first user message. The conversation list API response SHALL include an `isStreaming` boolean per item indicating whether the conversation currently has an active streaming session (determined via the Redis stream buffer). The chat history sidebar SHALL display an animated spinner icon in place of the default message icon for conversations where `isStreaming` is `true`, reverting to the default icon once streaming completes.
 
 #### Scenario: New conversation created
 - **WHEN** the user sends a message without a `conversationId`
@@ -160,7 +174,13 @@ Agent conversations SHALL be persisted in MongoDB. Each conversation belongs to 
 #### Scenario: List conversations for a project
 - **WHEN** the user navigates to the Semantic Models page
 - **THEN** a list of past conversations is shown (most recent first)
-- **AND** each entry displays a generated title and timestamp
+- **AND** each entry displays a generated title, timestamp, and an `isStreaming` boolean
+
+#### Scenario: Active streaming conversation shown in sidebar
+- **WHEN** a conversation has an active streaming session (agent is processing in the background)
+- **AND** the user views the chat history sidebar
+- **THEN** the sidebar entry for that conversation displays an animated spinning icon instead of the static message icon
+- **AND** the icon reverts to the static message icon once the streaming session completes and the next poll cycle refreshes the list
 
 #### Scenario: LLM title generated for new conversation
 - **WHEN** a new conversation is created and the first assistant response completes
@@ -472,4 +492,25 @@ The agent's system prompt SHALL document the tool and instruct the agent to only
 #### Scenario: Auto-generated tag always present
 - **WHEN** the agent invokes `create_test_case` for any test case
 - **THEN** the resulting TestCase always includes "auto-generated" in its `tags` array regardless of any other tags provided
+
+### Requirement: Auto-Create Dataset Groups
+
+The semantic model agent SHALL auto-create dataset groups when assembling a semantic model. Groups SHALL be written to the model root file's `custom_extensions` under vendor `COMMON` with a `dataset_groups` key. The agent SHALL identify logical groups based on schema prefixes (e.g. `hr_*`, `sales_*`), star-schema topology (fact + dimensions as a group), or explicit business domain boundaries. Each group SHALL contain 2–6 datasets with a descriptive name. Colors SHALL be assigned from the available palette, cycling through options.
+
+#### Scenario: Star-schema grouping
+
+- **WHEN** the agent builds a model containing `orders`, `order_items`, `customers`, `products`, and `warehouses`
+- **AND** `orders` and `order_items` share a relationship, and `customers` joins to `orders`
+- **THEN** the agent creates a group like `{"id":"grp_...","name":"Order Management","datasets":["orders","order_items","customers"]}`
+- **AND** `products` and `warehouses` are placed in a separate group like "Inventory"
+
+#### Scenario: Schema-prefix grouping
+
+- **WHEN** the agent encounters datasets named `hr_employees`, `hr_departments`, `hr_salaries`, `fin_invoices`, `fin_payments`
+- **THEN** the agent creates groups "HR" containing `hr_employees`, `hr_departments`, `hr_salaries` and "Finance" containing `fin_invoices`, `fin_payments`
+
+#### Scenario: Single-domain model
+
+- **WHEN** all datasets belong to the same business domain and there are fewer than 6 datasets
+- **THEN** the agent MAY omit groups or create a single group if it aids readability
 

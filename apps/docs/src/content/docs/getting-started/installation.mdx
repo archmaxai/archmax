@@ -37,13 +37,12 @@ The Compose stack runs MongoDB and Redis as separate containers alongside archma
 
 ## Standalone Docker
 
-If you already have MongoDB running elsewhere, you can run archmax as a single container:
+Run archmax as a single container with no external dependencies — MongoDB and Redis are embedded:
 
 ```bash
 docker run -d \
   --name archmax \
   -p 8080:8080 \
-  -e MONGODB_URI=mongodb://your-mongo-host:27017/archmax \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
@@ -51,7 +50,7 @@ docker run -d \
 ```
 
 <Aside type="note">
-`MONGODB_URI` is required — the image does not include MongoDB. Redis is embedded and starts automatically when `REDIS_URL` is not provided. To use an external Redis, pass `REDIS_URL` as well.
+MongoDB and Redis are both embedded in the image and start automatically when `MONGODB_URI` / `REDIS_URL` are not provided. To use external instances instead, pass `MONGODB_URI` and/or `REDIS_URL`. The volume mount at `/app/data` captures both project files and embedded MongoDB data.
 </Aside>
 
 ## Local Development

@@ -102,20 +102,21 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
   server.registerTool("get_datasets", {
     description:
       "Get one or more datasets with all their fields as compact markdown lists with types, examples, enums, synonyms, and instructions. " +
-      "Pass up to 10 dataset names in a single call to reduce round-trips. " +
-      "When a single dataset is requested, the page parameter enables field pagination. " +
-      "When multiple datasets are requested, page 1 of each is returned.",
+      "Pass up to 10 datasets in a single call to reduce round-trips. " +
+      "Each dataset entry specifies its own page for independent field pagination.",
     inputSchema: z.object({
       modelName: z.string().describe("The semantic model name (filename without .yaml)"),
-      datasetNames: z.array(z.string()).min(1).max(10).describe("Dataset names within the model (1–10)"),
-      page: z.number().optional().describe("Page number (default 1, only used when a single dataset is requested)"),
+      datasets: z.array(z.object({
+        name: z.string().describe("Dataset name within the model"),
+        page: z.number().optional().describe("Page number for this dataset's fields (default 1)"),
+      })).min(1).max(10).describe("Datasets to retrieve (1–10), each with an optional page"),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ modelName, datasetNames, page }) => {
+  }, async ({ modelName, datasets }) => {
     const start = Date.now();
-    const args = { modelName, datasetNames, page: page ?? 1 };
-    const r = await getDatasetFields(fileSvc, projectId, scopes, modelName, datasetNames, {
-      page, itemsPerPage: ctx.mcpPageSize,
+    const args = { modelName, datasets };
+    const r = await getDatasetFields(fileSvc, projectId, scopes, modelName, datasets, {
+      itemsPerPage: ctx.mcpPageSize,
     });
     const result = toMcpResult(r);
     logCall(ctx, "get_datasets", args, result, Date.now() - start);
@@ -146,15 +147,15 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
     return result;
   });
 
-  server.registerTool("suggest_improvement", {
+  server.registerTool("request_improvement", {
     description:
-      "Submit an improvement suggestion for a semantic model. " +
+      "Submit an improvement request for a semantic model. " +
       "Use this when you or a user discover issues like missing fields, incorrect descriptions, " +
       "wrong relationships, or any other quality problem with a semantic model.",
     inputSchema: z.object({
       modelName: z.string().describe("The semantic model this improvement applies to"),
       title: z.string().max(200).describe("Short summary of the improvement (max 200 chars)"),
-      description: z.string().max(2000).describe("Detailed description of the issue or suggested change (max 2000 chars)"),
+      description: z.string().max(2000).describe("Detailed description of the issue or requested change (max 2000 chars)"),
     }),
     annotations: { readOnlyHint: false },
   }, async ({ modelName, title, description }) => {
@@ -163,7 +164,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
 
     if (!scopes.includes(modelName)) {
       const result = errorResult(`Access denied: model "${modelName}" is not in your token's scope`);
-      logCall(ctx, "suggest_improvement", args, result, Date.now() - start);
+      logCall(ctx, "request_improvement", args, result, Date.now() - start);
       return result;
     }
 
@@ -171,7 +172,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
     const modelExists = models.some((m: { name: string }) => m.name === modelName);
     if (!modelExists) {
       const result = errorResult(`Model "${modelName}" not found in this project`);
-      logCall(ctx, "suggest_improvement", args, result, Date.now() - start);
+      logCall(ctx, "request_improvement", args, result, Date.now() - start);
       return result;
     }
 
@@ -184,8 +185,8 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       createdVia: ctx.tokenName,
     });
 
-    const result = textResult("Improvement suggestion submitted successfully");
-    logCall(ctx, "suggest_improvement", args, result, Date.now() - start);
+    const result = textResult("Improvement request submitted successfully");
+    logCall(ctx, "request_improvement", args, result, Date.now() - start);
     return result;
   });
 

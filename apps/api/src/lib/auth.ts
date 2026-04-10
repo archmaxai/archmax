@@ -6,7 +6,7 @@ import { getEnv } from "@archmax/core/config/env";
 
 const env = getEnv();
 
-const mongoClient = new MongoClient(env.MONGODB_URI);
+const mongoClient = new MongoClient(env.MONGODB_URI!);
 
 export const auth = betterAuth({
   baseURL: env.AUTH_BASE_URL || `http://localhost:${env.PORT}`,
@@ -41,6 +41,13 @@ export const auth = betterAuth({
   },
 
   advanced: {
+    cookiePrefix: "archmax",
+    defaultCookieAttributes: {
+      httpOnly: true,
+      secure: env.NODE_ENV === "production",
+      sameSite: "lax" as const,
+      path: "/",
+    },
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
     },

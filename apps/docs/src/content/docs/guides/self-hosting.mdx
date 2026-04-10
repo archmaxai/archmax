@@ -19,28 +19,27 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The included `docker-compose.yml` runs archmax with dedicated MongoDB 7 and Redis 7 containers.
+The included `docker-compose.yml` runs archmax with dedicated MongoDB 8 and Redis 8 containers.
 
 **Best for**: all deployments, from evaluation to production.
 
 ### Standalone Docker
 
-If you manage MongoDB externally (e.g. MongoDB Atlas, a dedicated server), run archmax as a single container:
+Run archmax as a single container with embedded MongoDB and Redis — no external dependencies:
 
 ```bash
 docker run -d \
   --name archmax \
   -p 8080:8080 \
-  -e MONGODB_URI=mongodb://your-mongo-host:27017/archmax \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_PASSWORD=changeme \
   -v archmax-data:/app/data \
   archmax/archmax:latest
 ```
 
-`MONGODB_URI` is required. Redis is embedded and starts automatically when `REDIS_URL` is not set.
+MongoDB and Redis are embedded and start automatically. To use an external MongoDB, pass `MONGODB_URI`. To use an external Redis, pass `REDIS_URL`.
 
-**Best for**: users with existing MongoDB infrastructure or managed database services.
+**Best for**: quick evaluation, simple deployments, and users who prefer a single-container setup.
 
 ## Data Backup
 
@@ -49,7 +48,12 @@ archmax stores two categories of persistent data:
 | Data | Location | Description |
 |------|----------|-------------|
 | Project files | `/app/data/projects/` (archmax container) | Semantic model YAML files |
-| Database | MongoDB service/instance | Projects, connections, conversations, test data |
+| Embedded MongoDB | `/app/data/mongodb/` (archmax container) | Database files (only when using embedded MongoDB) |
+| External Database | MongoDB service/instance | Projects, connections, conversations, test data (when using Compose or external MongoDB) |
+
+<Aside type="tip">
+When using standalone Docker with embedded MongoDB, the single volume mount at `/app/data` captures everything — project files and database data. When using Docker Compose with external MongoDB, only project files live in the archmax container volume.
+</Aside>
 
 ### Backing Up Project Files
 
@@ -134,7 +138,6 @@ For standalone Docker:
 docker pull archmax/archmax:latest
 docker stop archmax && docker rm archmax
 docker run -d --name archmax -p 8080:8080 \
-  -e MONGODB_URI=mongodb://your-mongo-host:27017/archmax \
   -e BETTER_AUTH_SECRET=your-existing-secret \
   -e UI_PASSWORD=your-password \
   -v archmax-data:/app/data \
@@ -149,15 +152,16 @@ Keep your `BETTER_AUTH_SECRET` the same across upgrades — changing it invalida
 
 | Deployment | RAM | Disk | CPU |
 |-----------|-----|------|-----|
+| Standalone (embedded MongoDB + Redis) | 1 GB | 3 GB | 1 vCPU |
+| Standalone (external MongoDB) | 512 MB | 2 GB | 1 vCPU |
 | Docker Compose (small) | 2 GB total | 5 GB | 1 vCPU |
 | Docker Compose (production) | 4 GB total | 20 GB | 2 vCPU |
-| Standalone (with external MongoDB) | 512 MB | 2 GB | 1 vCPU |
 
 The AI agent's resource usage depends on your configured model provider (OpenRouter, OpenAI, etc.) — it runs as API calls, not locally.
 
 ## Security Considerations
 
-- The embedded Redis binds to `127.0.0.1` only (container-internal) and is not exposed outside the container.
+- The embedded MongoDB and Redis bind to `127.0.0.1` only (container-internal) and are not exposed outside the container.
 - Always set a strong `BETTER_AUTH_SECRET` (at least 32 characters).
 - Change `UI_PASSWORD` from the default `changeme` before exposing to users.
 - Place a reverse proxy (nginx, Caddy, Traefik) with TLS in front of port 8080 for HTTPS.

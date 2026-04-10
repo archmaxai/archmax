@@ -11,6 +11,8 @@ interface ProjectDuckDB {
 
 const projectInstances = new Map<string, ProjectDuckDB>();
 
+export const COMMUNITY_EXTENSIONS = new Set(["mssql"]);
+
 function extensionForType(type: string): string | null {
   switch (type) {
     case "postgres":
@@ -26,7 +28,7 @@ function extensionForType(type: string): string | null {
   }
 }
 
-function buildAttachString(conn: IConnectionDocument): string {
+export function buildAttachString(conn: IConnectionDocument): string {
   const cfg = conn.connectionConfig;
 
   if (cfg.uri) {
@@ -34,10 +36,14 @@ function buildAttachString(conn: IConnectionDocument): string {
   }
 
   switch (conn.type) {
-    case "postgres":
-    case "mssql": {
-      const port = cfg.port ?? (conn.type === "postgres" ? 5432 : 1433);
+    case "postgres": {
+      const port = cfg.port ?? 5432;
       return `host=${cfg.host} port=${port} dbname=${cfg.database} user=${cfg.user} password=${cfg.password}`;
+    }
+    case "mssql": {
+      const port = cfg.port ?? 1433;
+      const encrypt = (cfg.encrypt ?? true) ? "yes" : "no";
+      return `Server=${cfg.host},${port};Database=${cfg.database};User Id=${cfg.user};Password=${cfg.password};Encrypt=${encrypt}`;
     }
     case "mysql": {
       const port = cfg.port ?? 3306;
@@ -79,7 +85,8 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
 
   const db = await entry.instance.connect();
   try {
-    await db.run(`INSTALL ${ext}`);
+    const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
+    await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
 
     const connStr = buildAttachString(conn).replace(/'/g, "''");

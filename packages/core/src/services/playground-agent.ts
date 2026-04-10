@@ -65,19 +65,21 @@ function makeGetOverviewTool(fileSvc: SemanticModelFileService, projectId: strin
 
 function makeGetDatasetsTool(fileSvc: SemanticModelFileService, projectId: string, scopes: string[]) {
   return tool(
-    async ({ modelName, datasetNames, page }) => {
-      const r = await getDatasetFields(fileSvc, projectId, scopes, modelName, datasetNames, { page });
+    async ({ modelName, datasets }) => {
+      const r = await getDatasetFields(fileSvc, projectId, scopes, modelName, datasets, {});
       return r.text;
     },
     {
       name: "get_datasets",
       description:
         "Get one or more datasets with all their fields as compact markdown lists. " +
-        "Pass up to 10 dataset names in a single call.",
+        "Pass up to 10 datasets in a single call, each with an optional page for field pagination.",
       schema: z.object({
         modelName: z.string().describe("The semantic model name"),
-        datasetNames: z.array(z.string()).min(1).max(10).describe("Dataset names (1–10)"),
-        page: z.number().optional().describe("Page number (default 1)"),
+        datasets: z.array(z.object({
+          name: z.string().describe("Dataset name"),
+          page: z.number().optional().describe("Page number (default 1)"),
+        })).min(1).max(10).describe("Datasets to retrieve (1–10)"),
       }),
     },
   );
@@ -101,7 +103,7 @@ function makeExecuteQueryTool(fileSvc: SemanticModelFileService, projectId: stri
   );
 }
 
-function makeSuggestImprovementTool(fileSvc: SemanticModelFileService, projectId: string, scopes: string[], tokenName: string) {
+function makeRequestImprovementTool(fileSvc: SemanticModelFileService, projectId: string, scopes: string[], tokenName: string) {
   return tool(
     async ({ modelName, title, description }) => {
       if (!scopes.includes(modelName)) {
@@ -113,17 +115,17 @@ function makeSuggestImprovementTool(fileSvc: SemanticModelFileService, projectId
       }
       await connectDB();
       await Improvement.create({ project: projectId, modelName, title, description, createdVia: tokenName });
-      return "Improvement suggestion submitted successfully";
+      return "Improvement request submitted successfully";
     },
     {
-      name: "suggest_improvement",
+      name: "request_improvement",
       description:
-        "Submit an improvement suggestion for a semantic model. " +
+        "Submit an improvement request for a semantic model. " +
         "Use when you or a user discover issues like missing fields, incorrect descriptions, or wrong relationships.",
       schema: z.object({
         modelName: z.string().describe("The semantic model this improvement applies to"),
         title: z.string().max(200).describe("Short summary of the improvement (max 200 chars)"),
-        description: z.string().max(2000).describe("Detailed description of the issue or suggested change (max 2000 chars)"),
+        description: z.string().max(2000).describe("Detailed description of the issue or requested change (max 2000 chars)"),
       }),
     },
   );
@@ -183,7 +185,7 @@ export async function createPlaygroundAgent(
     makeGetOverviewTool(fileSvc, projectId, scopes),
     makeGetDatasetsTool(fileSvc, projectId, scopes),
     makeExecuteQueryTool(fileSvc, projectId, scopes),
-    makeSuggestImprovementTool(fileSvc, projectId, scopes, agent.name),
+    makeRequestImprovementTool(fileSvc, projectId, scopes, agent.name),
   ];
 
   if (options?.maxToolCalls) {

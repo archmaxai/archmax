@@ -28,6 +28,7 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
+  Switch,
 } from "@archmax/ui";
 import {
   Dialog,
@@ -71,6 +72,7 @@ interface Connection {
     schema?: string;
     user?: string;
     uri?: string;
+    encrypt?: boolean;
   };
   createdAt: string;
 }
@@ -281,6 +283,7 @@ function ConnectionFormDialog({
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [uri, setUri] = useState("");
+  const [encrypt, setEncrypt] = useState(true);
   const [description, setDescription] = useState("");
 
   const uriPlaceholders: Record<string, string> = {
@@ -321,6 +324,7 @@ function ConnectionFormDialog({
       setUser(editing.connectionConfig.user ?? "");
       setPassword("");
       setUri(editing.connectionConfig.uri ?? "");
+      setEncrypt(editing.connectionConfig.encrypt ?? true);
       setDescription(editing.description);
       setConnMode(editing.connectionConfig.uri ? "uri" : "fields");
     } else {
@@ -335,6 +339,7 @@ function ConnectionFormDialog({
       setUser("");
       setPassword("");
       setUri("");
+      setEncrypt(true);
       setDescription("");
       setConnMode("fields");
     }
@@ -355,6 +360,7 @@ function ConnectionFormDialog({
         if (password) config.password = password;
       }
       if (schema) config.schema = schema;
+      if (type === "mssql") config.encrypt = encrypt;
 
       const effectiveSlug = slug || autoSlug(name);
 
@@ -551,6 +557,22 @@ function ConnectionFormDialog({
                 Limits the data browser and AI agent to tables in this schema
                 (e.g. "public"). Leave empty to show all schemas.
               </p>
+            </div>
+          )}
+
+          {type === "mssql" && (
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="conn-encrypt">Encrypt connection (TLS)</Label>
+                <p className="text-muted-foreground text-xs">
+                  Require TLS encryption for the SQL Server connection
+                </p>
+              </div>
+              <Switch
+                id="conn-encrypt"
+                checked={encrypt}
+                onCheckedChange={setEncrypt}
+              />
             </div>
           )}
 

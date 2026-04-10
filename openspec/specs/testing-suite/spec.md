@@ -7,6 +7,8 @@ TBD - created by archiving change add-testing-suite. Update Purpose after archiv
 
 The system SHALL provide a `TestAgent` Mongoose model with the following fields: `name` (string, required), `project` (ObjectId ref to Project, required, indexed), `semanticModels` (array of strings — semantic model names the agent can access), `systemPrompt` (string, required), `llmBaseUrl` (string, required — OpenAI-compatible base URL), `encryptedApiKey` (string, required — AES-256-GCM encrypted API key), `llmModel` (string, required — model identifier), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
 
+The `llmBaseUrl` field SHALL be validated to ensure it uses the `https://` protocol and does not resolve to a private, loopback, or link-local IP address (RFC 1918, `127.0.0.0/8`, `169.254.0.0/16`, `::1`, `fe80::/10`). URLs targeting `http://` SHALL only be accepted when the host is `localhost` or `127.0.0.1` (for local development). The API SHALL reject API key storage when `ENCRYPTION_KEY` is not configured, returning a 400 error rather than storing the key in plaintext.
+
 #### Scenario: Create a test agent
 
 - **WHEN** a TestAgent is created with `name: "GPT-4o Agent"`, `project: "<projectId>"`, `semanticModels: ["ecommerce"]`, `systemPrompt: "You are a data analyst..."`, `llmBaseUrl: "https://api.openai.com/v1"`, API key `"sk-abc123"`, and `llmModel: "gpt-4o"`
@@ -16,8 +18,19 @@ The system SHALL provide a `TestAgent` Mongoose model with the following fields:
 #### Scenario: Soft-delete a test agent
 
 - **WHEN** a TestAgent is soft-deleted
-- **THEN** the `deleted` flag is set to true
-- **AND** the agent no longer appears in list queries
+- **THEN** the agent's `deleted` flag is set to true
+
+#### Scenario: SSRF-unsafe llmBaseUrl rejected
+
+- **WHEN** a TestAgent is created or updated with `llmBaseUrl` pointing to a private IP address (e.g., `http://169.254.169.254/`, `http://10.0.0.1/v1`, `http://192.168.1.1/v1`)
+- **THEN** a 400 error is returned indicating that the URL targets a restricted address
+
+#### Scenario: API key rejected without ENCRYPTION_KEY
+
+- **WHEN** a TestAgent is created with an `apiKey` field
+- **AND** the `ENCRYPTION_KEY` environment variable is not set
+- **THEN** a 400 error is returned indicating that `ENCRYPTION_KEY` is required for API key storage
+- **AND** no plaintext key is written to MongoDB
 
 ### Requirement: Test Agent CRUD API
 
@@ -27,6 +40,7 @@ The API SHALL expose CRUD endpoints for test agents at `/api/projects/:projectId
 - `GET /:agentId` — Get a single test agent (same fields as list; API key returned as masked string e.g. `sk-...****`)
 - `POST /` — Create a new test agent (accepts name, semanticModels, systemPrompt, llmBaseUrl, apiKey, llmModel; encrypts and stores the API key)
 - `PUT /:agentId` — Update a test agent (all fields except apiKey are updatable; if `apiKey` is provided, re-encrypt and replace)
+- `POST /:agentId/test-connection` — Test connectivity to the configured LLM endpoint. The endpoint SHALL validate the resolved IP address of `llmBaseUrl` against the same SSRF restrictions before making the outbound request.
 - `DELETE /:agentId` — Soft-delete a test agent
 
 All endpoints SHALL require admin session auth.
@@ -53,6 +67,12 @@ All endpoints SHALL require admin session auth.
 - **WHEN** a GET request is made to `/api/projects/:projectId/test-agents`
 - **THEN** all non-deleted test agents are returned with name, semanticModels, llmBaseUrl, llmModel, and createdAt
 - **AND** no API key or encrypted key data is included
+
+#### Scenario: Test connection validates URL before request
+
+- **WHEN** a POST request is made to `/:agentId/test-connection`
+- **AND** the agent's `llmBaseUrl` resolves to a private IP address
+- **THEN** a 400 error is returned without making the outbound HTTP request
 
 ### Requirement: Test Case Model
 
@@ -298,7 +318,7 @@ Filter controls above the table SHALL allow filtering by agent, semantic model, 
 
 ### Requirement: Testing UI — Playground Page
 
-The frontend SHALL provide a Playground page at `/$projectId/testing/playground` with a test agent selector and a chat interface. The chat interface SHALL reuse the existing chat components (`AgentChat`, `ToolCallCard`, `ChatInput`, `MarkdownContent`) adapted to work with playground conversations. The sidebar SHALL show past playground conversations for the selected test agent. Tool calls (list_semantic_models, get_semantic_model_overview, get_dataset_fields, execute_query) SHALL be rendered with the same card-based visualization as the semantic model builder.
+The frontend SHALL provide a Playground page at `/$projectId/testing/playground` with a test agent selector and a chat interface. The chat interface SHALL reuse the existing chat components (`AgentChat`, `ToolCallCard`, `ChatInput`, `MarkdownContent`) adapted to work with playground conversations. The sidebar SHALL show past playground conversations for the selected test agent. Tool calls (list_semantic_models, get_semantic_model_overview, get_dataset_fields, execute_query) SHALL be rendered with the same card-based visualization as the semantic model builder. The playground conversation list API response SHALL include an `isStreaming` boolean per item. The sidebar SHALL display an animated spinner icon instead of the static message icon for conversations that are actively streaming, matching the behavior of the Semantic Models chat sidebar.
 
 #### Scenario: Select a test agent and start chatting
 
@@ -313,9 +333,16 @@ The frontend SHALL provide a Playground page at `/$projectId/testing/playground`
 
 #### Scenario: Switch test agent
 
-- **WHEN** the user switches to a different test agent
-- **THEN** the conversation list updates to show that agent's past conversations
-- **AND** any active conversation is deselected
+- **WHEN** the user selects a different test agent from the dropdown
+- **THEN** the conversation history updates to show only conversations for the newly selected agent
+- **AND** a new chat session is started (no conversation pre-selected)
+
+#### Scenario: Active streaming conversation shown in playground sidebar
+
+- **WHEN** a playground conversation has an active streaming session
+- **AND** the user views the playground sidebar
+- **THEN** the sidebar entry for that conversation displays an animated spinning icon instead of the static message icon
+- **AND** the icon reverts to the static message icon once streaming completes and the next poll cycle refreshes the list
 
 ### Requirement: Testing UI — Test Runs List Page
 

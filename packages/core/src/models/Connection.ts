@@ -20,6 +20,7 @@ export interface IConnectionConfig {
   user?: string;
   password?: string;
   uri?: string;
+  encrypt?: boolean;
   [key: string]: unknown;
 }
 
@@ -58,6 +59,7 @@ const ConnectionConfigSchema = new Schema<IConnectionConfig>(
     user: { type: String },
     password: { type: String },
     uri: { type: String },
+    encrypt: { type: Boolean },
   },
   { _id: false, strict: false },
 );

@@ -25,18 +25,18 @@ Authorization: Bearer <your-mcp-token>
 
 Tokens are created in the admin UI under **MCP Access**. Each token has:
 - **Scopes** — which semantic models the token can access
-- **Permission** — `read` (query only) or `readwrite` (query + suggest improvements)
+- **Permission** — `read` (query only) or `readwrite` (query + request improvements)
 - **Expiry** — optional expiration date
 
 ## Available Tools
 
 | Tool | Description |
 |------|-------------|
-| `list_connections` | List active database connections for the project |
 | `list_semantic_models` | List semantic models the token has access to |
-| `get_semantic_model_overview` | Get a compact overview of a model with datasets, relationships, and metrics |
-| `get_dataset_fields` | Get fields for one or more datasets with types and expressions |
-| `execute_query` | Run a read-only SQL query scoped to a semantic model |
+| `get_semantic_model` | Get an overview of a model with datasets, relationships, and metrics |
+| `get_datasets` | Get fields for one or more datasets with types, examples, enums, and instructions |
+| `execute_query` | Run a read-only SQL query scoped to a semantic model's VIEWs |
+| `request_improvement` | Submit an improvement request for a semantic model |
 
 ## Query Execution
 

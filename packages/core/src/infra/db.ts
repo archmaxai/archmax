@@ -3,6 +3,11 @@ import { getEnv } from "../config/env";
 
 function getMongoUri(): string {
   const uri = getEnv().MONGODB_URI;
+  if (!uri) {
+    throw new Error(
+      "MONGODB_URI is not set. Provide it via environment variables or use the Docker image which embeds MongoDB automatically.",
+    );
+  }
   if (!uri.includes("retryWrites")) {
     const separator = uri.includes("?") ? "&" : "?";
     return `${uri}${separator}retryWrites=false`;

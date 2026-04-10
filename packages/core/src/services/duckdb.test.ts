@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews } from "./duckdb";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS } from "./duckdb";
+import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
 function makeModel(name: string, datasets: SemanticModel["datasets"]): SemanticModel {
@@ -238,6 +239,87 @@ describe("computeModelHash", () => {
       makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
     ]);
     expect(computeModelHash(a)).not.toBe(computeModelHash(b));
+  });
+});
+
+function fakeConn(overrides: Partial<IConnectionDocument> & { type: string; connectionConfig: Record<string, unknown> }): IConnectionDocument {
+  return {
+    _id: "000000000000000000000000",
+    slug: "test_conn",
+    ...overrides,
+  } as unknown as IConnectionDocument;
+}
+
+describe("COMMUNITY_EXTENSIONS", () => {
+  it("includes mssql", () => {
+    expect(COMMUNITY_EXTENSIONS.has("mssql")).toBe(true);
+  });
+
+  it("does not include postgres or mysql", () => {
+    expect(COMMUNITY_EXTENSIONS.has("postgres")).toBe(false);
+    expect(COMMUNITY_EXTENSIONS.has("mysql")).toBe(false);
+  });
+});
+
+describe("buildAttachString — mssql", () => {
+  it("produces ADO.NET format with default encrypt=yes", () => {
+    const conn = fakeConn({
+      type: "mssql",
+      connectionConfig: { host: "db.example.com", port: 1433, database: "mydb", user: "sa", password: "s3cret" },
+    });
+    expect(buildAttachString(conn)).toBe(
+      "Server=db.example.com,1433;Database=mydb;User Id=sa;Password=s3cret;Encrypt=yes",
+    );
+  });
+
+  it("respects encrypt=false", () => {
+    const conn = fakeConn({
+      type: "mssql",
+      connectionConfig: { host: "localhost", database: "testdb", user: "sa", password: "pw", encrypt: false },
+    });
+    expect(buildAttachString(conn)).toContain("Encrypt=no");
+  });
+
+  it("respects explicit encrypt=true", () => {
+    const conn = fakeConn({
+      type: "mssql",
+      connectionConfig: { host: "localhost", database: "testdb", user: "sa", password: "pw", encrypt: true },
+    });
+    expect(buildAttachString(conn)).toContain("Encrypt=yes");
+  });
+
+  it("defaults port to 1433", () => {
+    const conn = fakeConn({
+      type: "mssql",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    expect(buildAttachString(conn)).toContain("Server=h,1433");
+  });
+
+  it("uses custom port when provided", () => {
+    const conn = fakeConn({
+      type: "mssql",
+      connectionConfig: { host: "h", port: 2433, database: "d", user: "u", password: "p" },
+    });
+    expect(buildAttachString(conn)).toContain("Server=h,2433");
+  });
+
+  it("passes through URI when set", () => {
+    const conn = fakeConn({
+      type: "mssql",
+      connectionConfig: { uri: "Server=custom;Database=x" },
+    });
+    expect(buildAttachString(conn)).toBe("Server=custom;Database=x");
+  });
+});
+
+describe("buildAttachString — postgres", () => {
+  it("produces key=value format", () => {
+    const conn = fakeConn({
+      type: "postgres",
+      connectionConfig: { host: "pg.local", port: 5432, database: "app", user: "admin", password: "pw" },
+    });
+    expect(buildAttachString(conn)).toBe("host=pg.local port=5432 dbname=app user=admin password=pw");
   });
 });
 

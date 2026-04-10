@@ -152,3 +152,6 @@ routeTree.gen.ts
 
 # Cursor agent skills lockfile
 skills-lock.json
+
+# Astro build artifacts
+apps/docs/.astro/

@@ -167,10 +167,11 @@ A global agent system prompt at `packages/core/prompts/semantic-model-agent.md` 
 ### MCP Server
 
 Exposes semantic metadata as MCP tools for AI agent consumption:
-- `list_connections` — list active database connections for the project
 - `list_semantic_models` — list semantic models the token has access to (reads YAML files from disk)
 - `get_semantic_model` — get a markdown overview of a semantic model with datasets, relationships, and metrics; supports scoped pagination (`scope`: `"datasets"` | `"relationships"` | `"metrics"`, `page`)
-- `get_datasets` — get one or more datasets (up to 10) with all their fields as compact markdown lists; single dataset supports field pagination, multiple datasets return page 1 of each
+- `get_datasets` — get one or more datasets (up to 10) with all their fields as compact markdown lists; each dataset entry specifies its own page for independent field pagination
+- `execute_query` — run a read-only SQL query scoped to a single semantic model's VIEWs
+- `request_improvement` — submit an improvement request for a semantic model
 
 ## Important Constraints
 

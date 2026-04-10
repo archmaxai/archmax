@@ -77,6 +77,7 @@ interface McpSession {
   server: McpServer;
   transport: WebStandardStreamableHTTPServerTransport;
   createdAt: number;
+  tokenId: string;
 }
 
 const sessions = new Map<string, McpSession>();
@@ -113,6 +114,15 @@ app.all("/", async (c) => {
         { status: 404, headers: { "Content-Type": "application/json" } },
       );
     }
+
+    await connectDB();
+    const token = await McpToken.findById(session.tokenId).lean();
+    if (!token || (token.expiresAt && token.expiresAt < new Date())) {
+      sessions.delete(sessionId);
+      session.server.close().catch(() => {});
+      return c.json(UNAUTHORIZED, 401);
+    }
+
     return session.transport.handleRequest(c.req.raw);
   }
 
@@ -143,10 +153,11 @@ app.all("/", async (c) => {
   });
 
   const capturedTempDir = tempDir;
+  const capturedTokenId = authCtx.tokenId ?? "";
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
     onsessioninitialized: (sid) => {
-      sessions.set(sid, { server: mcpServer, transport, createdAt: Date.now() });
+      sessions.set(sid, { server: mcpServer, transport, createdAt: Date.now(), tokenId: capturedTokenId });
     },
   });
 

@@ -5,7 +5,7 @@ Management of database connections within projects and DuckDB-based federation f
 ## Requirements
 ### Requirement: Connection Model
 
-The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, motherduck), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached.
+The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, motherduck), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
 
 #### Scenario: Create a postgres connection
 
@@ -36,6 +36,16 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 
 - **WHEN** a connection is created with any supported type (postgres, mysql, mssql, sqlite, duckdb, motherduck)
 - **THEN** the connection is accepted and stored
+
+#### Scenario: Unknown connection config fields rejected
+
+- **WHEN** a connection is created or updated with extra fields in `connectionConfig` not defined in the schema (e.g., `injectedField: "malicious"`)
+- **THEN** a 400 validation error is returned
+
+#### Scenario: Schema field validated as identifier
+
+- **WHEN** a connection is created or updated with `connectionConfig.schema` set to a value that does not match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` (e.g., `"public; DROP TABLE"`)
+- **THEN** a 400 validation error is returned
 
 ### Requirement: Connection CRUD API
 
@@ -69,7 +79,7 @@ The API SHALL expose CRUD endpoints for connections at `/api/projects/:projectId
 
 ### Requirement: DuckDB Federation
 
-The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB.
+The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB. The MSSQL extension SHALL be installed from the DuckDB community extension registry (`INSTALL mssql FROM community`). The MSSQL attach string SHALL use ADO.NET format (`Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes|no`) when structured connection parameters are provided, or pass through the raw URI/connection string when `connectionConfig.uri` is set.
 
 #### Scenario: Attach a postgres connection
 
@@ -80,6 +90,17 @@ The system SHALL maintain a DuckDB instance per project that attaches all active
 
 - **WHEN** a mysql connection is activated within a project
 - **THEN** the connection is attached via the `mysql_scanner` extension using the connection's slug as the schema alias
+
+#### Scenario: Attach an MSSQL connection via structured params
+
+- **WHEN** an MSSQL connection with `slug: "erp"`, `host: "sql.corp.com"`, `port: 1433`, `database: "ERP"`, `user: "reader"`, `password: "secret"`, `encrypt: true` is activated
+- **THEN** the MSSQL community extension is installed (`INSTALL mssql FROM community`) and loaded
+- **AND** the connection is attached using `ATTACH 'Server=sql.corp.com,1433;Database=ERP;User Id=reader;Password=secret;Encrypt=yes' AS erp (TYPE MSSQL, READ_ONLY)`
+
+#### Scenario: Attach an MSSQL connection via URI
+
+- **WHEN** an MSSQL connection with `slug: "erp"` and `connectionConfig.uri: "mssql://reader:secret@sql.corp.com:1433/ERP?encrypt=true"` is activated
+- **THEN** the URI is passed through as-is to the ATTACH command
 
 #### Scenario: Remove connection from DuckDB
 

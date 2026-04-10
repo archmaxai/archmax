@@ -6,15 +6,18 @@ import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Proj
 import { getProjectInstance } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
+const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 const connectionConfigSchema = z.object({
   host: z.string().optional(),
   port: z.number().optional(),
   database: z.string().optional(),
-  schema: z.string().optional(),
+  schema: z.string().regex(IDENTIFIER_RE, "Schema must be a valid SQL identifier").optional(),
   user: z.string().optional(),
   password: z.string().optional(),
   uri: z.string().optional(),
-}).passthrough();
+  encrypt: z.boolean().optional(),
+}).strict();
 
 export const REDACTED_SENTINEL = "********";
 

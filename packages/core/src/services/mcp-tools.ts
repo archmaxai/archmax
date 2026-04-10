@@ -83,8 +83,8 @@ export async function getDatasetFields(
   projectId: string,
   scopes: string[],
   modelName: string,
-  datasetNames: string[],
-  opts: { page?: number; itemsPerPage?: number },
+  datasets: { name: string; page?: number }[],
+  opts: { itemsPerPage?: number },
 ): Promise<ToolResult> {
   if (!scopes.includes(modelName)) {
     return { text: `Access denied: token does not have access to model "${modelName}"`, isError: true };
@@ -94,20 +94,23 @@ export async function getDatasetFields(
     return { text: `Semantic model "${modelName}" not found`, isError: true };
   }
 
-  const resolved: Dataset[] = [];
+  const sections: string[] = [];
   const errors: string[] = [];
-  for (const name of datasetNames) {
-    const ds = model.datasets.find((d) => d.name === name);
-    if (ds) resolved.push(ds);
-    else errors.push(`Dataset "${name}" not found in model "${modelName}"`);
+  for (const entry of datasets) {
+    const ds = model.datasets.find((d) => d.name === entry.name);
+    if (ds) {
+      const digest = SemanticModelDigest.dataset(ds, entry.page ?? 1, opts.itemsPerPage ?? 50);
+      sections.push(digest.content);
+    } else {
+      errors.push(`Dataset "${entry.name}" not found in model "${modelName}"`);
+    }
   }
 
-  if (resolved.length === 0) {
+  if (sections.length === 0) {
     return { text: errors.join("\n"), isError: true };
   }
 
-  const digest = SemanticModelDigest.datasets(resolved, opts.page ?? 1, opts.itemsPerPage ?? 50);
-  let content = digest.content;
+  let content = sections.join("\n\n---\n\n");
   if (errors.length > 0) {
     content += "\n\n---\n\n" + errors.join("\n");
   }

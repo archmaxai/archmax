@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 const envSchema = z.object({
   NODE_ENV: z.string().optional(),
 
-  MONGODB_URI: z.string(),
+  MONGODB_URI: z.string().optional(),
 
   PORT: z.string().optional().default("3000"),
 
@@ -18,7 +18,7 @@ const envSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
 
   UI_USERNAME: z.string().optional().default("admin"),
-  UI_PASSWORD: z.string(),
+  UI_PASSWORD: z.string().min(8),
 
   AGENT_API_BASE_URL: z.string().optional().default("https://openrouter.ai/api/v1"),
   AGENT_API_KEY: z.string().optional(),

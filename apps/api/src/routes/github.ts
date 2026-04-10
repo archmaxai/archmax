@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { OAuthApp } from "@octokit/oauth-app";
 import { Octokit } from "octokit";
@@ -52,10 +52,11 @@ function verifyOAuthState(raw: string): Record<string, string> {
     .update(outer.data)
     .digest("hex");
 
-  if (expected.length !== outer.sig.length) throw AppError.badRequest("Invalid state signature");
-  const a = Buffer.from(expected);
-  const b = Buffer.from(outer.sig);
-  if (!a.equals(b)) throw AppError.badRequest("Invalid state signature");
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(outer.sig, "utf8");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw AppError.badRequest("Invalid state signature");
+  }
 
   const parsed = JSON.parse(outer.data);
   const age = Date.now() - Number(parsed.ts);

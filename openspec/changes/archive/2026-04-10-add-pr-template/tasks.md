@@ -1,6 +1,6 @@
 ## 1. Implementation
 
-- [ ] 1.1 Create `.github/PULL_REQUEST_TEMPLATE.md` with the following sections:
+- [x] 1.1 Create `.github/PULL_REQUEST_TEMPLATE.md` with the following sections:
   - Summary (what and why)
   - Related issues/proposals (OpenSpec change-id link)
   - Change type classification (feature, bug fix, refactor, docs, tooling)

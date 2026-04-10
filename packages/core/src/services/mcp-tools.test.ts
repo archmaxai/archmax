@@ -99,14 +99,14 @@ describe("getSemanticModelOverview", () => {
 describe("getDatasetFields", () => {
   it("returns access denied for out-of-scope model", async () => {
     const fileSvc = createMockFileSvc([]);
-    const result = await getDatasetFields(fileSvc, "proj1", ["allowed"], "forbidden", ["ds1"], {});
+    const result = await getDatasetFields(fileSvc, "proj1", ["allowed"], "forbidden", [{ name: "ds1" }], {});
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Access denied");
   });
 
   it("returns not found for missing model", async () => {
     const fileSvc = createMockFileSvc([]);
-    const result = await getDatasetFields(fileSvc, "proj1", ["missing"], "missing", ["ds1"], {});
+    const result = await getDatasetFields(fileSvc, "proj1", ["missing"], "missing", [{ name: "ds1" }], {});
     expect(result.isError).toBe(true);
     expect(result.text).toContain("not found");
   });
@@ -115,7 +115,7 @@ describe("getDatasetFields", () => {
     const fileSvc = createMockFileSvc([
       { name: "sales", datasets: [{ name: "orders", fields: [] }], metrics: [] },
     ]);
-    const result = await getDatasetFields(fileSvc, "proj1", ["sales"], "sales", ["nonexistent"], {});
+    const result = await getDatasetFields(fileSvc, "proj1", ["sales"], "sales", [{ name: "nonexistent" }], {});
     expect(result.isError).toBe(true);
     expect(result.text).toContain("nonexistent");
     expect(result.text).toContain("not found");

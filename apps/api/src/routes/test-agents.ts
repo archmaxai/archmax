@@ -5,6 +5,7 @@ import { connectDB } from "@archmax/core/infra/db";
 import { TestAgent } from "@archmax/core/models/index";
 import { encrypt, decrypt } from "@archmax/core/infra/crypto";
 import { getEnv } from "@archmax/core/config/env";
+import { validateSafeUrl } from "@archmax/core/infra/url-validation";
 import { AppError } from "../utils/errors";
 
 export function maskApiKey(encryptedKey: string): string {
@@ -61,8 +62,12 @@ const app = new Hono()
     const body = c.req.valid("json");
     const { apiKey, ...rest } = body;
 
+    const urlError = await validateSafeUrl(body.llmBaseUrl);
+    if (urlError) throw AppError.badRequest(`Invalid llmBaseUrl: ${urlError}`);
+
     const key = getEncryptionKey();
-    const encryptedApiKey = key ? encrypt(apiKey, key) : apiKey;
+    if (!key) throw AppError.badRequest("ENCRYPTION_KEY must be set to store API keys");
+    const encryptedApiKey = encrypt(apiKey, key);
 
     const agent = await TestAgent.create({ ...rest, encryptedApiKey, project: projectId });
     return c.json(stripApiKey(agent.toObject() as unknown as Record<string, unknown>), 201);
@@ -76,9 +81,15 @@ const app = new Hono()
     const body = c.req.valid("json");
     const update: Record<string, unknown> = { ...body };
 
+    if (body.llmBaseUrl) {
+      const urlError = await validateSafeUrl(body.llmBaseUrl);
+      if (urlError) throw AppError.badRequest(`Invalid llmBaseUrl: ${urlError}`);
+    }
+
     if (body.apiKey) {
       const key = getEncryptionKey();
-      update.encryptedApiKey = key ? encrypt(body.apiKey, key) : body.apiKey;
+      if (!key) throw AppError.badRequest("ENCRYPTION_KEY must be set to store API keys");
+      update.encryptedApiKey = encrypt(body.apiKey, key);
       delete update.apiKey;
     } else {
       delete update.apiKey;
@@ -108,6 +119,9 @@ const app = new Hono()
     }
 
     const baseUrl = ((agent as any).llmBaseUrl as string).replace(/\/+$/, "");
+    const urlError = await validateSafeUrl(baseUrl);
+    if (urlError) return c.json({ ok: false, error: `Unsafe URL: ${urlError}` }, 400);
+
     const model = (agent as any).llmModel as string;
 
     try {

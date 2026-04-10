@@ -214,7 +214,7 @@ function ModelsLayout() {
             <div className="divider-subtle mx-3" />
 
             <AccordionSection
-              title={`Improvements${pendingCount > 0 ? ` (${pendingCount})` : ""}`}
+              title={`Improvement Requests${pendingCount > 0 ? ` (${pendingCount})` : ""}`}
               defaultOpen={pendingCount > 0}
             >
               <div className="flex flex-col gap-0.5 px-1.5 pb-2">
@@ -247,7 +247,7 @@ function ModelsLayout() {
                 ))}
                 {!improvementsLoading && !improvements.length && (
                   <p className="px-3 py-3 text-[11px] text-muted-foreground/50 text-center">
-                    Improvements are suggested by MCP clients
+                    Improvement requests are submitted by MCP clients
                   </p>
                 )}
               </div>

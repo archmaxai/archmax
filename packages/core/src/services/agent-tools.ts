@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 import { getEnv } from "../config/env";
 import { Connection, TestCase, type IConnectionDocument } from "../models/index";
 import { connectDB } from "../infra/db";
-import { getProjectInstance } from "./duckdb";
+import { getProjectInstance, hardenConnection } from "./duckdb";
 import { validateReadOnlySQL } from "./sql-validation";
 import { DocumentFileService } from "./document-files";
 import { SEMANTIC_MODEL_AGENT_PROMPT } from "../prompts/index";
@@ -36,6 +36,7 @@ export function makeExecuteQueryTool(projectId: string) {
       const db = await instance.connect();
 
       try {
+        await hardenConnection(db);
         const prepared = await db.prepare(sql);
         if (params.length > 0) {
           for (let i = 0; i < params.length; i++) {

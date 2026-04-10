@@ -76,6 +76,10 @@ const app = new Hono()
     const projectId = c.req.param("projectId")!;
     const database = c.req.param("database");
 
+    if (!IDENTIFIER_RE.test(database)) {
+      throw AppError.badRequest("Invalid identifier");
+    }
+
     const validDatabases = await getValidDatabases(projectId);
     if (!validDatabases.includes(database)) {
       throw AppError.notFound("Database not found");

@@ -206,7 +206,7 @@ The `execute_query` tool SHALL validate all SQL queries before execution. Only `
 
 ### Requirement: MCP DuckDB Connection Hardening
 
-Each `execute_query` invocation SHALL open a DuckDB connection with security hardening applied before query execution. The hardening SHALL include: `SET enable_external_access = false` (prevents file reads, network access, COPY operations), resource limits (`SET threads = 2`, `SET memory_limit = '512MB'`), and `SET lock_configuration = true` (prevents any setting changes by injected SQL). These settings SHALL be applied per-connection so they do not affect other DuckDB consumers (data browser, semantic model agent).
+Each `execute_query` invocation SHALL open a DuckDB connection with security hardening applied before query execution. The hardening SHALL include: `SET enable_external_access = false` (prevents file reads, network access, COPY operations), resource limits (`SET threads = 2`, `SET memory_limit = '512MB'`), and `SET lock_configuration = true` (prevents any setting changes by injected SQL). These settings SHALL be applied per-connection so they do not affect other DuckDB consumers (data browser, semantic model agent). The semantic model agent's `executeQuery` tool SHALL also apply the same `hardenConnection()` settings before executing any query, ensuring parity with the MCP code path.
 
 #### Scenario: External access disabled
 - **WHEN** an MCP query attempts `SELECT * FROM read_csv('/etc/passwd')`
@@ -221,35 +221,60 @@ Each `execute_query` invocation SHALL open a DuckDB connection with security har
 - **WHEN** an MCP query consumes excessive resources
 - **THEN** the query is constrained by the configured thread and memory limits
 
-### Requirement: MCP Suggest Improvement Tool
+#### Scenario: Agent executeQuery tool hardened
+- **WHEN** the semantic model agent's `executeQuery` tool runs a query against DuckDB
+- **THEN** `hardenConnection()` is applied to the connection before query execution
+- **AND** `enable_external_access` is false, threads are limited to 2, memory is limited to 512MB, and configuration is locked
 
-The MCP server SHALL expose a `suggest_improvement` tool that allows external clients to submit structured improvement suggestions for a semantic model. The tool SHALL accept `modelName` (string, required), `title` (string, required, max 200 characters), and `description` (string, required, max 2000 characters). The tool SHALL validate that the specified `modelName` exists within the token's accessible scope before persisting. The tool SHALL reject calls from read-only tokens with an error indicating insufficient permissions. On success, an `Improvement` document SHALL be created with status `pending` and the token's name recorded as `createdVia`. The tool SHALL be logged via `McpCallLog` consistent with other tools.
+### Requirement: MCP Request Improvement Tool
 
-#### Scenario: Successful improvement suggestion
+The MCP server SHALL expose a `request_improvement` tool that allows external clients to submit structured improvement requests for a semantic model. The tool SHALL accept `modelName` (string, required), `title` (string, required, max 200 characters), and `description` (string, required, max 2000 characters). The tool SHALL validate that the specified `modelName` exists within the token's accessible scope before persisting. The tool SHALL reject calls from read-only tokens with an error indicating insufficient permissions. On success, an `Improvement` document SHALL be created with status `pending` and the token's name recorded as `createdVia`. The tool SHALL be logged via `McpCallLog` consistent with other tools.
 
-- **WHEN** `suggest_improvement` is called with `modelName: "ecommerce"`, `title: "Missing shipping_address field"`, `description: "The orders dataset is missing the shipping_address column which exists in the source table"`
+#### Scenario: Successful improvement request
+
+- **WHEN** `request_improvement` is called with `modelName: "ecommerce"`, `title: "Missing shipping_address field"`, `description: "The orders dataset is missing the shipping_address column which exists in the source table"`
 - **AND** the token has write permission and `ecommerce` is in scope
 - **THEN** an `Improvement` document is created with status `pending`, `modelName: "ecommerce"`, and `createdVia` set to the token's name
-- **AND** a success message is returned: "Improvement suggestion submitted successfully"
+- **AND** a success message is returned: "Improvement request submitted successfully"
 
 #### Scenario: Read-only token rejected
 
-- **WHEN** `suggest_improvement` is called with a read-only token
+- **WHEN** `request_improvement` is called with a read-only token
 - **THEN** an error content response with `isError: true` is returned indicating insufficient permissions
 
 #### Scenario: Model not in scope
 
-- **WHEN** `suggest_improvement` is called with `modelName: "datev"`
+- **WHEN** `request_improvement` is called with `modelName: "datev"`
 - **AND** the token's scopes are `["shopify"]`
 - **THEN** an error content response with `isError: true` is returned indicating access denied
 
 #### Scenario: Model does not exist
 
-- **WHEN** `suggest_improvement` is called with a `modelName` that has no published model
+- **WHEN** `request_improvement` is called with a `modelName` that has no published model
 - **THEN** an error content response with `isError: true` is returned indicating the model was not found
 
 #### Scenario: Input validation
 
-- **WHEN** `suggest_improvement` is called with `title` exceeding 200 characters or `description` exceeding 2000 characters
+- **WHEN** `request_improvement` is called with `title` exceeding 200 characters or `description` exceeding 2000 characters
 - **THEN** an error content response is returned indicating the input exceeds length limits
+
+### Requirement: MCP Session Token Re-validation
+
+When an MCP request includes an `mcp-session-id` header referencing an existing session, the server SHALL re-validate the associated bearer token before processing the request. The server SHALL store the `tokenId` when a session is created. On each subsequent session request, the server SHALL verify that the token has not been soft-deleted and has not expired. If the token is no longer valid, the session SHALL be terminated and a 401 error returned.
+
+#### Scenario: Revoked token rejected on session request
+- **WHEN** a bearer token is revoked (soft-deleted) after an MCP session was established
+- **AND** a subsequent request is made using the session's `mcp-session-id`
+- **THEN** the server looks up the token by `tokenId`, finds it deleted, and returns a 401 error
+- **AND** the session is removed from the session map
+
+#### Scenario: Expired token rejected on session request
+- **WHEN** a bearer token's `expiresAt` passes while an MCP session is active
+- **AND** a subsequent request is made using the session's `mcp-session-id`
+- **THEN** the server looks up the token, finds it expired, and returns a 401 error
+
+#### Scenario: Valid token allows session request
+- **WHEN** a session request includes a valid `mcp-session-id`
+- **AND** the associated token is still active and not expired
+- **THEN** the request is processed normally
 

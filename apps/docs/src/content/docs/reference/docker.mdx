@@ -15,12 +15,13 @@ The `archmax/archmax` Docker image bundles the application components needed to 
 | **BullMQ worker** | Background job processor for AI agent tasks |
 | **Frontend SPA** | React admin UI served as static files |
 | **nginx** | Reverse proxy on port 8080 — routes `/api/` and `/mcp/` to the API, serves SPA for everything else |
+| **MongoDB** | Embedded `mongod` — starts automatically when `MONGODB_URI` is not set |
 | **Redis** | Embedded `redis-server` — starts automatically when `REDIS_URL` is not set |
 
 Base image: `node:24-slim` (Debian Bookworm).
 
-<Aside type="note">
-MongoDB is **not** included in the image. Provide a `MONGODB_URI` pointing to an external MongoDB instance, or use the `docker-compose.yml` which runs a MongoDB container alongside archmax.
+<Aside type="tip">
+Both MongoDB and Redis are embedded and start automatically when their respective connection URLs are not provided. Pass `MONGODB_URI` and/or `REDIS_URL` to use external instances instead.
 </Aside>
 
 ## Exposed Ports
@@ -29,7 +30,7 @@ MongoDB is **not** included in the image. Provide a `MONGODB_URI` pointing to an
 |------|----------|-------------|
 | `8080` | HTTP | nginx reverse proxy — the only port you need to expose |
 
-Internal services (API on 3000, Redis on 6379) bind to `127.0.0.1` and are not accessible from outside the container.
+Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.0.1` and are not accessible from outside the container.
 
 ## Environment Variables
 
@@ -39,12 +40,12 @@ Internal services (API on 3000, Redis on 6379) bind to `127.0.0.1` and are not a
 |----------|-------------|
 | `BETTER_AUTH_SECRET` | Session encryption secret. Min 32 characters. Generate with `openssl rand -base64 32`. Keep the same value across container restarts and upgrades. |
 | `UI_PASSWORD` | Initial admin password. Used to seed the admin account on first run. |
-| `MONGODB_URI` | MongoDB connection string. Must point to an accessible MongoDB instance. Example: `mongodb://mongo:27017/archmax` (Compose) or `mongodb://your-host:27017/archmax`. |
 
 ### Optional Services
 
 | Variable | Default | Docker Behavior |
 |----------|---------|-----------------|
+| `MONGODB_URI` | _(embedded)_ | **Optional.** When omitted, the entrypoint starts an embedded `mongod` at `mongodb://127.0.0.1:27017/archmax` with persistent data at `/app/data/mongodb`. Set this to use an external MongoDB instance. |
 | `REDIS_URL` | _(embedded)_ | **Optional.** When omitted, the entrypoint starts an embedded `redis-server` at `redis://127.0.0.1:6379` with ephemeral data at `/tmp/redis`. Set this to use an external Redis instance. |
 
 ### Server
@@ -108,6 +109,7 @@ Internal services (API on 3000, Redis on 6379) bind to `127.0.0.1` and are not a
 | Container Path | Contents | Persistent? | Notes |
 |---------------|----------|-------------|-------|
 | `/app/data/projects/` | Semantic model YAML files | Yes | Core application data |
+| `/app/data/mongodb/` | Embedded MongoDB data files | Yes | Only used when `MONGODB_URI` is not set |
 | `/tmp/redis/` | Embedded Redis data | No | Ephemeral by design — queue data is transient |
 
 ### Recommended Volume Mount
@@ -116,7 +118,7 @@ Internal services (API on 3000, Redis on 6379) bind to `127.0.0.1` and are not a
 -v archmax-data:/app/data
 ```
 
-This mount captures project data (semantic model YAML files). MongoDB data is managed separately — by the Compose `mongo` service volume or your external MongoDB instance.
+This mount captures both project data (semantic model YAML files) and embedded MongoDB data. When using Docker Compose with an external MongoDB service, the `mongodb/` directory is unused and MongoDB data is managed by the Compose `mongo` service volume.
 
 ## Entrypoint Behavior
 
@@ -124,7 +126,11 @@ The container entrypoint (`/entrypoint.sh`) follows this startup sequence:
 
 ```
 1. Set ARCHMAX_DATA_DIR (default: /app/data/projects)
-2. Verify MONGODB_URI is set (exit with error if missing)
+2. If MONGODB_URI is not set:
+   ├── Create /app/data/mongodb (if missing)
+   ├── Start mongod (fork, bind 127.0.0.1, data at /app/data/mongodb)
+   ├── Wait for readiness (ping loop, max ~10s)
+   └── Export MONGODB_URI=mongodb://127.0.0.1:27017/archmax
 3. If REDIS_URL is not set:
    ├── Create /tmp/redis (if missing)
    ├── Start redis-server (daemonize, bind 127.0.0.1)
@@ -136,10 +142,12 @@ The container entrypoint (`/entrypoint.sh`) follows this startup sequence:
 
 ### Decision Matrix
 
-| `REDIS_URL` set? | Embedded Redis |
-|:---:|:---:|
-| No | Started |
-| Yes | Skipped |
+| `MONGODB_URI` set? | `REDIS_URL` set? | Embedded MongoDB | Embedded Redis |
+|:---:|:---:|:---:|:---:|
+| No | No | Started | Started |
+| Yes | No | Skipped | Started |
+| No | Yes | Started | Skipped |
+| Yes | Yes | Skipped | Skipped |
 
 ## Health Checks
 
@@ -172,11 +180,12 @@ services:
 
 | Deployment | Min RAM | Min Disk | Recommended CPU |
 |-----------|---------|----------|-----------------|
-| Standalone (with external MongoDB) | 256 MB | 1 GB | 1 vCPU |
+| Standalone (embedded MongoDB + Redis) | 512 MB | 2 GB | 1 vCPU |
+| Standalone (external MongoDB) | 256 MB | 1 GB | 1 vCPU |
 | Docker Compose (small team) | 1 GB total | 5 GB | 1 vCPU |
 | Docker Compose (production) | 2 GB total | 10 GB | 2 vCPU |
 
-Without embedded MongoDB, the archmax container has a much smaller memory footprint. The AI agent runs remotely via API calls and does not consume local GPU/CPU.
+The embedded MongoDB adds ~200 MB RAM overhead. When using external MongoDB via `MONGODB_URI`, the container has a smaller memory footprint. The AI agent runs remotely via API calls and does not consume local GPU/CPU.
 
 ## Examples
 
@@ -191,6 +200,18 @@ docker compose up -d
 ```
 
 See the [`docker-compose.yml`](https://github.com/archmaxai/archmax/blob/main/docker-compose.yml) in the repository root for the full configuration.
+
+### Standalone (Embedded MongoDB + Redis)
+
+```bash
+docker run -d \
+  --name archmax \
+  -p 8080:8080 \
+  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_PASSWORD=changeme \
+  -v archmax-data:/app/data \
+  archmax/archmax:latest
+```
 
 ### Standalone with External MongoDB
 
@@ -211,7 +232,6 @@ docker run -d \
 docker run -d \
   --name archmax \
   -p 8080:8080 \
-  -e MONGODB_URI=mongodb://mongo.example.com:27017/archmax \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=sk-or-v1-your-key \
@@ -231,13 +251,19 @@ docker logs archmax
 ```
 
 Common causes:
-- Missing required environment variable (`BETTER_AUTH_SECRET`, `UI_PASSWORD`, or `MONGODB_URI`)
+- Missing required environment variable (`BETTER_AUTH_SECRET` or `UI_PASSWORD`)
 - `BETTER_AUTH_SECRET` is shorter than 32 characters
-- `MONGODB_URI` not set — the entrypoint prints an error message with guidance
+- Embedded MongoDB failed to start — check the logs for `mongod` startup errors
 
 ### Cannot connect to MongoDB
 
-Verify the connection string from inside the container:
+If using embedded MongoDB, check the `mongod` log:
+
+```bash
+docker exec -it archmax cat /var/log/mongod.log
+```
+
+If using an external MongoDB, verify the connection string from inside the container:
 
 ```bash
 docker exec -it archmax node -e "
@@ -251,6 +277,7 @@ Common causes:
 - DNS resolution failure (use IP address or ensure Docker DNS resolves the hostname)
 - Missing `?authSource=admin` for authenticated MongoDB instances
 - When using Docker Compose, ensure the `mongo` service is healthy before archmax starts (`depends_on`)
+- Embedded MongoDB fails on corrupted data — delete the `/app/data/mongodb` directory and restart
 
 ### Port 8080 already in use
 

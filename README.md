@@ -94,11 +94,11 @@ archmax/
 
 | Tool | Description |
 |------|-------------|
-| `list_connections` | List active database connections for the project |
 | `list_semantic_models` | List semantic models the token has access to |
-| `get_semantic_model_overview` | Compact overview of a model with datasets, relationships, and metrics |
-| `get_dataset_fields` | Fields for one or more datasets with types and expressions |
+| `get_semantic_model` | Overview of a model with datasets, relationships, and metrics |
+| `get_datasets` | Fields for one or more datasets with types, examples, enums, and instructions |
 | `execute_query` | Run a read-only SQL query scoped to a semantic model's VIEWs |
+| `request_improvement` | Submit an improvement request for a semantic model |
 
 ### Connecting an AI Agent
 

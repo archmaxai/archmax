@@ -9,16 +9,30 @@ archmax uses [DuckDB](https://duckdb.org/) as an in-process query engine that ca
 
 When you add a connection to a project and mark it as active, archmax attaches it to the project's DuckDB instance using DuckDB's extension system:
 
-| Database Type | DuckDB Extension |
-|---------------|-----------------|
-| PostgreSQL | `postgres` |
-| MySQL | `mysql` |
-| SQL Server | `mssql` (community) |
-| SQLite | `sqlite` |
-| DuckDB | Native |
-| MotherDuck | `motherduck` |
+| Database Type | DuckDB Extension | Registry |
+|---------------|-----------------|----------|
+| PostgreSQL | `postgres` | Core |
+| MySQL | `mysql` | Core |
+| SQL Server | `mssql` | Community |
+| SQLite | `sqlite` | Core |
+| DuckDB | Native | — |
+| MotherDuck | `motherduck` | Core |
 
 Each connection's slug becomes the DuckDB schema alias. For example, a connection with slug `shopify` attached from a Postgres database makes its tables available as `shopify.<schema>.<table>`.
+
+### SQL Server (MSSQL) Connections
+
+The SQL Server connector uses the [DuckDB MSSQL community extension](https://duckdb.org/community_extensions/extensions/mssql), which is installed automatically from the community registry.
+
+When using **Connection Details** (host/port fields), archmax builds an ADO.NET connection string:
+
+```
+Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes
+```
+
+When using **Connection URI**, you can pass any format the extension accepts (ADO.NET or URI) directly.
+
+The **Encrypt connection (TLS)** toggle controls the `Encrypt` parameter and defaults to on. Disable it only for local development servers that don't support TLS.
 
 ## Cross-Connection Queries
 

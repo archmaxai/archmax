@@ -2,13 +2,23 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 export default defineConfig({
-  site: "https://archmaxai.github.io",
-  base: "/archmax",
+  site: "https://docs.archmax.ai",
   integrations: [
     starlight({
       title: "archmax",
+      logo: {
+        light: "./src/assets/logo-light.svg",
+        dark: "./src/assets/logo-dark.svg",
+        replacesTitle: true,
+      },
       description:
         "Manage semantic descriptions of your databases and expose them to AI agents via MCP.",
+      expressiveCode: {
+        styleOverrides: {
+          borderRadius: "0.75rem",
+          borderWidth: "0px",
+        },
+      },
       social: [
         {
           icon: "github",

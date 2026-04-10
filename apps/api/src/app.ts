@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "hono/logger";
 import { getEnv } from "@archmax/core/config/env";
+import { runHealthChecks } from "@archmax/core/infra/health";
 import { corsMiddleware } from "./middleware/cors";
 import { AppError } from "./utils/errors";
 import { auth } from "./lib/auth";
@@ -28,12 +29,28 @@ const app = new Hono()
   .use("*", logger())
   .use("/api/*", corsMiddleware)
   .use("/api/*", async (c, next) => {
+    const method = c.req.method;
+    if (method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") {
+      const ct = c.req.header("content-type") ?? "";
+      const isJson = ct.startsWith("application/json");
+      const isMultipart = ct.startsWith("multipart/");
+      const isAuthRoute = c.req.path.startsWith("/api/auth/");
+      if (!isJson && !isMultipart && !isAuthRoute) {
+        return c.json({ error: "Content-Type must be application/json" }, 415);
+      }
+    }
+    await next();
+  })
+  .use("/api/*", async (c, next) => {
     await next();
     if (!c.res.headers.has("Cache-Control")) {
       c.res.headers.set("Cache-Control", "no-store");
     }
   })
-  .get("/api/health", (c) => c.json({ status: "ok" }))
+  .get("/api/health", async (c) => {
+    const result = await runHealthChecks();
+    return c.json(result, result.status === "healthy" ? 200 : 503);
+  })
   .get("/api/config", (c) => {
     const env = getEnv();
     return c.json({ githubEnabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) });
