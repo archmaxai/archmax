@@ -1,9 +1,9 @@
 ---
-title: archmax
+title: archmax Semantic Layer
 description: Manage semantic descriptions of your databases and expose them to AI agents via MCP.
 template: splash
 hero:
-  tagline: A semantic layer for your databases — describe your data once, let AI agents query it intelligently.
+  tagline: A semantic layer for your databases. Describe your data once, let AI agents query it intelligently.
   actions:
     - text: Get Started
       link: /getting-started/installation/
@@ -19,7 +19,7 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 ## What is archmax?
 
-archmax helps you create semantic descriptions of your database schemas — tables, columns, relationships, and metrics — and expose them to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Instead of giving AI agents raw database access, you give them a curated, documented view of your data.
+archmax helps you create semantic descriptions of your database schemas (tables, columns, relationships, and metrics) and expose them to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Instead of giving AI agents raw database access, you give them a curated, documented view of your data.
 
 <CardGrid>
   <Card title="Semantic Models" icon="pencil">
@@ -32,14 +32,27 @@ archmax helps you create semantic descriptions of your database schemas — tabl
     Query across Postgres, MySQL, MSSQL, SQLite, and DuckDB databases from a single project using DuckDB's federation engine.
   </Card>
   <Card title="Admin UI" icon="setting">
-    Manage projects, connections, and semantic models through a modern web interface with an AI-assisted model builder.
+    Manage projects, connections, and semantic models through a modern web interface with a chat-based AI model builder.
   </Card>
 </CardGrid>
 
 ## Key Features
 
-- **Project-based organization** — group related database connections and their semantic models
-- **AI-assisted model building** — an agent helps discover schemas, map fields, detect enums, and infer relationships
-- **Scoped query execution** — AI agents run read-only SQL against sandboxed VIEWs, not raw tables
-- **Token-based access control** — MCP tokens with configurable scopes and expiry
-- **Self-hosted** — deploy with Docker in minutes
+- **Project-based organization**: group related database connections and their semantic models
+- **AI-assisted model building**: a chat-based agent helps discover schemas, map fields, detect enums, and infer relationships
+- **Scoped query execution**: AI agents run read-only SQL against sandboxed VIEWs, not raw tables
+- **Token-based access control**: MCP tokens with configurable scopes and expiry
+- **Self-hosted**: deploy with Docker in minutes
+
+## What You Can Do in archmax
+
+Once deployed, the admin UI provides these main areas:
+
+| Section | What you do there |
+|---------|-------------------|
+| **Projects** | Create and manage projects. Each project groups related database connections and semantic models. |
+| **Semantic Models** | Build and edit semantic models. Start a chat conversation describing what you want, and the AI agent assembles the model for you. You can also edit models manually. |
+| **Data Federation** | Add database connections (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck), test them, and manage which are active for querying. |
+| **Data Browser** | Explore the schemas, tables, and data from your active connections. |
+| **MCP Access** | Create and manage MCP tokens that external AI agents use to connect to your semantic layer. Configure scopes, permissions, and expiry. |
+| **Testing** | Define test cases (questions an AI agent should answer), create test agent configurations, and run tests individually or in batch to validate your semantic models. |
