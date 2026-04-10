@@ -42,7 +42,7 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
-  -v archmax-data:/app/data \
+  -v ~/.archmax:/app/data \
   archmaxai/archmax:latest
 ```
 
@@ -152,7 +152,7 @@ docker run -d --name archmax -p 8080:8080 \
   -e BETTER_AUTH_SECRET=your-existing-secret \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=your-password \
-  -v archmax-data:/app/data \
+  -v ~/.archmax:/app/data \
   archmaxai/archmax:latest
 ```
 
