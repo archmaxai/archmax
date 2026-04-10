@@ -2,15 +2,18 @@ import "./env";
 import { serve } from "@hono/node-server";
 import app from "./app";
 import { getEnv } from "@archmax/core/config/env";
+import { connectDB } from "@archmax/core/infra/db";
 import { seedAdmin } from "./lib/seed-admin";
 
 const PORT = parseInt(getEnv().PORT, 10);
 
 console.log(`Starting server on port ${PORT}...`);
 
-seedAdmin().catch((err) => {
-  console.error("Failed to seed admin user:", err);
-});
+connectDB()
+  .then(() => seedAdmin())
+  .catch((err) => {
+    console.error("Failed to initialize:", err);
+  });
 
 const server = serve({
   fetch: app.fetch,
