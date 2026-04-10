@@ -2,6 +2,8 @@
 
 A semantic layer for your databases. Describe your data once, let AI agents query it intelligently.
 
+### **[Read the docs &rarr;](https://docs.archmax.ai)**
+
 > **Heads up: archmax is experimental.** The core ideas are stable, but APIs, file formats, and configuration may change between releases. We try to avoid breaking changes, but can't guarantee stability yet. Pin your version and check the changelog before upgrading.
 
 Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax is the runtime that turns OSI models into a live, queryable semantic layer for AI agents.
