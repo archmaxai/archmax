@@ -81,7 +81,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 > **Save your `BETTER_AUTH_SECRET`.** If you lose this value or change it on a restart, all sessions and authentication data become invalid. Generate it beforehand and store it in a safe place.

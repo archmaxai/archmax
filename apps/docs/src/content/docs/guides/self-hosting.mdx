@@ -43,7 +43,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 MongoDB and Redis are embedded and start automatically. To use an external MongoDB, pass `MONGODB_URI`. To use an external Redis, pass `REDIS_URL`.
@@ -146,14 +146,14 @@ docker compose start
 For standalone Docker:
 
 ```bash
-docker pull archmaxai/archmax:latest
+docker pull ghcr.io/archmaxai/archmax:latest
 docker stop archmax && docker rm archmax
 docker run -d --name archmax -p 8080:8080 \
   -e BETTER_AUTH_SECRET=your-existing-secret \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=your-password \
   -v ~/.archmax:/app/data \
-  archmaxai/archmax:latest
+  ghcr.io/archmaxai/archmax:latest
 ```
 
 <Aside type="caution">
