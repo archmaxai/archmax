@@ -93,6 +93,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate test credentials
+        run: |
+          USERNAME="e2e-user-$(openssl rand -hex 4)"
+          PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)"
+          echo "UI_USERNAME=${USERNAME}" >> "$GITHUB_ENV"
+          echo "UI_PASSWORD=${PASSWORD}" >> "$GITHUB_ENV"
+          echo "E2E_USERNAME=${USERNAME}" >> "$GITHUB_ENV"
+          echo "E2E_PASSWORD=${PASSWORD}" >> "$GITHUB_ENV"
+          echo "::add-mask::${PASSWORD}"
+
       - name: Start application stack
         run: |
           docker compose -f docker-compose.ci.yml pull
@@ -128,6 +138,8 @@ jobs:
         env:
           CI: true
           BASE_URL: http://localhost:8080
+          E2E_USERNAME: ${{ env.E2E_USERNAME }}
+          E2E_PASSWORD: ${{ env.E2E_PASSWORD }}
 
       - name: Upload Playwright report
         if: always()
