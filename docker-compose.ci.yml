@@ -1,0 +1,31 @@
+# CI-only stack for running E2E tests against the Docker image.
+# IMAGE_TAG must be set (e.g., IMAGE_TAG=pr-42 docker compose -f docker-compose.ci.yml up)
+
+services:
+  app:
+    image: ${APP_IMAGE:-ghcr.io/archmaxai/archmax:latest}
+    ports:
+      - "8080:8080"
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/archmax-e2e
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_SECRET: e2e-test-secret-32chars-xxxxxxxxx
+      UI_USERNAME: admin
+      UI_PASSWORD: testpass123
+    depends_on:
+      mongo:
+        condition: service_started
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 12
+
+  mongo:
+    image: mongo:8
+
+  redis:
+    image: redis:8-alpine

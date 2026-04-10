@@ -10,6 +10,7 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
 COPY apps/api/package.json ./apps/api/
+COPY apps/e2e/package.json ./apps/e2e/
 COPY apps/frontend/package.json ./apps/frontend/
 COPY apps/worker/package.json ./apps/worker/
 COPY packages/core/package.json ./packages/core/
@@ -32,17 +33,12 @@ FROM deps AS build-api
 COPY apps/api/ ./apps/api/
 COPY packages/core/ ./packages/core/
 
+COPY scripts/bundle.mjs ./scripts/
 RUN mkdir -p apps/frontend/src apps/worker/src \
  && pnpm --filter @archmax/core build \
  && pnpm --filter @archmax/api exec tsc --declaration false --composite false --declarationMap false \
- && EXTERNALS=$(node -e " \
-      var a=require('./apps/api/package.json'), c=require('./packages/core/package.json'); \
-      var deps=[...new Set([...Object.keys(a.dependencies),...Object.keys(c.dependencies)])] \
-        .filter(function(d){return !d.startsWith('@archmax/')}); \
-      console.log(deps.map(function(d){return '--external:'+d}).join(' '))") \
- && npx esbuild apps/api/dist/index.js \
-      --bundle --platform=node --format=esm \
-      --outfile=apps/api/server.mjs $EXTERNALS
+ && node scripts/bundle.mjs apps/api/dist/index.js apps/api/server.mjs \
+      apps/api/package.json packages/core/package.json
 
 # ---------- build-worker ----------
 FROM deps AS build-worker
@@ -51,17 +47,12 @@ COPY apps/api/ ./apps/api/
 COPY apps/worker/ ./apps/worker/
 COPY packages/core/ ./packages/core/
 
+COPY scripts/bundle.mjs ./scripts/
 RUN mkdir -p apps/frontend/src \
  && pnpm --filter @archmax/core build \
  && pnpm --filter @archmax/worker exec tsc --declaration false --composite false --declarationMap false \
- && EXTERNALS=$(node -e " \
-      var w=require('./apps/worker/package.json'), o=require('./apps/api/package.json'), c=require('./packages/core/package.json'); \
-      var deps=[...new Set([...Object.keys(w.dependencies),...Object.keys(o.dependencies),...Object.keys(c.dependencies)])] \
-        .filter(function(d){return !d.startsWith('@archmax/')}); \
-      console.log(deps.map(function(d){return '--external:'+d}).join(' '))") \
- && npx esbuild apps/worker/dist/index.js \
-      --bundle --platform=node --format=esm \
-      --outfile=apps/worker/worker.mjs $EXTERNALS
+ && node scripts/bundle.mjs apps/worker/dist/index.js apps/worker/worker.mjs \
+      apps/worker/package.json apps/api/package.json packages/core/package.json
 
 # ---------- build-spa ----------
 FROM deps AS build-spa
@@ -90,6 +81,7 @@ RUN apt-get update \
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
+COPY apps/e2e/package.json ./apps/e2e/
 COPY apps/frontend/package.json ./apps/frontend/
 COPY apps/worker/package.json ./apps/worker/
 COPY packages/core/package.json ./packages/core/
@@ -111,8 +103,9 @@ RUN mkdir -p /app/data/projects /app/data/mongodb /tmp/redis \
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 RUN rm -f /etc/nginx/sites-enabled/default \
  && sed -i 's|pid /run/nginx.pid;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
- && mkdir -p /var/cache/nginx /var/log/nginx \
- && chown -R archmax:archmax /var/cache/nginx /var/log/nginx /etc/nginx /tmp/nginx.pid 2>/dev/null; true \
+ && sed -i 's/^user /#user /' /etc/nginx/nginx.conf \
+ && mkdir -p /var/cache/nginx /var/log/nginx /var/lib/nginx \
+ && chown -R archmax:archmax /var/cache/nginx /var/log/nginx /var/lib/nginx /etc/nginx \
  && touch /tmp/nginx.pid && chown archmax:archmax /tmp/nginx.pid
 
 COPY entrypoint.sh /entrypoint.sh
