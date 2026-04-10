@@ -269,34 +269,43 @@ The initial test suite SHALL cover at minimum:
 - **THEN** the E2E job fails without running Playwright tests
 - **AND** the container logs are captured for debugging
 
-### Requirement: Railway Post-Deploy Health Smoke Test
+### Requirement: Agent API Configuration Guidance in .env.example
 
-The CI pipeline SHALL include a GitHub Actions workflow that verifies Railway deployments are healthy after they complete. The workflow SHALL:
+The `.env.example` file SHALL clearly communicate that `AGENT_API_KEY` is required for all AI agent features (Semantic Model Builder, Testing Playground, conversation title generation). The comment block for the `AGENT_*` variables MUST:
 
-- Trigger on the `deployment_status` GitHub event emitted by Railway
-- Filter for `deployment_status.state == 'success'`
-- Extract the deployed service URL from `github.event.deployment_status.target_url`
-- Poll `GET /api/health` on the extracted URL with retries (at least 20 attempts, 15-second intervals, 30-second initial delay)
-- Pass when the health endpoint returns HTTP 200 with `{ "status": "healthy" }`
-- Fail the GitHub check when the health endpoint is unreachable or unhealthy after all retries
-- Skip gracefully (with a warning) if `target_url` is not present in the event payload
+- State that `AGENT_API_KEY` is required (not optional) for agent functionality
+- List supported providers (OpenRouter, OpenAI, Azure OpenAI, Ollama, or any OpenAI-compatible endpoint)
+- Note that `AGENT_API_BASE_URL` defaults to OpenRouter and should be changed when using a different provider
+- Note that `AGENT_MODEL` should match the provider's model naming convention
 
-No Railway tokens or hardcoded service URLs SHALL be required.
+The `docker-compose.yml` SHALL include a comment on the `AGENT_API_KEY` line indicating that it is required for agent features.
 
-#### Scenario: Successful production deployment
+#### Scenario: New user reads .env.example
 
-- **WHEN** Railway deploys to production and sends `deployment_status: success` with a `target_url`
-- **THEN** the workflow polls the health endpoint until HTTP 200 with `status: "healthy"`
-- **AND** the GitHub check is marked as successful
+- **WHEN** a new user opens `.env.example` to configure the application
+- **THEN** they find a clearly marked section explaining that `AGENT_API_KEY` must be set for the AI agent to work
+- **AND** they understand which providers are supported and how to obtain a key
 
-#### Scenario: Deployment is unhealthy after all retries
+#### Scenario: User deploys without AGENT_API_KEY
 
-- **WHEN** the health endpoint returns HTTP 503 or is unreachable after all retry attempts
-- **THEN** the GitHub check is marked as failed
-- **AND** the last health response is logged for debugging
+- **WHEN** a user starts the application without setting `AGENT_API_KEY`
+- **THEN** the application starts successfully (the key is not required for startup)
+- **AND** agent features are unavailable until the key is configured
 
-#### Scenario: Missing target_url in event
+### Requirement: Agent Configuration Status in Config Endpoint
 
-- **WHEN** Railway sends `deployment_status: success` but `target_url` is empty or missing
-- **THEN** the workflow logs a warning and exits successfully (does not block)
+The `/api/config` endpoint SHALL include an `agentConfigured` boolean field that indicates whether the agent API key is set. The endpoint MUST NOT expose the actual key value or any secret material. The field SHALL be `true` when `AGENT_API_KEY` is a non-empty string, and `false` otherwise.
+
+#### Scenario: Agent is configured
+
+- **WHEN** `AGENT_API_KEY` is set to a non-empty value
+- **AND** a client requests `GET /api/config`
+- **THEN** the response includes `"agentConfigured": true`
+
+#### Scenario: Agent is not configured
+
+- **WHEN** `AGENT_API_KEY` is not set or is empty
+- **AND** a client requests `GET /api/config`
+- **THEN** the response includes `"agentConfigured": false`
+- **AND** no secret values are leaked in the response
 

@@ -80,11 +80,14 @@ docker run -d \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
+  -e AGENT_API_KEY=your-openrouter-api-key \
   -v ~/.archmax:/app/data \
   ghcr.io/archmaxai/archmax:latest
 ```
 
 > **Save your `BETTER_AUTH_SECRET`.** If you lose this value or change it on a restart, all sessions and authentication data become invalid. Generate it beforehand and store it in a safe place.
+
+> **`AGENT_API_KEY` is required for AI features.** The Semantic Model Builder, Testing Playground, and automatic title generation all need an API key for an OpenAI-compatible provider. The default endpoint is [OpenRouter](https://openrouter.ai). Without this key, agent features will be unavailable.
 
 Open `http://localhost:8080` and log in with username `admin` (or your `UI_USERNAME`) and the password you set in `UI_PASSWORD`.
 
@@ -163,8 +166,8 @@ Key environment variables (see `.env.example` for the full list):
 | `BETTER_AUTH_SECRET` | Session encryption secret (min 32 chars). Save and reuse across restarts. |
 | `UI_USERNAME` / `UI_PASSWORD` | Initial admin credentials (default username: `admin`) |
 | `MONGODB_URI` | MongoDB connection string (optional in Docker; embedded when omitted) |
-| `AGENT_API_BASE_URL` | OpenAI-compatible API endpoint for the AI agent |
-| `AGENT_API_KEY` | API key for the agent endpoint |
+| `AGENT_API_BASE_URL` | OpenAI-compatible API endpoint (default: OpenRouter) |
+| `AGENT_API_KEY` | API key for the AI agent (required for agent features) |
 | `AGENT_MODEL` | LLM model identifier (e.g., `anthropic/claude-sonnet-4`) |
 | `REDIS_URL` | Optional. Enables BullMQ worker queue (embedded in Docker when omitted) |
 

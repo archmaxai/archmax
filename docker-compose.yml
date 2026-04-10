@@ -11,11 +11,12 @@ services:
     environment:
       MONGODB_URI: mongodb://mongo:27017/archmax
       REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: http://localhost:8080
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       UI_USERNAME: ${UI_USERNAME:-admin}
       UI_PASSWORD: ${UI_PASSWORD}
       AGENT_API_BASE_URL: ${AGENT_API_BASE_URL:-https://openrouter.ai/api/v1}
-      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}  # Required for AI agent features
       AGENT_MODEL: ${AGENT_MODEL:-anthropic/claude-sonnet-4.6}
     volumes:
       - archmax-data:/app/data
@@ -26,12 +27,17 @@ services:
 
   mongo:
     image: mongo:8
+    command: ["mongod", "--quiet"]
+    logging:
+      driver: none
     volumes:
       - mongo-data:/data/db
     restart: unless-stopped
 
   redis:
     image: redis:8-alpine
+    logging:
+      driver: none
     restart: unless-stopped
 
 volumes:

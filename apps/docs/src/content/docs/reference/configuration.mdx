@@ -65,12 +65,18 @@ A single bind mount (`-v ~/.archmax:/app/data`) captures both project files and 
 
 ## AI Agent
 
+<Aside type="caution">
+`AGENT_API_KEY` is required for all AI-powered features: the Semantic Model Builder, Testing Playground, and automatic conversation title generation. Without it, these features will be unavailable and the chat interface will display a configuration warning.
+</Aside>
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API endpoint (OpenRouter, OpenAI, Ollama, etc.) |
-| `AGENT_API_KEY` | - | API key for the agent endpoint |
-| `AGENT_MODEL` | `anthropic/claude-sonnet-4` | Model identifier |
+| `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible API endpoint. Change this when using a provider other than OpenRouter. |
+| `AGENT_API_KEY` | - | **Required for agent features.** API key for your chosen provider. |
+| `AGENT_MODEL` | `anthropic/claude-sonnet-4` | Model identifier (must match your provider's naming convention) |
 | `AGENT_TITLE_MODEL` | - | Cheap/fast model for conversation title generation |
+
+Supported providers: [OpenRouter](https://openrouter.ai) (default), OpenAI, Azure OpenAI, Ollama, or any OpenAI-compatible endpoint. To get started quickly, create an account at [openrouter.ai](https://openrouter.ai), generate an API key, and set `AGENT_API_KEY` to that value.
 
 ## Worker Queue
 
