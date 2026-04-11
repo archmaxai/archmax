@@ -1,10 +1,12 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import starlightImageZoom from "starlight-image-zoom";
 
 export default defineConfig({
   site: "https://docs.archmax.ai",
   integrations: [
     starlight({
+      plugins: [starlightImageZoom()],
       title: "archmax",
       logo: {
         light: "./src/assets/logo-light.svg",

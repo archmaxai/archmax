@@ -293,6 +293,7 @@ function AgentFormDialog({
       if (!agent) return;
       const res = await api.api.projects[":projectId"]["test-agents"][":agentId"]["test-connection"].$post({
         param: { projectId, agentId: agent._id },
+        json: {},
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);

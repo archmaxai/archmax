@@ -90,18 +90,33 @@ Tests are colocated with source files (e.g., `my-service.ts` has `my-service.tes
 
 ### E2E Tests (Playwright)
 
-End-to-end tests run Playwright against the full Docker image. They live in `apps/e2e/`.
+End-to-end tests run Playwright against the full Docker image with federated database services. They live in `apps/e2e/`.
 
-To run them locally, start the application stack and then execute the tests:
+The `docker-compose.ci.yml` starts the app image alongside MongoDB, Redis, **PostgreSQL**, **MySQL**, **Microsoft SQL Server**, and a mounted **SQLite** fixture file. This is the same stack that CI uses on every pull request.
 
 ```bash
-docker compose -f docker-compose.ci.yml up -d
+# Build (or pull) the app image
+docker build -t archmax:local .
+
+# Start the full stack
+APP_IMAGE=archmax:local docker compose -f docker-compose.ci.yml up -d
+
+# Wait for health (may take 1-2 minutes while MSSQL boots)
+curl --retry 30 --retry-delay 5 --retry-connrefused http://localhost:8080/api/health
+
+# Install Playwright browsers (first time only)
 pnpm --filter @archmax/e2e exec playwright install --with-deps chromium
+
+# Run the tests
 pnpm --filter @archmax/e2e test
+
+# Tear down
 docker compose -f docker-compose.ci.yml down -v
 ```
 
-The `docker-compose.ci.yml` starts the app image with local MongoDB and Redis, using test credentials (`admin` / `testpass123`). Playwright is configured to target `http://localhost:8080`.
+Default credentials are `admin` / `testpass123`. To override, set `UI_USERNAME` / `UI_PASSWORD` as environment variables for compose and `E2E_USERNAME` / `E2E_PASSWORD` for the Playwright test runner.
+
+**MSSQL note:** The SQL Server container (`mcr.microsoft.com/mssql/server:2022-latest`) requires at least 2 GB RAM and only runs on `linux/amd64`. On Apple Silicon Macs, Docker Desktop runs it under Rosetta emulation, which is slower to start. The compose file pins `platform: linux/amd64` for this service.
 
 In CI, E2E tests run automatically after the Docker image is built on every pull request.
 

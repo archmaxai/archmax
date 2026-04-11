@@ -56,7 +56,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-api-key \
-  -v ~/.archmax:/app/data \
+  -v ~/.archmax:/home/archmax \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -67,7 +67,7 @@ Save your `BETTER_AUTH_SECRET` value before running this command. The subshell `
 </Aside>
 
 <Aside type="note">
-MongoDB and Redis are both embedded in the image and start automatically when `MONGODB_URI` / `REDIS_URL` are not provided. To use external instances instead, pass `MONGODB_URI` and/or `REDIS_URL`. The volume mount at `/app/data` captures both project files and embedded MongoDB data.
+MongoDB and Redis are both embedded in the image and start automatically when `MONGODB_URI` / `REDIS_URL` are not provided. To use external instances instead, pass `MONGODB_URI` and/or `REDIS_URL`. The bind mount at `/home/archmax` maps the container user’s home so project files, embedded MongoDB data, and the DuckDB extension cache (`~/.duckdb/`) persist under `~/.archmax` on the host.
 </Aside>
 
 ### When to use which mode?

@@ -3,7 +3,7 @@ title: archmax Semantic Layer
 description: Manage semantic descriptions of your databases and expose them to AI agents via MCP.
 template: splash
 hero:
-  tagline: A semantic layer for your databases. Describe your data once, let AI agents query it intelligently.
+  tagline: "A semantic layer for your data: Archmax describes it, you sharpen it, AI agents query it."
   actions:
     - text: Get Started
       link: /getting-started/installation/
@@ -46,28 +46,32 @@ archmax helps you create semantic descriptions of your database schemas (tables,
 
 ## Screenshots
 
-<table>
-<tr>
-<td width="33%"><img src="/images/screenshot-graph-view.png" alt="Semantic model graph view" /></td>
-<td width="33%"><img src="/images/screenshot-model-builder.png" alt="AI-assisted model builder" /></td>
-<td width="33%"><img src="/images/screenshot-mcp-access.png" alt="MCP access" /></td>
-</tr>
-<tr>
-<td align="center"><b>Graph View</b></td>
-<td align="center"><b>Model Builder</b></td>
-<td align="center"><b>MCP Access</b></td>
-</tr>
-<tr>
-<td width="33%"><img src="/images/screenshot-test-agents.png" alt="Test agents configuration" /></td>
-<td width="33%"><img src="/images/screenshot-test-cases.png" alt="Test cases" /></td>
-<td width="33%"><img src="/images/screenshot-test-runs.png" alt="Test runs" /></td>
-</tr>
-<tr>
-<td align="center"><b>Test Agents</b></td>
-<td align="center"><b>Test Cases</b></td>
-<td align="center"><b>Test Runs</b></td>
-</tr>
-</table>
+<div class="screenshot-grid">
+  <figure>
+    <img src="/images/screenshot-graph-view.png" alt="Semantic model graph view" />
+    <figcaption>Graph View</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/screenshot-model-builder.png" alt="AI-assisted model builder" />
+    <figcaption>Model Builder</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/screenshot-mcp-access.png" alt="MCP access" />
+    <figcaption>MCP Access</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/screenshot-test-agents.png" alt="Test agents configuration" />
+    <figcaption>Test Agents</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/screenshot-test-cases.png" alt="Test cases" />
+    <figcaption>Test Cases</figcaption>
+  </figure>
+  <figure>
+    <img src="/images/screenshot-test-runs.png" alt="Test runs" />
+    <figcaption>Test Runs</figcaption>
+  </figure>
+</div>
 
 ## What You Can Do in archmax
 
@@ -77,7 +81,7 @@ Once deployed, the admin UI provides these main areas:
 |---------|-------------------|
 | **Projects** | Create and manage projects. Each project groups related database connections and semantic models. |
 | **Semantic Models** | Build and edit semantic models. Start a chat conversation describing what you want, and the AI agent assembles the model for you. You can also edit models manually. |
-| **Data Federation** | Add database connections (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck), test them, and manage which are active for querying. |
+| **Data Federation** | Add database connections (Postgres, MySQL, MSSQL, SQLite, DuckDB), test them, and manage which are active for querying. |
 | **Data Browser** | Explore the schemas, tables, and data from your active connections. |
 | **MCP Access** | Create and manage MCP tokens that external AI agents use to connect to your semantic layer. Configure scopes, permissions, and expiry. |
 | **Testing** | Define test cases (questions an AI agent should answer), create test agent configurations, and run tests individually or in batch to validate your semantic models. |

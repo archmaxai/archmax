@@ -1,13 +1,13 @@
 #!/bin/sh
 set -e
 
-export ARCHMAX_DATA_DIR="${ARCHMAX_DATA_DIR:-/app/data/projects}"
+export ARCHMAX_DATA_DIR="${ARCHMAX_DATA_DIR:-/home/archmax/projects}"
 
 # --- Embedded MongoDB (when MONGODB_URI is not provided) ---
 if [ -z "$MONGODB_URI" ]; then
-  mkdir -p /app/data/mongodb
+  mkdir -p /home/archmax/mongodb
   echo "[entrypoint] Starting embedded MongoDB..."
-  mongod --bind_ip 127.0.0.1 --dbpath /app/data/mongodb --logpath /var/log/mongod.log --fork
+  mongod --bind_ip 127.0.0.1 --dbpath /home/archmax/mongodb --logpath /var/log/mongod.log --fork
 
   TRIES=0
   until mongosh --quiet --eval 'db.runCommand({ping:1})' > /dev/null 2>&1; do

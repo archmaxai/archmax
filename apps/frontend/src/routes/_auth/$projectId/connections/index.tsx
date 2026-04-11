@@ -83,7 +83,6 @@ const CONNECTION_TYPES = [
   "mssql",
   "sqlite",
   "duckdb",
-  "motherduck",
 ] as const;
 
 function ConnectionsPage() {
@@ -183,6 +182,7 @@ function ConnectionsPage() {
                     <TableCell className="text-muted-foreground max-w-xs truncate text-sm">
                       {conn.connectionConfig.uri ??
                         conn.connectionConfig.host ??
+                        conn.connectionConfig.database ??
                         "—"}
                     </TableCell>
                     <TableCell>
@@ -258,6 +258,7 @@ function ConnectionsPage() {
 }
 
 const SCHEMA_TYPES = new Set(["postgres", "mysql", "mssql"]);
+const FILE_TYPES = new Set(["sqlite", "duckdb"]);
 
 function ConnectionFormDialog({
   open,
@@ -292,7 +293,6 @@ function ConnectionFormDialog({
     mssql: "Server=host,1433;Database=db;User Id=user;Password=pass",
     sqlite: "/path/to/database.db",
     duckdb: "/path/to/database.duckdb",
-    motherduck: "md:my_database?token=...",
   };
 
   const defaultPorts: Record<string, string> = {
@@ -301,7 +301,6 @@ function ConnectionFormDialog({
     mssql: "1433",
     sqlite: "",
     duckdb: "",
-    motherduck: "",
   };
 
   function autoSlug(n: string): string {
@@ -346,12 +345,15 @@ function ConnectionFormDialog({
   }, [open, editing]);
 
   const showSchema = SCHEMA_TYPES.has(type);
+  const isFileType = FILE_TYPES.has(type);
 
   const mutation = useMutation({
     mutationFn: async () => {
       const config: Record<string, unknown> = {};
       if (connMode === "uri") {
         if (uri) config.uri = uri;
+      } else if (isFileType) {
+        if (database) config.database = database;
       } else {
         if (host) config.host = host;
         if (port) config.port = Number(port);
@@ -395,6 +397,7 @@ function ConnectionFormDialog({
       if (!editing) return;
       const res = await api.api.projects[":projectId"].connections[":id"].test.$post({
         param: { projectId, id: editing._id },
+        json: {},
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -492,55 +495,73 @@ function ConnectionFormDialog({
             </TabsContent>
 
             <TabsContent value="fields" className="content-group pt-2">
-              <div className="grid grid-cols-2 gap-4">
+              {isFileType ? (
                 <div className="content-tight">
-                  <Label htmlFor="conn-host">Host</Label>
-                  <Input
-                    id="conn-host"
-                    value={host}
-                    onChange={(e) => setHost(e.target.value)}
-                    placeholder="localhost"
-                  />
-                </div>
-                <div className="content-tight">
-                  <Label htmlFor="conn-port">Port</Label>
-                  <Input
-                    id="conn-port"
-                    value={port}
-                    onChange={(e) => setPort(e.target.value)}
-                    placeholder={defaultPorts[type] ?? ""}
-                    type="number"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                <div className="content-tight">
-                  <Label htmlFor="conn-db">Database</Label>
+                  <Label htmlFor="conn-db">Database file path</Label>
                   <Input
                     id="conn-db"
                     value={database}
                     onChange={(e) => setDatabase(e.target.value)}
+                    placeholder={type === "sqlite" ? "/path/to/database.db" : "/path/to/database.duckdb"}
+                    className="font-mono"
                   />
+                  <p className="text-muted-foreground text-xs">
+                    Absolute path to the {type === "sqlite" ? "SQLite" : "DuckDB"} file on the server
+                  </p>
                 </div>
-                <div className="content-tight">
-                  <Label htmlFor="conn-user">User</Label>
-                  <Input
-                    id="conn-user"
-                    value={user}
-                    onChange={(e) => setUser(e.target.value)}
-                  />
-                </div>
-                <div className="content-tight">
-                  <Label htmlFor="conn-pass">Password</Label>
-                  <Input
-                    id="conn-pass"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-              </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="content-tight">
+                      <Label htmlFor="conn-host">Host</Label>
+                      <Input
+                        id="conn-host"
+                        value={host}
+                        onChange={(e) => setHost(e.target.value)}
+                        placeholder="localhost"
+                      />
+                    </div>
+                    <div className="content-tight">
+                      <Label htmlFor="conn-port">Port</Label>
+                      <Input
+                        id="conn-port"
+                        value={port}
+                        onChange={(e) => setPort(e.target.value)}
+                        placeholder={defaultPorts[type] ?? ""}
+                        type="number"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="content-tight">
+                      <Label htmlFor="conn-db">Database</Label>
+                      <Input
+                        id="conn-db"
+                        value={database}
+                        onChange={(e) => setDatabase(e.target.value)}
+                      />
+                    </div>
+                    <div className="content-tight">
+                      <Label htmlFor="conn-user">User</Label>
+                      <Input
+                        id="conn-user"
+                        value={user}
+                        onChange={(e) => setUser(e.target.value)}
+                      />
+                    </div>
+                    <div className="content-tight">
+                      <Label htmlFor="conn-pass">Password</Label>
+                      <Input
+                        id="conn-pass"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
             </TabsContent>
           </Tabs>
 

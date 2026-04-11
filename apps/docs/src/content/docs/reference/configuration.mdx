@@ -22,7 +22,7 @@ Save your `BETTER_AUTH_SECRET` somewhere safe. If you lose it or change it, all 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MONGODB_URI` | _(embedded)_ | MongoDB connection string. **Optional in Docker**: when omitted, the container starts an embedded MongoDB instance at `/app/data/mongodb`. Set this to use an external MongoDB (e.g. `mongodb://localhost:27017/archmax`). |
+| `MONGODB_URI` | _(embedded)_ | MongoDB connection string. **Optional in Docker**: when omitted, the container starts an embedded MongoDB instance at `/home/archmax/mongodb`. Set this to use an external MongoDB (e.g. `mongodb://localhost:27017/archmax`). |
 
 ## Server
 
@@ -45,17 +45,18 @@ Log in at `http://your-server:8080` with these credentials after deployment.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARCHMAX_DATA_DIR` | `/app/data/projects` (Docker) or `data/projects` (local) | Base directory for project data (YAML files) |
+| `ARCHMAX_DATA_DIR` | `/home/archmax/projects` (Docker) or `data/projects` (local) | Base directory for project data (YAML files) |
 
-Inside the Docker image, persistent data lives under `/app/data/`:
+Inside the Docker image, the `archmax` user’s home is `/home/archmax/`; persistent application data lives there:
 
 | Path | Contents | Persistent? |
 |------|----------|-------------|
-| `/app/data/projects/` | Semantic model YAML files | Yes |
-| `/app/data/mongodb/` | Embedded MongoDB data (when using embedded mode) | Yes |
+| `/home/archmax/projects/` | Semantic model YAML files | Yes |
+| `/home/archmax/mongodb/` | Embedded MongoDB data (when using embedded mode) | Yes |
+| `/home/archmax/.duckdb/` | DuckDB extension cache | Yes |
 | `/tmp/redis/` | Embedded Redis data | No (ephemeral) |
 
-A single bind mount (`-v ~/.archmax:/app/data`) captures both project files and embedded MongoDB data in `~/.archmax` on the host. When using an external MongoDB via `MONGODB_URI`, the `mongodb/` directory is unused. See the [Docker Reference](/reference/docker/) for details.
+A single bind mount (`-v ~/.archmax:/home/archmax`) maps that home directory to `~/.archmax` on the host, including project files, the DuckDB extension cache, and embedded MongoDB data. When using an external MongoDB via `MONGODB_URI`, the `mongodb/` directory is unused. See the [Docker Reference](/reference/docker/) for details.
 
 ## MCP Server
 

@@ -157,6 +157,40 @@ Coverage is configured with `@vitest/coverage-v8`. After running `pnpm test:cove
 - **HTML report** — open `coverage/index.html` in a browser
 - **JSON summary** — `coverage/coverage-summary.json` for CI consumption
 
+### E2E Tests (Playwright)
+
+End-to-end tests run Playwright against the full Docker image with federated database services. They live in `apps/e2e/`.
+
+The `docker-compose.ci.yml` starts the app image alongside MongoDB, Redis, PostgreSQL, MySQL, Microsoft SQL Server, and mounts a SQLite fixture file. This is the same stack CI uses.
+
+**Running locally:**
+
+```bash
+# 1. Build (or pull) the app image
+docker build -t archmax:local .
+# -- or pull from GHCR:
+# docker pull ghcr.io/archmaxai/archmax:latest
+
+# 2. Start the full stack (set APP_IMAGE to your local tag)
+APP_IMAGE=archmax:local docker compose -f docker-compose.ci.yml up -d
+
+# 3. Wait for the health endpoint
+curl --retry 30 --retry-delay 5 --retry-connrefused http://localhost:8080/api/health
+
+# 4. Install Playwright browsers (first time only)
+pnpm --filter @archmax/e2e exec playwright install --with-deps chromium
+
+# 5. Run the tests
+pnpm --filter @archmax/e2e test
+
+# 6. Tear down
+docker compose -f docker-compose.ci.yml down -v
+```
+
+Default credentials are `admin` / `testpass123`. Override with `UI_USERNAME` / `UI_PASSWORD` env vars on compose and `E2E_USERNAME` / `E2E_PASSWORD` for the test runner if you change them.
+
+**Note:** The MSSQL container (`mcr.microsoft.com/mssql/server:2022-latest`) requires at least 2 GB RAM and runs only on `linux/amd64`. On Apple Silicon Macs, Docker Desktop runs it under Rosetta emulation, which works but is slower to start. The compose file pins `platform: linux/amd64` for this service.
+
 ## Code Style
 
 - TypeScript strict mode everywhere

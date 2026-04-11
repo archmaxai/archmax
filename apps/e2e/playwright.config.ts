@@ -23,9 +23,9 @@ export default defineConfig({
   webServer: process.env.CI
     ? undefined
     : {
-        command: "docker compose -f ../../docker-compose.ci.yml up",
+        command: "docker compose -f ../../docker-compose.ci.yml --env-file /dev/null up",
         url: `${BASE_URL}/api/health`,
         reuseExistingServer: true,
-        timeout: 120_000,
+        timeout: 180_000,
       },
 });
