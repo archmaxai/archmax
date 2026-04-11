@@ -45,7 +45,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 | Variable | Default | Docker Behavior |
 |----------|---------|-----------------|
-| `MONGODB_URI` | _(embedded)_ | **Optional.** When omitted, the entrypoint starts an embedded `mongod` at `mongodb://127.0.0.1:27017/archmax` with persistent data at `/home/archmax/mongodb`. Set this to use an external MongoDB instance. |
+| `MONGODB_URI` | _(embedded)_ | **Optional.** When omitted, the entrypoint starts an embedded `mongod` at `mongodb://127.0.0.1:27017/archmax` with persistent data at `/data/mongodb`. Set this to use an external MongoDB instance. |
 | `REDIS_URL` | _(embedded)_ | **Optional.** When omitted, the entrypoint starts an embedded `redis-server` at `redis://127.0.0.1:6379` with ephemeral data at `/tmp/redis`. Set this to use an external Redis instance. |
 
 ### Server
@@ -67,7 +67,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARCHMAX_DATA_DIR` | `/home/archmax/projects` | Base directory for semantic model YAML files. Normally not changed in Docker. |
+| `ARCHMAX_DATA_DIR` | `/data` | Root data directory for all persistent application data. Normally not changed in Docker. |
 
 ### AI Agent
 
@@ -114,28 +114,28 @@ Supported providers: [OpenRouter](https://openrouter.ai) (default), OpenAI, Azur
 
 | Container Path | Contents | Persistent? | Notes |
 |---------------|----------|-------------|-------|
-| `/home/archmax/projects/` | Semantic model YAML files | Yes | Core application data |
-| `/home/archmax/mongodb/` | Embedded MongoDB data files | Yes | Only used when `MONGODB_URI` is not set |
-| `/home/archmax/.duckdb/` | DuckDB extension cache | Yes | Created when DuckDB loads extensions |
+| `/data/projects/` | Semantic model YAML files | Yes | Core application data |
+| `/data/mongodb/` | Embedded MongoDB data files | Yes | Only used when `MONGODB_URI` is not set |
+| `/data/.duckdb/` | DuckDB extension cache | Yes | Created when DuckDB loads extensions |
 | `/tmp/redis/` | Embedded Redis data | No | Ephemeral by design; queue data is transient |
 
 ### Recommended Volume Mount
 
 ```bash
--v ~/.archmax:/home/archmax
+-v ~/.archmax:/data
 ```
 
-This bind mount maps the `archmax` user’s home directory inside the container to `~/.archmax` on the host, including project files (semantic model YAMLs), the DuckDB extension cache (`.duckdb/`), and embedded MongoDB data. When using Docker Compose with an external MongoDB service, the `mongodb/` directory is unused and MongoDB data is managed by the Compose `mongo` service volume.
+This bind mount maps the container’s data directory to `~/.archmax` on the host, including project files (semantic model YAMLs), the DuckDB extension cache (`.duckdb/`), and embedded MongoDB data. When using Docker Compose with an external MongoDB service, the `mongodb/` directory is unused and MongoDB data is managed by the Compose `mongo` service volume.
 
 ## Entrypoint Behavior
 
 The container entrypoint (`/entrypoint.sh`) follows this startup sequence:
 
 ```
-1. Set ARCHMAX_DATA_DIR (default: /home/archmax/projects)
+1. Set ARCHMAX_DATA_DIR (default: /data)
 2. If MONGODB_URI is not set:
-   ├── Create /home/archmax/mongodb (if missing)
-   ├── Start mongod (fork, bind 127.0.0.1, data at /home/archmax/mongodb)
+   ├── Create $ARCHMAX_DATA_DIR/mongodb (if missing)
+   ├── Start mongod (fork, bind 127.0.0.1, data at $ARCHMAX_DATA_DIR/mongodb)
    ├── Wait for readiness (ping loop, max ~10s)
    └── Export MONGODB_URI=mongodb://127.0.0.1:27017/archmax
 3. If REDIS_URL is not set:
@@ -222,7 +222,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-api-key \
-  -v ~/.archmax:/home/archmax \
+  -v ~/.archmax:/data \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -237,7 +237,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-api-key \
-  -v ~/.archmax:/home/archmax \
+  -v ~/.archmax:/data \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -253,7 +253,7 @@ docker run -d \
   -e AGENT_API_KEY=sk-your-openai-key \
   -e AGENT_API_BASE_URL=https://api.openai.com/v1 \
   -e AGENT_MODEL=gpt-4o \
-  -v ~/.archmax:/home/archmax \
+  -v ~/.archmax:/data \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -294,7 +294,7 @@ Common causes:
 - DNS resolution failure (use IP address or ensure Docker DNS resolves the hostname)
 - Missing `?authSource=admin` for authenticated MongoDB instances
 - When using Docker Compose, ensure the `mongo` service is healthy before archmax starts (`depends_on`)
-- Embedded MongoDB fails on corrupted data; delete the `/home/archmax/mongodb` directory and restart
+- Embedded MongoDB fails on corrupted data; delete the `/data/mongodb` directory and restart
 
 ### Port 8080 already in use
 
@@ -309,5 +309,5 @@ docker run -d -p 9090:8080 ... ghcr.io/archmaxai/archmax:latest
 If running as a non-root user or on SELinux-enabled hosts, add the `:Z` flag:
 
 ```bash
--v ~/.archmax:/home/archmax:Z
+-v ~/.archmax:/data:Z
 ```

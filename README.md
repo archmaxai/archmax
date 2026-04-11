@@ -1,6 +1,6 @@
 # archmax
 
-A semantic layer for your data: Archmax describes it, you sharpen it, AI agents query it.
+A semantic layer for your data: archmax describes it, you sharpen it, AI agents query it.
 
 <p align="center">
   <a href="https://docs.archmax.ai"><strong>Documentation</strong></a> &nbsp;&middot;&nbsp;
@@ -81,9 +81,11 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-openrouter-api-key \
-  -v ~/.archmax:/home/archmax \
+  -v ~/.archmax:/data \
   ghcr.io/archmaxai/archmax:latest
 ```
+
+> **Volume mount:** The `-v ~/.archmax:/data` bind mount persists all application data on the host — semantic model YAML files (`projects/`), embedded MongoDB data (`mongodb/`), and the DuckDB extension cache (`.duckdb/`). Without this mount, all data is lost when the container is removed.
 
 > **Save your `BETTER_AUTH_SECRET`.** If you lose this value or change it on a restart, all sessions and authentication data become invalid. Generate it beforehand and store it in a safe place.
 
@@ -123,7 +125,14 @@ Optional overrides (defaults shown):
 | `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` |
 | `AGENT_MODEL` | `anthropic/claude-sonnet-4.6` |
 
-The stack exposes port **8080** and persists data in two Docker volumes (`archmax-data` and `mongo-data`).
+The stack exposes port **8080** and persists data in two Docker volumes:
+
+| Volume | Container Path | Contents |
+|--------|---------------|----------|
+| `archmax-data` | `/data` | Semantic model YAML files, DuckDB extension cache |
+| `mongo-data` | `/data/db` (mongo container) | MongoDB database files |
+
+These volumes are created automatically by Docker Compose. To use host bind mounts instead, edit `docker-compose.yml` and replace the named volumes with paths (e.g. `./data/archmax:/data`).
 
 ### Local Development
 
@@ -207,11 +216,30 @@ Key environment variables (see `.env.example` for the full list):
 
 archmax uses [OpenSpec](https://github.com/nicholasgriffintn/openspec) for spec-driven development. **Every feature PR must include a corresponding spec change.**
 
-1. Install the CLI: `npm install -g openspec-cli`
-2. Create a proposal under `openspec/changes/<change-id>/` with spec deltas
-3. Validate: `openspec validate <change-id> --strict`
-4. Implement after approval
-5. Include a docs update task if the change affects user-facing behavior
+### Setup
+
+```bash
+npm install -g openspec-cli
+```
+
+### Workflow
+
+OpenSpec integrates with your AI coding assistant. Use these prompts in Cursor (or any OpenSpec-aware agent):
+
+| Prompt | What it does |
+|--------|-------------|
+| `/openspec-proposal` | Scaffolds a new change proposal with `proposal.md`, `tasks.md`, and spec deltas |
+| `/openspec-apply` | Implements an approved proposal by following the task checklist |
+| `/openspec-archive` | Archives a completed change and updates specs |
+
+The typical flow:
+
+1. **Propose** — Run `/openspec-proposal` and describe the change. The agent creates the proposal directory, writes spec deltas, and validates with `openspec validate <change-id> --strict`.
+2. **Review** — Get the proposal approved before any code is written.
+3. **Implement** — Run `/openspec-apply` to work through the task list.
+4. **Archive** — After merging, run `/openspec-archive` to move the change to the archive and update the canonical specs.
+
+You can also drive the workflow manually with the CLI (`openspec list`, `openspec show`, `openspec validate`, `openspec archive`). See `openspec/AGENTS.md` for the full reference.
 
 See the [Contributing guide](apps/docs/src/content/docs/contributing/openspec.mdx) for details.
 

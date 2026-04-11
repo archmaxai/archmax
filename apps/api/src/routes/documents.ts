@@ -4,7 +4,7 @@ import { DocumentFileService, FileTooLargeError } from "@archmax/core/services/d
 import { AppError } from "../utils/errors";
 
 function getDocService(): DocumentFileService {
-  return new DocumentFileService(getEnv().ARCHMAX_DATA_DIR);
+  return new DocumentFileService(getEnv().projectsDir);
 }
 
 function param(c: { req: { param: (name: string) => string | undefined } }, name: string): string {

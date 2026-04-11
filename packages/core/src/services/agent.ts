@@ -25,7 +25,7 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
     throw new Error("Invalid projectId");
   }
   const env = getEnv();
-  const dataDir = resolve(env.ARCHMAX_DATA_DIR, projectId);
+  const projectDir = resolve(env.projectsDir, projectId);
 
   await connectDB();
   const project = await Project.findById(projectId).lean();
@@ -45,7 +45,7 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
   });
 
   const backend = new ValidatingFilesystemBackend({
-    rootDir: dataDir,
+    rootDir: projectDir,
     virtualMode: true,
   });
 

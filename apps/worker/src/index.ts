@@ -10,13 +10,15 @@ import {
   DEFAULT_WORKER_CONCURRENCY,
 } from "@archmax/core/queue/constants";
 import type { AgentJobData, AgentJobResult, TestRunJobData, TestRunJobResult } from "@archmax/core/queue/types";
-import { getEnv } from "@archmax/core/config/env";
+import { validateEnvOrSleep } from "@archmax/core/config/env";
 import { processAgentJob } from "./processor";
 import { processTestRunJob } from "./test-processor";
 
+const workerEnv = await validateEnvOrSleep();
+
 const CONCURRENCY = Math.max(
   1,
-  Number(getEnv().WORKER_CONCURRENCY ?? DEFAULT_WORKER_CONCURRENCY) ||
+  Number(workerEnv.WORKER_CONCURRENCY ?? DEFAULT_WORKER_CONCURRENCY) ||
     DEFAULT_WORKER_CONCURRENCY,
 );
 

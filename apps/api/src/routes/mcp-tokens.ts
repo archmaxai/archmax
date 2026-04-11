@@ -14,7 +14,7 @@ const createSchema = z.object({
 });
 
 function getFileService(): SemanticModelFileService {
-  return new SemanticModelFileService(getEnv().ARCHMAX_DATA_DIR);
+  return new SemanticModelFileService(getEnv().projectsDir);
 }
 
 const app = new Hono()

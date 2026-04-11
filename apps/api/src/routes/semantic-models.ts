@@ -7,7 +7,7 @@ import { SemanticModelFileService } from "@archmax/core/services/semantic-model-
 import { AppError } from "../utils/errors";
 
 function getFileService(): SemanticModelFileService {
-  return new SemanticModelFileService(getEnv().ARCHMAX_DATA_DIR);
+  return new SemanticModelFileService(getEnv().projectsDir);
 }
 
 function param(c: { req: { param: (name: string) => string | undefined } }, name: string): string {

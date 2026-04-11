@@ -41,7 +41,14 @@ docker compose up -d
 Open `http://localhost:8080` and log in with the username and password you configured (`UI_USERNAME` / `UI_PASSWORD`). The default username is `admin`.
 
 <Aside type="tip">
-The Compose stack runs MongoDB and Redis as separate containers alongside archmax. Project data is stored in the `archmax-data` volume and MongoDB data in `mongo-data`.
+The Compose stack runs MongoDB and Redis as separate containers alongside archmax. Two Docker volumes persist data across restarts:
+
+| Volume | Container Path | Contents |
+|--------|---------------|----------|
+| `archmax-data` | `/data` | Semantic model YAML files, DuckDB extension cache |
+| `mongo-data` | `/data/db` (mongo container) | MongoDB database files |
+
+These volumes are created automatically. Without them, all project and database data would be lost when containers are removed. See the [Docker Reference](/reference/docker/#volumes) for details.
 </Aside>
 
 ## Standalone Docker
@@ -56,7 +63,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-api-key \
-  -v ~/.archmax:/home/archmax \
+  -v ~/.archmax:/data \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -67,7 +74,7 @@ Save your `BETTER_AUTH_SECRET` value before running this command. The subshell `
 </Aside>
 
 <Aside type="note">
-MongoDB and Redis are both embedded in the image and start automatically when `MONGODB_URI` / `REDIS_URL` are not provided. To use external instances instead, pass `MONGODB_URI` and/or `REDIS_URL`. The bind mount at `/home/archmax` maps the container user’s home so project files, embedded MongoDB data, and the DuckDB extension cache (`~/.duckdb/`) persist under `~/.archmax` on the host.
+MongoDB and Redis are both embedded in the image and start automatically when `MONGODB_URI` / `REDIS_URL` are not provided. To use external instances instead, pass `MONGODB_URI` and/or `REDIS_URL`. The bind mount at `/data` maps the container’s data directory so project files, embedded MongoDB data, and the DuckDB extension cache (`.duckdb/`) persist under `~/.archmax` on the host.
 </Aside>
 
 ### When to use which mode?

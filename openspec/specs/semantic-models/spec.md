@@ -5,12 +5,12 @@ File-based semantic layer models that map database tables as datasets with field
 ## Requirements
 ### Requirement: Semantic Model YAML Structure
 
-A semantic model SHALL be stored as a YAML root file at `<ARCHMAX_DATA_DIR>/<projectId>/src/<modelName>.yaml` containing: `name` (string, required), `description` (string), `ai_context` (string or object with optional `instructions`, `synonyms`, `examples`), `relationships` (array), `metrics` (array), and `custom_extensions` (optional array of `{ vendor_name, data }` objects). Datasets SHALL NOT be stored in the root file when a per-dataset directory exists.
+A semantic model SHALL be stored as a YAML root file at `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/<modelName>.yaml` containing: `name` (string, required), `description` (string), `ai_context` (string or object with optional `instructions`, `synonyms`, `examples`), `relationships` (array), `metrics` (array), and `custom_extensions` (optional array of `{ vendor_name, data }` objects). Datasets SHALL NOT be stored in the root file when a per-dataset directory exists.
 
 #### Scenario: Root file contains model-level data
 
 - **WHEN** a semantic model is written to disk
-- **THEN** the root YAML file is stored at `<ARCHMAX_DATA_DIR>/<projectId>/src/<modelName>.yaml`
+- **THEN** the root YAML file is stored at `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/<modelName>.yaml`
 - **AND** the file contains name, description, ai_context, relationships, metrics, and custom_extensions
 - **AND** datasets are stored as individual files in a `src/<modelName>/` subdirectory
 
@@ -21,7 +21,7 @@ A semantic model SHALL be stored as a YAML root file at `<ARCHMAX_DATA_DIR>/<pro
 
 ### Requirement: Dataset Files
 
-Each dataset SHALL be stored as a separate YAML file at `<ARCHMAX_DATA_DIR>/<projectId>/src/<modelName>/<datasetName>.yaml` containing: `name` (string, required), `source` (string, e.g. `<connection>.<schema>.<table>`), `primary_key` (string array), `unique_keys` (array of string arrays), `description`, `ai_context`, `fields` (array of inline field objects), and `custom_extensions` (optional array of `{ vendor_name, data }` objects).
+Each dataset SHALL be stored as a separate YAML file at `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/<modelName>/<datasetName>.yaml` containing: `name` (string, required), `source` (string, e.g. `<connection>.<schema>.<table>`), `primary_key` (string array), `unique_keys` (array of string arrays), `description`, `ai_context`, `fields` (array of inline field objects), and `custom_extensions` (optional array of `{ vendor_name, data }` objects).
 
 #### Scenario: Dataset with composite primary key
 
@@ -92,7 +92,7 @@ A metric SHALL be stored in the model root file, containing: `name` (string, req
 
 ### Requirement: SemanticModelFileService
 
-The system SHALL provide a `SemanticModelFileService` class that manages all YAML file I/O for semantic models. Source files live under `<ARCHMAX_DATA_DIR>/<projectId>/src/`. It SHALL expose: `list(projectId)` — read all models in a project, `get(projectId, name)` — assemble a full model from root + dataset files, `getDataset(projectId, modelName, datasetName)` — read a single dataset file, `write(projectId, model)` — split and write root + dataset files with atomic writes (temp file + rename), `delete(projectId, name)` — remove root file and dataset directory, `exists(projectId, name)`. The service SHALL check for the `src/` subdirectory first and fall back to the legacy root-level layout for backward compatibility during migration.
+The system SHALL provide a `SemanticModelFileService` class that manages all YAML file I/O for semantic models. Source files live under `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/`. It SHALL expose: `list(projectId)` — read all models in a project, `get(projectId, name)` — assemble a full model from root + dataset files, `getDataset(projectId, modelName, datasetName)` — read a single dataset file, `write(projectId, model)` — split and write root + dataset files with atomic writes (temp file + rename), `delete(projectId, name)` — remove root file and dataset directory, `exists(projectId, name)`. The service SHALL check for the `src/` subdirectory first and fall back to the legacy root-level layout for backward compatibility during migration.
 
 #### Scenario: List models reads YAML files from src directory
 
@@ -152,12 +152,12 @@ All YAML files SHALL be validated against Zod schemas on read. Invalid files SHA
 
 ### Requirement: AGENTS.md Auto-Generation
 
-After every `write()` or `delete()` operation, the file service SHALL regenerate an `AGENTS.md` file in the project root directory (`<ARCHMAX_DATA_DIR>/<projectId>/AGENTS.md`) summarizing all semantic models, their datasets, and metrics for AI assistant discovery.
+After every `write()` or `delete()` operation, the file service SHALL regenerate an `AGENTS.md` file in the project root directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/AGENTS.md`) summarizing all semantic models, their datasets, and metrics for AI assistant discovery.
 
 #### Scenario: AGENTS.md regenerated after write
 
 - **WHEN** a semantic model is written
-- **THEN** `<ARCHMAX_DATA_DIR>/<projectId>/AGENTS.md` is regenerated at the project root
+- **THEN** `<ARCHMAX_DATA_DIR>/projects/<projectId>/AGENTS.md` is regenerated at the project root
 - **AND** it lists all models with their datasets and metrics
 
 ### Requirement: Path Safety
@@ -418,16 +418,16 @@ The system SHALL provide a migration script at `apps/api/src/scripts/migrate-src
 
 #### Scenario: Migration moves files to src subdirectory
 
-- **WHEN** the migration detects YAML files at `<ARCHMAX_DATA_DIR>/<projectId>/model.yaml`
-- **AND** no `<ARCHMAX_DATA_DIR>/<projectId>/src/` directory exists
-- **THEN** `model.yaml` is moved to `<ARCHMAX_DATA_DIR>/<projectId>/src/model.yaml`
-- **AND** the `model/` dataset directory (if present) is moved to `<ARCHMAX_DATA_DIR>/<projectId>/src/model/`
-- **AND** `AGENTS.md` remains at `<ARCHMAX_DATA_DIR>/<projectId>/AGENTS.md` (project root)
+- **WHEN** the migration detects YAML files at `<ARCHMAX_DATA_DIR>/projects/<projectId>/model.yaml`
+- **AND** no `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/` directory exists
+- **THEN** `model.yaml` is moved to `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/model.yaml`
+- **AND** the `model/` dataset directory (if present) is moved to `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/model/`
+- **AND** `AGENTS.md` remains at `<ARCHMAX_DATA_DIR>/projects/<projectId>/AGENTS.md` (project root)
 
 #### Scenario: Migration preserves uploads directory
 
 - **WHEN** the migration runs on a project with an existing `uploads/` directory
-- **THEN** the `uploads/` directory remains at `<ARCHMAX_DATA_DIR>/<projectId>/uploads/` (not moved)
+- **THEN** the `uploads/` directory remains at `<ARCHMAX_DATA_DIR>/projects/<projectId>/uploads/` (not moved)
 
 #### Scenario: Migration is idempotent
 

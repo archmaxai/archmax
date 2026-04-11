@@ -1,11 +1,11 @@
 import "./env";
 import { serve } from "@hono/node-server";
 import app from "./app";
-import { getEnv } from "@archmax/core/config/env";
+import { validateEnvOrSleep } from "@archmax/core/config/env";
 import { connectDB } from "@archmax/core/infra/db";
 import { seedAdmin } from "./lib/seed-admin";
 
-const env = getEnv();
+const env = await validateEnvOrSleep();
 const PORT = parseInt(env.PORT, 10);
 
 function printBanner(port: number) {
