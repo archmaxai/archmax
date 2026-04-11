@@ -4,15 +4,19 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   release:
     if: >-
-      github.event.pull_request.merged == true &&
+      github.event_name == 'workflow_dispatch' ||
       (
-        contains(github.event.pull_request.labels.*.name, 'release') ||
-        contains(github.event.pull_request.labels.*.name, 'release:minor') ||
-        contains(github.event.pull_request.labels.*.name, 'release:major')
+        github.event.pull_request.merged == true &&
+        (
+          contains(github.event.pull_request.labels.*.name, 'release') ||
+          contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+          contains(github.event.pull_request.labels.*.name, 'release:major')
+        )
       )
     runs-on: ubuntu-latest
     permissions:
@@ -30,7 +34,9 @@ jobs:
         id: strategy
         run: |
           LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
-          if echo "$LABELS" | grep -q 'release:major'; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q 'release:major'; then
             echo "bump=major" >> "$GITHUB_OUTPUT"
           elif echo "$LABELS" | grep -q 'release:minor'; then
             echo "bump=minor" >> "$GITHUB_OUTPUT"
