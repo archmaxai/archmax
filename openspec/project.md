@@ -162,7 +162,7 @@ The top-level organizational unit. A project groups related database connections
 
 ### Connections
 
-A connection represents a database connection (Postgres, MySQL, MSSQL, SQLite, DuckDB, MotherDuck) within a project. Each active connection is attached to the project's DuckDB instance for federated querying. Connection config stores structured parameters (host, port, database, user, password) or a raw URI.
+A connection represents a database connection (Postgres, MySQL, MSSQL, SQLite, DuckDB) within a project. Each active connection is attached to the project's DuckDB instance for federated querying. Connection config stores structured parameters (host, port, database, user, password) or a raw URI.
 
 ### Semantic Models (DuckDB-native, file-based)
 

@@ -5,146 +5,65 @@ TBD - created by archiving change add-single-image-deployment. Update Purpose af
 ## Requirements
 ### Requirement: Single Docker Image Deployment
 
-The system SHALL ship a single Docker image that bundles the API server, BullMQ worker, frontend SPA, and nginx reverse proxy. The image MUST be runnable with `docker run` and the following environment variables: `BETTER_AUTH_SECRET`, `UI_PASSWORD`, and `MONGODB_URI`.
-
-The image SHALL NOT include MongoDB. `MONGODB_URI` is a required environment variable pointing to an external MongoDB instance.
-
-When `REDIS_URL` is not provided, the container SHALL start an embedded `redis-server` process with data stored in `/tmp/redis`.
-
-The production Docker image SHALL run all application processes as a non-root user. The Dockerfile SHALL create a dedicated system user (e.g., `archmax`) and switch to it via the `USER` directive before the entrypoint. Only initial setup steps (package installation, directory creation) SHALL run as root.
-
-#### Scenario: Startup with external MongoDB and embedded Redis
-
-- **WHEN** the container starts with `MONGODB_URI` set and `REDIS_URL` not set
-- **THEN** the entrypoint starts embedded `redis-server` (binding to `127.0.0.1:6379`, data at `/tmp/redis`)
-- **AND** sets `REDIS_URL=redis://127.0.0.1:6379` for the application processes
-- **AND** connects to the external MongoDB instance via `MONGODB_URI`
-
-#### Scenario: Startup with all external services
-
-- **WHEN** the container starts with both `MONGODB_URI` and `REDIS_URL` set
-- **THEN** the entrypoint does NOT start embedded `redis-server`
-- **AND** the application connects to the external MongoDB and Redis instances
-
-#### Scenario: Missing MONGODB_URI
-
-- **WHEN** the container starts without `MONGODB_URI` set
-- **THEN** the application fails with a clear error message indicating that `MONGODB_URI` is required
-
-#### Scenario: External Redis provided
-
-- **WHEN** `REDIS_URL` is set to an external Redis connection URL
-- **THEN** the entrypoint does NOT start embedded `redis-server`
-- **AND** the application uses the external Redis for BullMQ and pub/sub
+The Dockerfile SHALL create the `archmax` system user with `-m -d /home/archmax` so that `/home/archmax` serves as both the user's `HOME` and the root of all persistent application data.
 
 #### Scenario: Non-root process execution
 
 - **WHEN** the container starts
 - **THEN** the API server, worker, and nginx processes run as the non-root `archmax` user
-- **AND** the `/app/data/projects` directory is writable by the `archmax` user
+- **AND** the `/home/archmax/projects` directory is writable by the `archmax` user
+- **AND** `HOME` resolves to `/home/archmax` so DuckDB can write its extension cache to `~/.duckdb/`
 
 ### Requirement: Unified Data Directory
 
-All persistent application data MUST reside under a single root directory (`/app/data/` in Docker). The directory layout SHALL be:
+All persistent application data MUST reside under the `archmax` user's home directory (`/home/archmax/` in Docker). The directory layout SHALL be:
 
-- `/app/data/projects/` — semantic model YAML files (`ARCHMAX_DATA_DIR`)
-- `/app/data/mongodb/` — embedded MongoDB data files (only when using embedded MongoDB)
+- `/home/archmax/projects/` — semantic model YAML files (`ARCHMAX_DATA_DIR`)
+- `/home/archmax/mongodb/` — embedded MongoDB data files (only when using embedded MongoDB)
+- `/home/archmax/.duckdb/` — DuckDB extension cache (created automatically)
 
-Redis data SHALL be stored in `/tmp/redis` and is explicitly ephemeral (not backed up). When using an external MongoDB via `MONGODB_URI`, the `/app/data/mongodb/` directory is unused.
+Redis data SHALL be stored in `/tmp/redis` and is explicitly ephemeral (not backed up). When using an external MongoDB via `MONGODB_URI`, the `/home/archmax/mongodb/` directory is unused.
+
+A single bind mount (`-v ~/.archmax:/home/archmax`) captures all persistent state: project files, embedded MongoDB data, and the DuckDB extension cache.
 
 #### Scenario: Single volume mount captures all persistent data
 
-- **WHEN** a user mounts a single host volume to `/app/data`
-- **THEN** both semantic model files and embedded MongoDB data are persisted across container restarts
+- **WHEN** a user mounts a single host volume to `/home/archmax`
+- **THEN** semantic model files, embedded MongoDB data, and DuckDB extension cache are persisted across container restarts
 
 #### Scenario: Data directory is created on first run
 
 - **WHEN** the container starts for the first time with a fresh volume
-- **THEN** the entrypoint creates `/app/data/projects/` and `/app/data/mongodb/` if they do not exist
+- **THEN** the entrypoint creates `/home/archmax/projects/` and `/home/archmax/mongodb/` if they do not exist
 
 ### Requirement: Docker Compose Production Configuration
 
-The repository SHALL include a `docker-compose.yml` at the project root as the recommended deployment method. The Compose file SHALL define:
-
-- An `archmax` service using the project Docker image with `MONGODB_URI` and `REDIS_URL` pointing to companion services
-- A `mongo` service using `mongo:8` with a named volume for data persistence
-- A `redis` service using `redis:8-alpine` with no persistence
-- Named volumes for `archmax-data` and `mongo-data`
-
-The `docker-compose.yml` SHALL be the primary quick-start method documented in the installation guide.
+The `docker-compose.yml` SHALL mount the named volume `archmax-data` to `/home/archmax` inside the archmax service container.
 
 #### Scenario: Compose stack starts successfully
 
 - **WHEN** a user runs `docker compose up -d` with required environment variables set
-- **THEN** all three services start and the archmax application connects to the external MongoDB and Redis instances
-- **AND** the embedded Redis inside the archmax container is NOT started (because `REDIS_URL` is provided)
+- **THEN** the `archmax-data` volume is mounted at `/home/archmax` inside the archmax container
 
 ### Requirement: Deployment Documentation
 
-The documentation site SHALL provide comprehensive deployment guidance across multiple pages:
+Data backup instructions MUST explain how to back up the `/home/archmax` volume (covering project files, embedded MongoDB data, and DuckDB extensions) and external MongoDB data separately when using Compose.
 
-**Installation page** (`getting-started/installation`):
-- The primary quick start MUST use `docker compose up` with the repository-root `docker-compose.yml`, requiring `BETTER_AUTH_SECRET`, `UI_PASSWORD`, and optionally `AGENT_API_KEY`.
-- A `docker run` section MUST document the standalone approach, noting that only `BETTER_AUTH_SECRET` and `UI_PASSWORD` are required (MongoDB and Redis are embedded automatically).
-- A clear note MUST explain that MongoDB is embedded automatically when `MONGODB_URI` is omitted, and Redis is embedded automatically when `REDIS_URL` is omitted.
-- Both sections MUST include `UI_USERNAME` (default: `admin`) in the environment variable list so users know their login credentials.
-- A prominent warning MUST advise users to save their `BETTER_AUTH_SECRET` value persistently. The warning MUST explain that losing or changing this secret invalidates all sessions and authentication data.
-- After the deployment steps, a "Log in" step MUST tell users to open the URL and authenticate with `UI_USERNAME` / `UI_PASSWORD`.
+The Docker reference page volumes section MUST list `/home/archmax` as the persistent mount point with `projects/`, `mongodb/`, and `.duckdb/` underneath, and `/tmp/redis` as ephemeral.
 
-**Configuration reference** (`reference/configuration`):
-- `MONGODB_URI` MUST be documented as optional with a note that the Docker image embeds MongoDB when unset.
-- A "Data Directory" section MUST document the `/app/data/` layout (`projects/`, `mongodb/`) and the single-volume backup strategy.
-- `REDIS_URL` MUST include a note that the Docker image embeds Redis when unset.
-- `UI_USERNAME` MUST be listed alongside `UI_PASSWORD` in the Admin Credentials section with its default value (`admin`).
-
-**Self-hosting guide** (`guides/self-hosting`):
-- A dedicated page MUST cover deployment modes (Docker Compose as recommended for production, standalone `docker run` with embedded services for simple setups).
-- Each deployment mode MUST include a brief explanation of when to use it and what trade-offs it carries (e.g., standalone is simpler but embeds MongoDB in the same container; Compose separates concerns and is easier to back up and scale).
-- Data backup instructions MUST explain how to back up the `/app/data` volume (covering both project files and embedded MongoDB data) and external MongoDB data separately when using Compose.
-- The page MUST be linked in the documentation sidebar.
-
-**README Quick Start**:
-- The `docker run` example MUST show `UI_USERNAME` alongside the other environment variables.
-- A note after the command MUST tell users to save their `BETTER_AUTH_SECRET`.
-- The "Open and log in" step MUST reference both `UI_USERNAME` and `UI_PASSWORD`.
-
-**.env.example**:
-- `MONGODB_URI` MUST be commented out and marked as optional (not "Required"), since the Docker image embeds MongoDB when unset.
-
-#### Scenario: User follows Compose quickstart
-
-- **WHEN** a new user reads the installation documentation
-- **THEN** they find `docker compose up` as the primary quick-start method
-- **AND** the guide shows how to set required environment variables
-- **AND** MongoDB is listed as provided by the Compose stack (not embedded)
-
-#### Scenario: User follows standalone docker run
-
-- **WHEN** a user reads the standalone Docker section
-- **THEN** they find a `docker run` command listing only `BETTER_AUTH_SECRET` and `UI_PASSWORD` as required
-- **AND** a note explains that `MONGODB_URI` and `REDIS_URL` are optional (embedded fallbacks available)
-
-#### Scenario: User looks up MONGODB_URI in configuration reference
-
-- **WHEN** a user reads the configuration reference
-- **THEN** `MONGODB_URI` is listed as optional
-- **AND** a note explains that the Docker image embeds MongoDB when unset
+The configuration reference MUST document the `/home/archmax/` layout (`projects/`, `mongodb/`, `.duckdb/`) and the single-volume backup strategy.
 
 #### Scenario: User needs to back up data
 
 - **WHEN** a user reads the self-hosting guide
-- **THEN** they find instructions for backing up the `/app/data` volume (semantic models and embedded MongoDB)
+- **THEN** they find instructions for backing up the `/home/archmax` volume (semantic models, embedded MongoDB, and DuckDB extensions)
 - **AND** separate guidance for backing up external MongoDB data via the Compose volume or managed service
 
-#### Scenario: User knows login credentials after deployment
+#### Scenario: User looks up Docker volume configuration
 
-- **WHEN** a user finishes the Docker deployment steps on any docs page
-- **THEN** they are told to log in with the username (`UI_USERNAME`, default `admin`) and the password they set via `UI_PASSWORD`
-
-#### Scenario: User is warned about BETTER_AUTH_SECRET persistence
-
-- **WHEN** a user reads any deployment instructions (README, installation, Docker reference)
-- **THEN** they find a warning to save their `BETTER_AUTH_SECRET` and reuse it across restarts and upgrades
+- **WHEN** a user reads the Docker reference page
+- **THEN** they find a volumes section listing `/home/archmax` as the persistent mount point
+- **AND** the section explains that `projects/`, `mongodb/`, and `.duckdb/` live under `/home/archmax` and that `/tmp/redis` is ephemeral
 
 ### Requirement: Docker Reference Page
 
@@ -153,7 +72,7 @@ The documentation site SHALL include a dedicated Docker reference page (`referen
 - **Image contents**: what is bundled (API server, BullMQ worker, frontend SPA, nginx reverse proxy, embedded MongoDB, embedded Redis)
 - **Exposed ports**: `8080` (nginx -> API + SPA)
 - **Environment variables**: a complete table listing every variable the image accepts, its default value, whether it is required or optional, and Docker-specific behavior notes (e.g. `MONGODB_URI` — omit to use embedded MongoDB, `REDIS_URL` — omit to use embedded Redis)
-- **Volumes**: `/app/data` (persistent — `projects/` and `mongodb/`), `/tmp/redis` (ephemeral)
+- **Volumes**: `/home/archmax` (persistent — `projects/`, `mongodb/`, `.duckdb/`), `/tmp/redis` (ephemeral)
 - **Entrypoint behavior**: the decision tree for starting embedded MongoDB and/or Redis vs. using external, startup ordering (mongod -> redis-server -> worker -> API -> nginx), and how `MONGODB_URI` / `REDIS_URL` gate the embedded services
 - **Docker Compose reference**: explanation of the repo-root `docker-compose.yml` services, volumes, and networking
 - **Health checks**: recommended Docker `HEALTHCHECK` or liveness probe commands
@@ -165,8 +84,8 @@ The page MUST be linked in the documentation sidebar under "Reference".
 #### Scenario: User looks up Docker volume configuration
 
 - **WHEN** a user reads the Docker reference page
-- **THEN** they find a volumes section listing `/app/data` as the persistent mount point
-- **AND** the section explains that `projects/` and `mongodb/` live under `/app/data` and that `/tmp/redis` is ephemeral
+- **THEN** they find a volumes section listing `/home/archmax` as the persistent mount point
+- **AND** the section explains that `projects/`, `mongodb/`, and `.duckdb/` live under `/home/archmax` and that `/tmp/redis` is ephemeral
 
 #### Scenario: User looks up entrypoint behavior
 
@@ -237,37 +156,56 @@ The `HEALTHCHECK` SHALL:
 The CI pipeline SHALL run Playwright end-to-end browser tests against the Docker image on every pull request. The E2E test infrastructure SHALL:
 
 - Live in a dedicated `apps/e2e/` workspace package with `@playwright/test`
-- Use a `docker-compose.ci.yml` that starts the application Docker image alongside MongoDB and Redis
+- Use a `docker-compose.ci.yml` that starts the application Docker image alongside MongoDB, Redis, **PostgreSQL**, **MySQL**, **Microsoft SQL Server** (official Linux container image from Microsoft Container Registry, e.g. `mcr.microsoft.com/mssql/server`), and a **SQLite** database file **mounted into the app container** at a documented path so the app can open it by filesystem path
 - Run after the Docker image is built and pushed to GHCR
 - Execute tests against `localhost:8080` (the nginx entrypoint of the Docker image)
 - Upload Playwright HTML reports and failure screenshots as GitHub Actions artifacts
 - Block the PR from merging if any E2E test fails
 
-The initial test suite SHALL cover at minimum:
-- Login flow (navigate to app, authenticate with `UI_USERNAME` / `UI_PASSWORD`)
-- Basic navigation (verify the main pages load without errors)
+The CI workflow SHALL generate random `UI_USERNAME` and `UI_PASSWORD` values at runtime and inject them into the Docker Compose stack and the Playwright test process via `E2E_USERNAME` and `E2E_PASSWORD`. Credentials MUST NOT be hardcoded in any committed file (compose defaults used only for local development MUST be documented as such).
+
+`docker-compose.ci.yml` SHALL use environment variable interpolation (`${UI_USERNAME}`, `${UI_PASSWORD}`) for admin credentials.
+
+The E2E test suite SHALL read login credentials exclusively from `E2E_USERNAME` and `E2E_PASSWORD` environment variables when running in CI, and MAY use documented defaults for local runs.
+
+The test suite SHALL cover at minimum:
+
+- Health endpoint returns healthy
+- Unauthenticated redirect to login page
+- Login page renders correctly (heading, username field, password field, sign-in button)
+- Successful login with valid credentials
+- Failed login with empty password
+- Failed login with correct username and wrong password
+- Failed login with wrong username and wrong password
+- **Data federation**: After login, ensure a project exists (create via UI if necessary), register active connections for PostgreSQL, MySQL, Microsoft SQL Server, and SQLite using parameters consistent with the compose network and mounted SQLite path, run **Test Connection** from the UI for each connection, and verify each succeeds
 
 #### Scenario: PR with passing E2E tests
 
 - **WHEN** a pull request is opened or updated
 - **AND** the Docker image builds successfully
-- **THEN** the E2E job starts the Docker image with MongoDB and Redis via Docker Compose
-- **AND** waits for the health endpoint to return healthy
+- **THEN** the E2E job generates random `UI_USERNAME` and `UI_PASSWORD` values
+- **AND** starts the application with MongoDB, Redis, and the federated database services via Docker Compose
+- **AND** waits for the health endpoint to return healthy and for database services to be ready
 - **AND** runs Playwright tests against the running application
 - **AND** the GitHub check is marked as successful
 
 #### Scenario: PR with failing E2E tests
 
-- **WHEN** a Playwright test fails (e.g., login page does not render, navigation error)
+- **WHEN** a Playwright test fails (e.g., login page does not render, navigation error, or a federated connection test fails)
 - **THEN** the GitHub check is marked as failed
 - **AND** the Playwright HTML report and failure screenshots are uploaded as artifacts
 - **AND** the PR is blocked from merging
 
 #### Scenario: Docker image fails to start
 
-- **WHEN** the Docker image starts but the health endpoint does not return healthy within 60 seconds
+- **WHEN** the Docker image starts but the health endpoint does not return healthy within the workflow’s configured wait window
 - **THEN** the E2E job fails without running Playwright tests
 - **AND** the container logs are captured for debugging
+
+#### Scenario: Contributor reproduces E2E locally
+
+- **WHEN** a contributor builds or pulls the application image, sets `APP_IMAGE` (or equivalent) and aligns `E2E_USERNAME` / `E2E_PASSWORD` with `UI_USERNAME` / `UI_PASSWORD` in compose, and runs `docker compose -f docker-compose.ci.yml up -d` followed by the documented Playwright command
+- **THEN** the same E2E tests executed in CI can pass locally against `localhost:8080`
 
 ### Requirement: Agent API Configuration Guidance in .env.example
 

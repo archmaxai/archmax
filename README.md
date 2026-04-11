@@ -1,6 +1,6 @@
 # archmax
 
-A semantic layer for your databases. Describe your data once, let AI agents query it intelligently.
+A semantic layer for your data: Archmax describes it, you sharpen it, AI agents query it.
 
 <p align="center">
   <a href="https://docs.archmax.ai"><strong>Documentation</strong></a> &nbsp;&middot;&nbsp;
@@ -45,7 +45,7 @@ The gap between "AI can write SQL" and "AI understands our data" is where most a
 
 ## How archmax Solves This
 
-archmax puts a **semantic layer** between your databases and AI agents. You describe your data once (what tables mean, how they relate, what metrics matter) and archmax exposes that knowledge through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+archmax puts a **semantic layer** between your databases and AI agents. Archmax describes your data; you sharpen it with the context that matters; agents query through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
 
 Instead of raw database access, agents get:
 
@@ -81,7 +81,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-openrouter-api-key \
-  -v ~/.archmax:/app/data \
+  -v ~/.archmax:/home/archmax \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -91,7 +91,39 @@ docker run -d \
 
 Open `http://localhost:8080` and log in with username `admin` (or your `UI_USERNAME`) and the password you set in `UI_PASSWORD`.
 
-For production deployments, use **Docker Compose** (separate containers for MongoDB and Redis). See the [Installation guide](apps/docs/src/content/docs/getting-started/installation.mdx) for details.
+### Docker Compose (Recommended for Production)
+
+Runs archmax with dedicated MongoDB and Redis containers instead of the embedded services:
+
+```bash
+# 1. Clone the repo (or copy docker-compose.yml + .env.example)
+git clone https://github.com/archmaxai/archmax.git
+cd archmax
+
+# 2. Create your .env from the example and fill in the required values
+cp .env.example .env
+
+# 3. Start the stack
+docker compose up -d
+```
+
+The `.env` file needs at minimum:
+
+```bash
+BETTER_AUTH_SECRET=<random-32+-char-secret>   # openssl rand -base64 32
+UI_PASSWORD=<your-admin-password>
+AGENT_API_KEY=<your-openrouter-api-key>       # required for AI features
+```
+
+Optional overrides (defaults shown):
+
+| Variable | Default |
+|----------|---------|
+| `UI_USERNAME` | `admin` |
+| `AGENT_API_BASE_URL` | `https://openrouter.ai/api/v1` |
+| `AGENT_MODEL` | `anthropic/claude-sonnet-4.6` |
+
+The stack exposes port **8080** and persists data in two Docker volumes (`archmax-data` and `mongo-data`).
 
 ### Local Development
 

@@ -86,6 +86,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate random credentials
+        run: |
+          echo "UI_USERNAME=e2e_$(openssl rand -hex 4)" >> "$GITHUB_ENV"
+          echo "UI_PASSWORD=$(openssl rand -base64 18)!" >> "$GITHUB_ENV"
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -95,20 +100,21 @@ jobs:
 
       - name: Start application stack
         run: |
-          docker compose -f docker-compose.ci.yml pull
-          docker compose -f docker-compose.ci.yml up -d
+          docker compose -f docker-compose.ci.yml --env-file /dev/null pull
+          docker compose -f docker-compose.ci.yml --env-file /dev/null up -d
           echo "Waiting for health endpoint..."
-          for i in $(seq 1 40); do
+          for i in $(seq 1 60); do
             STATUS=$(curl -sf http://localhost:8080/api/health 2>/dev/null | jq -r '.status // empty') || true
             if [ "$STATUS" = "healthy" ]; then
               echo "Application is healthy after ${i} attempts"
               exit 0
             fi
-            echo "  Attempt $i/40: ${STATUS:-not ready}"
+            echo "  Attempt $i/60: ${STATUS:-not ready}"
             sleep 5
           done
           echo "Application failed to become healthy"
-          docker compose -f docker-compose.ci.yml logs app
+          docker compose -f docker-compose.ci.yml --env-file /dev/null logs app
+          docker compose -f docker-compose.ci.yml --env-file /dev/null logs mssql
           exit 1
 
       - uses: pnpm/action-setup@v4
@@ -131,6 +137,8 @@ jobs:
         env:
           CI: true
           BASE_URL: http://localhost:8080
+          E2E_USERNAME: ${{ env.UI_USERNAME }}
+          E2E_PASSWORD: ${{ env.UI_PASSWORD }}
 
       - name: Upload Playwright report
         if: always()
@@ -143,8 +151,8 @@ jobs:
       - name: Capture container logs on failure
         if: failure()
         run: |
-          docker compose -f docker-compose.ci.yml logs app > /tmp/app-logs.txt 2>&1
-          docker compose -f docker-compose.ci.yml logs > /tmp/all-logs.txt 2>&1
+          docker compose -f docker-compose.ci.yml --env-file /dev/null logs app > /tmp/app-logs.txt 2>&1
+          docker compose -f docker-compose.ci.yml --env-file /dev/null logs > /tmp/all-logs.txt 2>&1
 
       - name: Upload container logs
         if: failure()
@@ -156,4 +164,4 @@ jobs:
 
       - name: Stop stack
         if: always()
-        run: docker compose -f docker-compose.ci.yml down -v
+        run: docker compose -f docker-compose.ci.yml --env-file /dev/null down -v

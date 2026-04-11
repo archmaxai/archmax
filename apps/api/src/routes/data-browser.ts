@@ -2,12 +2,14 @@ import { Hono, type Context } from "hono";
 import { z } from "zod/v4";
 import { zValidator } from "@hono/zod-validator";
 import { connectDB } from "@archmax/core/infra/db";
-import { Connection, Project, type IConnectionDocument } from "@archmax/core/models/index";
+import { Connection, Project } from "@archmax/core/models/index";
 import { getProjectInstance } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
+type ProjectInstance = Awaited<ReturnType<typeof getProjectInstance>>;
+
 function safeJson(c: Context, data: unknown): Response {
-  const body = JSON.stringify(data, (_k, v) => typeof v === "bigint" ? Number(v) : v);
+  const body = JSON.stringify(data, (_k, v) => (typeof v === "bigint" ? Number(v) : v));
   return c.newResponse(body, 200, { "Content-Type": "application/json" });
 }
 
@@ -19,25 +21,31 @@ const paginationQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional().default(DEFAULT_PAGE_SIZE),
 });
 
-async function getInstanceForProject(projectId: string) {
+const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+const SYSTEM_SCHEMA_EXCLUSION = [
+  "information_schema",
+  "pg_catalog",
+  "pg_toast",
+  "performance_schema",
+  "mysql",
+  "sys",
+]
+  .map((s) => `'${s}'`)
+  .join(", ");
+
+const INTERNAL_DATABASES = new Set(["memory", "system", "temp"]);
+
+async function getProjectDuckDB(projectId: string): Promise<ProjectInstance> {
   await connectDB();
   const project = await Project.findById(projectId).lean();
   if (!project) throw AppError.notFound("Project not found");
 
-  const connections = (await Connection.find({
-    project: projectId,
-    isActive: true,
-  }).lean()) as IConnectionDocument[];
-
-  const instance = await getProjectInstance(projectId, connections, {
-    readOnly: true,
-  });
-
-  return { instance, connections };
+  const connections = await Connection.find({ project: projectId, isActive: true }).lean();
+  return getProjectInstance(projectId, connections, { readOnly: true });
 }
 
-async function runQuery(projectId: string, sql: string) {
-  const { instance } = await getInstanceForProject(projectId);
+async function collectRows(instance: ProjectInstance, sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
   const db = await instance.connect();
   try {
     const result = await db.run(sql);
@@ -58,29 +66,46 @@ async function runQuery(projectId: string, sql: string) {
   }
 }
 
-async function getValidDatabases(projectId: string): Promise<string[]> {
-  const { rows } = await runQuery(projectId, "SHOW DATABASES");
-  return rows.map((r) => String(r.database_name)).filter((n) => n !== "memory" && n !== "system" && n !== "temp");
+async function collectScalar(instance: ProjectInstance, sql: string): Promise<unknown> {
+  const db = await instance.connect();
+  try {
+    const result = await db.run(sql);
+    for await (const chunk of result) {
+      const rows = chunk.getRows();
+      if (rows.length > 0) return rows[0][0];
+    }
+    return undefined;
+  } finally {
+    db.disconnectSync();
+  }
 }
 
-const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+async function getValidDatabases(instance: ProjectInstance): Promise<string[]> {
+  const { rows } = await collectRows(instance, "SHOW DATABASES");
+  return rows
+    .map((r) => String(r.database_name))
+    .filter((n) => !INTERNAL_DATABASES.has(n));
+}
+
+function assertValidIdentifier(value: string): void {
+  if (!IDENTIFIER_RE.test(value)) throw AppError.badRequest("Invalid identifier");
+}
 
 const app = new Hono()
   .get("/databases", async (c) => {
-    const projectId = c.req.param("projectId")!;
-    const databases = await getValidDatabases(projectId);
+    const projectId = c.req.param("projectId") as string;
+    const instance = await getProjectDuckDB(projectId);
+    const databases = await getValidDatabases(instance);
     return safeJson(c, databases.map((name) => ({ name })));
   })
 
   .get("/databases/:database/tables", async (c) => {
-    const projectId = c.req.param("projectId")!;
+    const projectId = c.req.param("projectId") as string;
     const database = c.req.param("database");
+    assertValidIdentifier(database);
 
-    if (!IDENTIFIER_RE.test(database)) {
-      throw AppError.badRequest("Invalid identifier");
-    }
-
-    const validDatabases = await getValidDatabases(projectId);
+    const instance = await getProjectDuckDB(projectId);
+    const validDatabases = await getValidDatabases(instance);
     if (!validDatabases.includes(database)) {
       throw AppError.notFound("Database not found");
     }
@@ -92,12 +117,15 @@ const app = new Hono()
     let sql = `SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = '${database}'`;
     if (schemaFilter && IDENTIFIER_RE.test(schemaFilter)) {
       sql += ` AND table_schema = '${schemaFilter}'`;
+    } else {
+      sql += ` AND LOWER(table_schema) NOT IN (${SYSTEM_SCHEMA_EXCLUSION})`;
     }
     sql += ` ORDER BY table_schema, table_name`;
 
-    const { rows } = await runQuery(projectId, sql);
+    const { rows } = await collectRows(instance, sql);
 
-    return safeJson(c,
+    return safeJson(
+      c,
       rows.map((r) => ({
         schema: String(r.table_schema),
         name: String(r.table_name),
@@ -106,45 +134,36 @@ const app = new Hono()
   })
 
   .get("/databases/:database/tables/:schema/:table/data", zValidator("query", paginationQuery), async (c) => {
-    const projectId = c.req.param("projectId")!;
+    const projectId = c.req.param("projectId") as string;
     const database = c.req.param("database");
     const schema = c.req.param("schema");
     const table = c.req.param("table");
+    assertValidIdentifier(database);
+    assertValidIdentifier(schema);
+    assertValidIdentifier(table);
+
     const { page, pageSize } = c.req.valid("query");
 
-    if (!IDENTIFIER_RE.test(database) || !IDENTIFIER_RE.test(schema) || !IDENTIFIER_RE.test(table)) {
-      throw AppError.badRequest("Invalid identifier");
-    }
-
-    const validDatabases = await getValidDatabases(projectId);
+    const instance = await getProjectDuckDB(projectId);
+    const validDatabases = await getValidDatabases(instance);
     if (!validDatabases.includes(database)) {
       throw AppError.notFound("Database not found");
     }
 
-    const { instance } = await getInstanceForProject(projectId);
+    const exists = await collectScalar(
+      instance,
+      `SELECT 1 FROM information_schema.tables WHERE table_catalog = '${database}' AND table_schema = '${schema}' AND table_name = '${table}' LIMIT 1`,
+    );
+    if (exists === undefined) {
+      throw AppError.notFound("Table not found");
+    }
+
+    const fqTable = `${database}.${schema}.${table}`;
+    const total = Number(await collectScalar(instance, `SELECT COUNT(*) FROM ${fqTable}`) ?? 0);
+
+    const offset = (page - 1) * pageSize;
     const db = await instance.connect();
     try {
-      const fqTable = `${database}.${schema}.${table}`;
-
-      const tableCheck = await db.run(
-        `SELECT 1 FROM information_schema.tables WHERE table_catalog = '${database}' AND table_schema = '${schema}' AND table_name = '${table}' LIMIT 1`,
-      );
-      let tableExists = false;
-      for await (const chunk of tableCheck) {
-        if (chunk.getRows().length > 0) tableExists = true;
-      }
-      if (!tableExists) {
-        throw AppError.notFound("Table not found");
-      }
-
-      const countResult = await db.run(`SELECT COUNT(*) AS total FROM ${fqTable}`);
-      let total = 0;
-      for await (const chunk of countResult) {
-        const rows = chunk.getRows();
-        if (rows.length > 0) total = Number(rows[0][0]);
-      }
-
-      const offset = (page - 1) * pageSize;
       const dataResult = await db.run(`SELECT * FROM ${fqTable} LIMIT ${pageSize} OFFSET ${offset}`);
       const columnNames = dataResult.columnNames();
       const columnTypes = dataResult.columnTypes().map((t) => t.toString());

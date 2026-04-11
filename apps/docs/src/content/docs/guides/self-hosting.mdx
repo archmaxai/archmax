@@ -13,7 +13,7 @@ archmax supports two deployment modes. Choose the one that fits your needs:
 |---|---|---|
 | **Services** | Separate containers for archmax, MongoDB, and Redis | Single container with embedded MongoDB and Redis |
 | **Setup** | Clone repo, configure `.env`, run `docker compose up` | Single `docker run` command |
-| **Backups** | Each service has its own volume; easy to back up individually | Single `/app/data` volume captures everything |
+| **Backups** | Each service has its own volume; easy to back up individually | Single `/home/archmax` bind mount captures project data, MongoDB (embedded), and DuckDB cache |
 | **Scaling** | Can scale services independently; swap in managed MongoDB (Atlas, DocumentDB) | All-in-one; simpler but less flexible |
 | **Best for** | Production deployments, teams, long-term use | Quick evaluation, demos, single-user setups |
 
@@ -43,7 +43,7 @@ docker run -d \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-api-key \
-  -v ~/.archmax:/app/data \
+  -v ~/.archmax:/home/archmax \
   ghcr.io/archmaxai/archmax:latest
 ```
 
@@ -61,12 +61,13 @@ archmax stores two categories of persistent data:
 
 | Data | Location | Description |
 |------|----------|-------------|
-| Project files | `/app/data/projects/` (archmax container) | Semantic model YAML files |
-| Embedded MongoDB | `/app/data/mongodb/` (archmax container) | Database files (only when using embedded MongoDB) |
+| Project files | `/home/archmax/projects/` (archmax container) | Semantic model YAML files |
+| Embedded MongoDB | `/home/archmax/mongodb/` (archmax container) | Database files (only when using embedded MongoDB) |
+| DuckDB cache | `/home/archmax/.duckdb/` (archmax container) | DuckDB extension cache |
 | External Database | MongoDB service/instance | Projects, connections, conversations, test data (when using Compose or external MongoDB) |
 
 <Aside type="tip">
-When using standalone Docker with embedded MongoDB, the single volume mount at `/app/data` captures everything (project files and database data). When using Docker Compose with external MongoDB, only project files live in the archmax container volume.
+When using standalone Docker with embedded MongoDB, the single bind mount at `/home/archmax` captures the archmax user’s home: project files, embedded MongoDB data, and the DuckDB extension cache. When using Docker Compose with external MongoDB, only project files (and DuckDB cache) live in the archmax container volume.
 </Aside>
 
 ### Backing Up Project Files
@@ -156,7 +157,7 @@ docker run -d --name archmax -p 8080:8080 \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=your-password \
   -e AGENT_API_KEY=your-api-key \
-  -v ~/.archmax:/app/data \
+  -v ~/.archmax:/home/archmax \
   ghcr.io/archmaxai/archmax:latest
 ```
 

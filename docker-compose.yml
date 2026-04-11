@@ -19,7 +19,7 @@ services:
       AGENT_API_KEY: ${AGENT_API_KEY:-}  # Required for AI agent features
       AGENT_MODEL: ${AGENT_MODEL:-anthropic/claude-sonnet-4.6}
     volumes:
-      - archmax-data:/app/data
+      - archmax-data:/home/archmax
     depends_on:
       - mongo
       - redis

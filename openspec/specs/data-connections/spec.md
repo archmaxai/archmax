@@ -5,7 +5,7 @@ Management of database connections within projects and DuckDB-based federation f
 ## Requirements
 ### Requirement: Connection Model
 
-The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, motherduck), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
+The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
 
 #### Scenario: Create a postgres connection
 
@@ -34,7 +34,7 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 
 #### Scenario: Connection types
 
-- **WHEN** a connection is created with any supported type (postgres, mysql, mssql, sqlite, duckdb, motherduck)
+- **WHEN** a connection is created with any supported type (postgres, mysql, mssql, sqlite, duckdb)
 - **THEN** the connection is accepted and stored
 
 #### Scenario: Unknown connection config fields rejected

@@ -243,6 +243,12 @@ dialog {
   background-color: var(--sl-color-gray-5);
 }
 
+/* ─── Hero Title ─── */
+
+.hero h1 {
+  font-size: clamp(2rem, 4vw, 2.75rem) !important;
+}
+
 /* ─── Hero CTA Buttons ─── */
 
 .hero a[class*="primary"],
@@ -262,6 +268,50 @@ dialog {
 
 .right-sidebar {
   border-inline-start: none !important;
+}
+
+/* ─── Screenshot Grid ─── */
+
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  margin-block: 1.5rem;
+}
+
+@media (max-width: 50rem) {
+  .screenshot-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 30rem) {
+  .screenshot-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.screenshot-grid figure {
+  margin: 0;
+}
+
+.screenshot-grid figure img {
+  display: block;
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--sl-color-gray-5);
+  transition: border-color 0.15s;
+}
+
+.screenshot-grid figure img:hover {
+  border-color: var(--sl-color-gray-3);
+}
+
+.screenshot-grid figcaption {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--sl-color-gray-2);
+  margin-top: 0.5rem;
 }
 
 /* ─── Focus ─── */

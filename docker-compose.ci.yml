@@ -1,5 +1,7 @@
-# CI-only stack for running E2E tests against the Docker image.
-# IMAGE_TAG must be set (e.g., IMAGE_TAG=pr-42 docker compose -f docker-compose.ci.yml up)
+# CI and local E2E stack.
+# Usage:  APP_IMAGE=ghcr.io/archmaxai/archmax:pr-42 docker compose -f docker-compose.ci.yml --env-file /dev/null up -d
+# Credentials default to admin/testpass123 for local use (compose interpolation defaults).
+# In CI the workflow generates random values and passes them via environment.
 
 services:
   app:
@@ -10,14 +12,23 @@ services:
       MONGODB_URI: mongodb://mongo:27017/archmax-e2e
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: http://localhost:8080
+      AUTH_BASE_URL: http://localhost:8080
       BETTER_AUTH_SECRET: e2e-test-secret-32chars-xxxxxxxxx
-      UI_USERNAME: admin
-      UI_PASSWORD: testpass123
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:-testpass123}
+    volumes:
+      - ./apps/e2e/fixtures/sqlite:/e2e-fixtures:ro
     depends_on:
       mongo:
         condition: service_started
       redis:
         condition: service_started
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      mssql-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 5s
@@ -31,3 +42,63 @@ services:
 
   redis:
     image: redis:8-alpine
+
+  # ── Federated database services ──────────────────────────────────
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: e2e_pass
+      POSTGRES_DB: e2e_test
+    volumes:
+      - ./apps/e2e/fixtures/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e -d e2e_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: e2e_root
+      MYSQL_USER: e2e
+      MYSQL_PASSWORD: e2e_pass
+      MYSQL_DATABASE: e2e_test
+    volumes:
+      - ./apps/e2e/fixtures/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ue2e", "-pe2e_pass"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "E2e_Str0ng!Pass"
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "E2e_Str0ng!Pass", "-No", "-Q", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 20
+
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      mssql:
+        condition: service_healthy
+    environment:
+      MSSQL_SA_PASSWORD: "E2e_Str0ng!Pass"
+    volumes:
+      - ./apps/e2e/fixtures/mssql:/seed:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /opt/mssql-tools18/bin/sqlcmd -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -No -Q "CREATE DATABASE e2e_test"
+        /opt/mssql-tools18/bin/sqlcmd -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -No -d e2e_test -i /seed/init.sql

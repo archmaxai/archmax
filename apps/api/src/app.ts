@@ -31,12 +31,16 @@ const app = new Hono()
   .use("/api/*", async (c, next) => {
     const method = c.req.method;
     if (method === "POST" || method === "PUT" || method === "PATCH") {
-      const ct = c.req.header("content-type") ?? "";
-      const isJson = ct.startsWith("application/json");
-      const isMultipart = ct.startsWith("multipart/");
-      const isAuthRoute = c.req.path.startsWith("/api/auth/");
-      if (!isJson && !isMultipart && !isAuthRoute) {
-        return c.json({ error: "Content-Type must be application/json" }, 415);
+      const cl = c.req.header("content-length");
+      const hasBody = cl !== undefined && cl !== "0";
+      if (hasBody) {
+        const ct = c.req.header("content-type") ?? "";
+        const isJson = ct.startsWith("application/json");
+        const isMultipart = ct.startsWith("multipart/");
+        const isAuthRoute = c.req.path.startsWith("/api/auth/");
+        if (!isJson && !isMultipart && !isAuthRoute) {
+          return c.json({ error: "Content-Type must be application/json" }, 415);
+        }
       }
     }
     await next();
