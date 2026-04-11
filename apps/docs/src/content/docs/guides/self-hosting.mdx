@@ -89,6 +89,16 @@ volumes:
 Redis data is intentionally **not** persisted. The BullMQ queue is transient — incomplete jobs are retried on restart. If you need durable Redis data, configure an external Redis instance via `REDIS_URL` with its own persistence.
 </Aside>
 
+### Railway / Custom Volume Mounts
+
+When deploying to platforms like Railway that mount volumes at arbitrary paths (e.g. `/data`), set `ARCHMAX_DATA_DIR` to point inside the mount:
+
+| Variable | Value |
+|----------|-------|
+| `ARCHMAX_DATA_DIR` | `/data/projects` |
+
+The entrypoint automatically fixes ownership on the configured data directory before starting services, so root-owned volume mounts work out of the box.
+
 ## Data Backup
 
 archmax stores two categories of persistent data:

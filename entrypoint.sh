@@ -5,6 +5,13 @@ export ARCHMAX_DATA_DIR="${ARCHMAX_DATA_DIR:-/data}"
 export HOME="$ARCHMAX_DATA_DIR"
 mkdir -p "$ARCHMAX_DATA_DIR/projects"
 
+# When running as root (default), fix ownership on volume mounts and re-exec as archmax.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "$ARCHMAX_DATA_DIR/projects" "$ARCHMAX_DATA_DIR/mongodb" /tmp/redis
+  chown archmax:archmax "$ARCHMAX_DATA_DIR" "$ARCHMAX_DATA_DIR/projects" "$ARCHMAX_DATA_DIR/mongodb" /tmp/redis /var/log
+  exec gosu archmax "$0" "$@"
+fi
+
 # --- Embedded MongoDB (when MONGODB_URI is not provided) ---
 if [ -z "$MONGODB_URI" ]; then
   mkdir -p "$ARCHMAX_DATA_DIR/mongodb"
