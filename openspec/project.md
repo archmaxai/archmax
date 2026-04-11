@@ -166,7 +166,7 @@ A connection represents a database connection (Postgres, MySQL, MSSQL, SQLite, D
 
 ### Semantic Models (DuckDB-native, file-based)
 
-Semantic models are stored as YAML files on disk, one file per model, in a per-project directory (`<ARCHMAX_DATA_DIR>/<projectId>/`). Semantic models are project-scoped (not connection-scoped) and follow the [OSI (Open Semantic Interchange)](https://github.com/open-semantic-interchange/OSI) spec with snake_case naming. Each YAML file is self-contained:
+Semantic models are stored as YAML files on disk, one file per model, in a per-project directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`). Semantic models are project-scoped (not connection-scoped) and follow the [OSI (Open Semantic Interchange)](https://github.com/open-semantic-interchange/OSI) spec with snake_case naming. Each YAML file is self-contained:
 
 - **Datasets** — logical representations of tables/views with source references (`<connection>.<schema>.<table>`), `primary_key`, `unique_keys`, and inline fields
 - **Fields** — row-level attributes within a dataset, with an OSI `expression` object (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), optional `dimension` (`{ is_time: true }` for temporal fields), and `custom_extensions` for project-specific metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`)
@@ -190,7 +190,7 @@ Exposes semantic metadata as MCP tools for AI agent consumption:
 
 - Single-user system — no multi-tenancy
 - MongoDB stores projects and connections; semantic models are stored as YAML files on disk
-- `ARCHMAX_DATA_DIR` env var configures the base directory for project folders (defaults to `./data/projects`)
+- `ARCHMAX_DATA_DIR` env var configures the root data directory (defaults to `./data`); project files live under `$ARCHMAX_DATA_DIR/projects/`
 - DuckDB is used for federated querying across connections (in-process, per project)
 - MCP bearer token auth is the only security boundary for AI agents
 - Better Auth session-based login for admin UI

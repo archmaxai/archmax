@@ -94,10 +94,11 @@ ENV PROMPTS_DIR=/app/prompts
 COPY --from=build-worker /app/apps/worker/worker.mjs ./apps/worker/worker.mjs
 COPY --from=build-spa /app/apps/frontend/dist /usr/share/nginx/html
 
-RUN useradd -r -m -d /home/archmax -s /bin/false archmax \
+RUN useradd -r -M -d /data -s /bin/false archmax \
  && corepack disable \
- && mkdir -p /home/archmax/projects /home/archmax/mongodb /tmp/redis \
- && chown -R archmax:archmax /home/archmax /tmp/redis /var/log
+ && mkdir -p /data /tmp/redis \
+ && chown -R archmax:archmax /data /tmp/redis /var/log
+ENV HOME=/data ARCHMAX_DATA_DIR=/data
 
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 RUN rm -f /etc/nginx/sites-enabled/default \

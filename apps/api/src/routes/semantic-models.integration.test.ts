@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@archmax/core/config/env", () => ({
-  getEnv: vi.fn(() => ({ ARCHMAX_DATA_DIR: "/tmp/test-data" })),
+  getEnv: vi.fn(() => ({ ARCHMAX_DATA_DIR: "/tmp/test-data", projectsDir: "/tmp/test-data/projects" })),
 }));
 
 vi.mock("@archmax/core/services/semantic-model-files", () => ({

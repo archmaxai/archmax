@@ -176,7 +176,7 @@ export async function createPlaygroundAgent(
     configuration: { baseURL: agent.llmBaseUrl },
   });
 
-  const fileSvc = new SemanticModelFileService(env.ARCHMAX_DATA_DIR);
+  const fileSvc = new SemanticModelFileService(env.projectsDir);
   const projectId = agent.project.toString();
   const scopes = agent.semanticModels;
 

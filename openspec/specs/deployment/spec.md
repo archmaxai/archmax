@@ -5,65 +5,74 @@ TBD - created by archiving change add-single-image-deployment. Update Purpose af
 ## Requirements
 ### Requirement: Single Docker Image Deployment
 
-The Dockerfile SHALL create the `archmax` system user with `-m -d /home/archmax` so that `/home/archmax` serves as both the user's `HOME` and the root of all persistent application data.
+The Dockerfile SHALL create the `archmax` system user and a dedicated `/data` directory (owned by `archmax`) as the root of all persistent application data, with `HOME=/data`.
+
+The entrypoint SHALL validate critical environment variables before starting application processes. When validation fails, the container stays running with a clear error message instead of crash-looping.
 
 #### Scenario: Non-root process execution
 
 - **WHEN** the container starts
 - **THEN** the API server, worker, and nginx processes run as the non-root `archmax` user
-- **AND** the `/home/archmax/projects` directory is writable by the `archmax` user
-- **AND** `HOME` resolves to `/home/archmax` so DuckDB can write its extension cache to `~/.duckdb/`
+- **AND** `ARCHMAX_DATA_DIR/projects` is writable by the `archmax` user
+- **AND** `HOME` is set to `ARCHMAX_DATA_DIR` so DuckDB can write its extension cache to `~/.duckdb/` (i.e. `$ARCHMAX_DATA_DIR/.duckdb/`)
+
+#### Scenario: Container stays up on bad configuration
+
+- **WHEN** the container starts with missing or invalid required environment variables
+- **THEN** the container remains running (does not exit or crash-loop)
+- **AND** `docker logs` shows a human-readable error with fix instructions
+- **AND** no stack traces or raw JSON error output appear in the logs
 
 ### Requirement: Unified Data Directory
 
-All persistent application data MUST reside under the `archmax` user's home directory (`/home/archmax/` in Docker). The directory layout SHALL be:
+`ARCHMAX_DATA_DIR` SHALL be the root directory for all persistent application data (default `/data` in Docker). All persistent application data MUST reside under `ARCHMAX_DATA_DIR`. The directory layout SHALL be:
 
-- `/home/archmax/projects/` — semantic model YAML files (`ARCHMAX_DATA_DIR`)
-- `/home/archmax/mongodb/` — embedded MongoDB data files (only when using embedded MongoDB)
-- `/home/archmax/.duckdb/` — DuckDB extension cache (created automatically)
+- `/data/projects/` — semantic model YAML files (`ARCHMAX_DATA_DIR/projects`)
+- `/data/mongodb/` — embedded MongoDB data files (only when using embedded MongoDB; under `ARCHMAX_DATA_DIR/mongodb`)
+- `/data/.duckdb/` — DuckDB extension cache (created automatically; under `ARCHMAX_DATA_DIR/.duckdb/` via `HOME=$ARCHMAX_DATA_DIR`)
 
-Redis data SHALL be stored in `/tmp/redis` and is explicitly ephemeral (not backed up). When using an external MongoDB via `MONGODB_URI`, the `/home/archmax/mongodb/` directory is unused.
+Redis data SHALL be stored in `/tmp/redis` and is explicitly ephemeral (not backed up). When using an external MongoDB via `MONGODB_URI`, the `/data/mongodb/` directory is unused.
 
-A single bind mount (`-v ~/.archmax:/home/archmax`) captures all persistent state: project files, embedded MongoDB data, and the DuckDB extension cache.
+A single bind mount (`-v ~/.archmax:/data`) captures all persistent state: project files, embedded MongoDB data, and the DuckDB extension cache.
 
 #### Scenario: Single volume mount captures all persistent data
 
-- **WHEN** a user mounts a single host volume to `/home/archmax`
+- **WHEN** a user mounts a single host volume to `/data`
 - **THEN** semantic model files, embedded MongoDB data, and DuckDB extension cache are persisted across container restarts
 
 #### Scenario: Data directory is created on first run
 
 - **WHEN** the container starts for the first time with a fresh volume
-- **THEN** the entrypoint creates `/home/archmax/projects/` and `/home/archmax/mongodb/` if they do not exist
+- **THEN** the entrypoint creates `$ARCHMAX_DATA_DIR/projects/` and `$ARCHMAX_DATA_DIR/mongodb/` if they do not exist
 
 ### Requirement: Docker Compose Production Configuration
 
-The `docker-compose.yml` SHALL mount the named volume `archmax-data` to `/home/archmax` inside the archmax service container.
+The `docker-compose.yml` SHALL mount the named volume `archmax-data` to `/data` inside the archmax service container.
 
 #### Scenario: Compose stack starts successfully
 
 - **WHEN** a user runs `docker compose up -d` with required environment variables set
-- **THEN** the `archmax-data` volume is mounted at `/home/archmax` inside the archmax container
+- **THEN** the `archmax-data` volume is mounted at `/data` inside the archmax container
 
 ### Requirement: Deployment Documentation
 
-Data backup instructions MUST explain how to back up the `/home/archmax` volume (covering project files, embedded MongoDB data, and DuckDB extensions) and external MongoDB data separately when using Compose.
+Data backup instructions MUST explain how to back up the `/data` volume (covering project files, embedded MongoDB data, and DuckDB extensions) and external MongoDB data separately when using Compose.
 
-The Docker reference page volumes section MUST list `/home/archmax` as the persistent mount point with `projects/`, `mongodb/`, and `.duckdb/` underneath, and `/tmp/redis` as ephemeral.
+The Docker reference page volumes section MUST list `/data` as the persistent mount point with `projects/`, `mongodb/`, and `.duckdb/` underneath, and `/tmp/redis` as ephemeral.
 
-The configuration reference MUST document the `/home/archmax/` layout (`projects/`, `mongodb/`, `.duckdb/`) and the single-volume backup strategy.
+The configuration reference MUST document the `/data/` layout (`projects/`, `mongodb/`, `.duckdb/`) and the single-volume backup strategy.
 
 #### Scenario: User needs to back up data
 
 - **WHEN** a user reads the self-hosting guide
-- **THEN** they find instructions for backing up the `/home/archmax` volume (semantic models, embedded MongoDB, and DuckDB extensions)
+- **THEN** they find instructions for backing up the `/data` volume (semantic models, embedded MongoDB, and DuckDB extensions)
 - **AND** separate guidance for backing up external MongoDB data via the Compose volume or managed service
 
 #### Scenario: User looks up Docker volume configuration
 
 - **WHEN** a user reads the Docker reference page
-- **THEN** they find a volumes section listing `/home/archmax` as the persistent mount point
-- **AND** the section explains that `projects/`, `mongodb/`, and `.duckdb/` live under `/home/archmax` and that `/tmp/redis` is ephemeral
+- **THEN** they find a volumes section listing `/data` as the persistent mount point
+- **AND** the section explains that `projects/`, `mongodb/`, and `.duckdb/` live under `/data` and that `/tmp/redis` is ephemeral
 
 ### Requirement: Docker Reference Page
 
@@ -72,7 +81,7 @@ The documentation site SHALL include a dedicated Docker reference page (`referen
 - **Image contents**: what is bundled (API server, BullMQ worker, frontend SPA, nginx reverse proxy, embedded MongoDB, embedded Redis)
 - **Exposed ports**: `8080` (nginx -> API + SPA)
 - **Environment variables**: a complete table listing every variable the image accepts, its default value, whether it is required or optional, and Docker-specific behavior notes (e.g. `MONGODB_URI` — omit to use embedded MongoDB, `REDIS_URL` — omit to use embedded Redis)
-- **Volumes**: `/home/archmax` (persistent — `projects/`, `mongodb/`, `.duckdb/`), `/tmp/redis` (ephemeral)
+- **Volumes**: `/data` (persistent — `projects/`, `mongodb/`, `.duckdb/`), `/tmp/redis` (ephemeral)
 - **Entrypoint behavior**: the decision tree for starting embedded MongoDB and/or Redis vs. using external, startup ordering (mongod -> redis-server -> worker -> API -> nginx), and how `MONGODB_URI` / `REDIS_URL` gate the embedded services
 - **Docker Compose reference**: explanation of the repo-root `docker-compose.yml` services, volumes, and networking
 - **Health checks**: recommended Docker `HEALTHCHECK` or liveness probe commands
@@ -84,8 +93,8 @@ The page MUST be linked in the documentation sidebar under "Reference".
 #### Scenario: User looks up Docker volume configuration
 
 - **WHEN** a user reads the Docker reference page
-- **THEN** they find a volumes section listing `/home/archmax` as the persistent mount point
-- **AND** the section explains that `projects/`, `mongodb/`, and `.duckdb/` live under `/home/archmax` and that `/tmp/redis` is ephemeral
+- **THEN** they find a volumes section listing `/data` as the persistent mount point
+- **AND** the section explains that `projects/`, `mongodb/`, and `.duckdb/` live under `/data` and that `/tmp/redis` is ephemeral
 
 #### Scenario: User looks up entrypoint behavior
 
@@ -246,4 +255,22 @@ The `/api/config` endpoint SHALL include an `agentConfigured` boolean field that
 - **AND** a client requests `GET /api/config`
 - **THEN** the response includes `"agentConfigured": false`
 - **AND** no secret values are leaked in the response
+
+### Requirement: Entrypoint Environment Pre-flight Check
+
+The Docker entrypoint script SHALL validate that critical environment variables (`BETTER_AUTH_SECRET`, `UI_PASSWORD`) are set before starting Node.js processes. When validation fails, the entrypoint SHALL print a human-readable error message listing each missing variable with a description of its purpose and a fix hint, then execute `sleep infinity` to keep the container running without crash-looping.
+
+The pre-flight check SHALL run after embedded MongoDB/Redis setup (so `MONGODB_URI` and `REDIS_URL` are already resolved) but before spawning the worker or API server.
+
+#### Scenario: Required variable missing in Docker
+
+- **WHEN** the container starts without `BETTER_AUTH_SECRET` set
+- **THEN** the entrypoint prints an error banner listing the missing variable and its purpose
+- **AND** the container stays running via `sleep infinity` (exit code 0 on SIGTERM)
+- **AND** no Node.js process is started
+
+#### Scenario: All required variables present
+
+- **WHEN** the container starts with all required environment variables set
+- **THEN** the entrypoint proceeds to start the worker, API server, and nginx as normal
 

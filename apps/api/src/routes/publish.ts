@@ -14,7 +14,7 @@ import { invalidateScopedViews } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
 function getPublishService(): PublishService {
-  return new PublishService(getEnv().ARCHMAX_DATA_DIR);
+  return new PublishService(getEnv().projectsDir);
 }
 
 function param(c: { req: { param: (name: string) => string | undefined } }, name: string): string {
@@ -61,8 +61,7 @@ async function pushToGitHub(projectId: string, message: string): Promise<void> {
     : [project.github.owner, project.github.repo];
   const branch = project.github.branch || "main";
 
-  const dataDir = env.ARCHMAX_DATA_DIR;
-  const projectDir = join(dataDir, projectId);
+  const projectDir = join(env.projectsDir, projectId);
   const allFiles = await collectFiles(projectDir, projectDir);
   if (allFiles.length === 0) return;
 

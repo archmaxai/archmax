@@ -130,18 +130,18 @@ app.all("/", async (c) => {
   if (!authCtx) return c.json(UNAUTHORIZED, 401);
 
   const isTestRoute = c.req.path.includes("/test/");
-  const dataDir = getEnv().ARCHMAX_DATA_DIR;
+  const projectsDir = getEnv().projectsDir;
   let fileSvc: SemanticModelFileService;
   let tempDir: string | null = null;
 
   if (isTestRoute) {
     tempDir = await mkdtemp(join(tmpdir(), "archmax-test-build-"));
-    const publishSvc = new PublishService(dataDir);
+    const publishSvc = new PublishService(projectsDir);
     const assembledDir = join(tempDir, authCtx.projectId);
     await publishSvc.assemble(authCtx.projectId, assembledDir);
     fileSvc = new SemanticModelFileService(tempDir, { subDir: "." });
   } else {
-    fileSvc = new SemanticModelFileService(dataDir, { subDir: "build" });
+    fileSvc = new SemanticModelFileService(projectsDir, { subDir: "build" });
   }
 
   const toolCtx: McpToolContext = { ...authCtx, fileSvc };
