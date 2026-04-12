@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
-import type { IConnectionDocument } from "../models/Connection";
+import type { IConnectionDocument, IConnectionConfig } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
 import { getEnv } from "../config/env";
@@ -65,6 +67,97 @@ export function buildAttachString(conn: IConnectionDocument): string {
   }
 }
 
+// ── CSV helpers ───────────────────────────────────────────────────────
+
+const UNSAFE_IDENT = /[^a-zA-Z0-9_]/g;
+
+export function csvTableName(filename: string): string {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  let name = stem.replace(UNSAFE_IDENT, "_").replace(/_{2,}/g, "_").replace(/^_+|_+$/g, "");
+  if (!name || /^[0-9]/.test(name)) name = `_${name}`;
+  return name.toLowerCase();
+}
+
+export function csvFilePath(projectId: string, filename: string): string {
+  if (/[/\\]/.test(filename) || filename.includes("..")) {
+    throw new Error("Filename must not contain path separators or '..'");
+  }
+  const { projectsDir } = getEnv();
+  return join(projectsDir, projectId, "uploads", filename);
+}
+
+export async function csvFileExists(projectId: string, filename: string): Promise<boolean> {
+  try {
+    const path = csvFilePath(projectId, filename);
+    const s = await stat(path);
+    return s.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export function buildReadCsvOptions(config: IConnectionConfig): string {
+  const opts: string[] = [];
+  if (config.delimiter != null) opts.push(`delim = '${config.delimiter}'`);
+  if (config.header != null) opts.push(`header = ${config.header}`);
+  if (config.quote != null) opts.push(`quote = '${config.quote}'`);
+  if (config.escape != null) opts.push(`escape = '${config.escape}'`);
+  if (config.skip != null) opts.push(`skip = ${config.skip}`);
+  return opts.length > 0 ? `, ${opts.join(", ")}` : "";
+}
+
+async function attachCsvConnection(
+  entry: ProjectDuckDB,
+  conn: IConnectionDocument,
+): Promise<void> {
+  const cfg = conn.connectionConfig;
+  if (!cfg.filename) return;
+
+  const projectId = conn.project.toString();
+  const filePath = csvFilePath(projectId, cfg.filename);
+  const tableName = csvTableName(cfg.filename);
+  const escapedPath = filePath.replace(/'/g, "''");
+  const readOpts = buildReadCsvOptions(cfg);
+
+  const db = await entry.instance.connect();
+  try {
+    try { await db.run("SET enable_external_access = true"); } catch { /* already enabled */ }
+    await db.run(`ATTACH ':memory:' AS ${conn.slug}`);
+    await db.run(
+      `CREATE TABLE ${conn.slug}."${tableName}" AS SELECT * FROM read_csv('${escapedPath}'${readOpts})`,
+    );
+    entry.attachedConnections.add(conn._id.toString());
+  } finally {
+    try { await db.run("SET enable_external_access = false"); } catch { /* ignored */ }
+    db.disconnectSync();
+  }
+}
+
+export async function testCsvConnection(
+  conn: IConnectionDocument,
+): Promise<void> {
+  const cfg = conn.connectionConfig;
+  if (!cfg.filename) throw new Error("CSV connection missing filename");
+
+  const projectId = conn.project.toString();
+  const filePath = csvFilePath(projectId, cfg.filename);
+  const tableName = csvTableName(cfg.filename);
+  const escapedPath = filePath.replace(/'/g, "''");
+  const readOpts = buildReadCsvOptions(cfg);
+
+  const instance = await DuckDBInstance.create();
+  const db = await instance.connect();
+  try {
+    await db.run(`ATTACH ':memory:' AS ${conn.slug}`);
+    await db.run(
+      `CREATE TABLE ${conn.slug}."${tableName}" AS SELECT * FROM read_csv('${escapedPath}'${readOpts})`,
+    );
+    await db.run(`SELECT COUNT(*) FROM ${conn.slug}."${tableName}"`);
+  } finally {
+    db.disconnectSync();
+  }
+}
+
 export async function getProjectInstance(
   projectId: string,
   connections: IConnectionDocument[],
@@ -82,7 +175,11 @@ export async function getProjectInstance(
   for (const conn of connections) {
     const connId = conn._id.toString();
     if (entry.attachedConnections.has(connId)) continue;
-    await attachConnection(entry, conn);
+    if (conn.type === "csv") {
+      await attachCsvConnection(entry, conn);
+    } else {
+      await attachConnection(entry, conn);
+    }
   }
 
   return entry.instance;
@@ -94,6 +191,12 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
 
   const db = await entry.instance.connect();
   try {
+    // If a prior hardenConnection() disabled external access at the instance
+    // level, INSTALL/LOAD will fail because they need the extensions directory.
+    // Temporarily re-enable it; the caller's hardenConnection() re-disables it
+    // before any user-provided SQL executes.
+    try { await db.run("SET enable_external_access = true"); } catch { /* already enabled */ }
+
     const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
     await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
@@ -103,6 +206,7 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
     await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}${readOnlyClause})`);
     entry.attachedConnections.add(conn._id.toString());
   } finally {
+    try { await db.run("SET enable_external_access = false"); } catch { /* ignored */ }
     db.disconnectSync();
   }
 }

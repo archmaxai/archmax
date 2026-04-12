@@ -1,0 +1,11 @@
+id,name,category,price,in_stock
+1,Widget A,Electronics,29.99,true
+2,Widget B,Electronics,49.99,true
+3,Gadget X,Accessories,14.50,false
+4,Gadget Y,Accessories,22.00,true
+5,Gizmo Z,Tools,99.95,true
+6,Thingamajig,Misc,5.00,true
+7,Doohickey,Tools,12.75,false
+8,Whatchamacallit,Misc,8.50,true
+9,Contraption,Electronics,199.99,true
+10,Apparatus,Tools,45.00,false

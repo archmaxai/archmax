@@ -7,6 +7,7 @@ export const CONNECTION_TYPES = [
   "mssql",
   "sqlite",
   "duckdb",
+  "csv",
 ] as const;
 
 export type ConnectionType = (typeof CONNECTION_TYPES)[number];
@@ -20,6 +21,12 @@ export interface IConnectionConfig {
   password?: string;
   uri?: string;
   encrypt?: boolean;
+  filename?: string;
+  delimiter?: string;
+  header?: boolean;
+  quote?: string;
+  escape?: string;
+  skip?: number;
   [key: string]: unknown;
 }
 
@@ -60,6 +67,12 @@ const ConnectionConfigSchema = new Schema<IConnectionConfig>(
     password: { type: String },
     uri: { type: String },
     encrypt: { type: Boolean },
+    filename: { type: String },
+    delimiter: { type: String },
+    header: { type: Boolean },
+    quote: { type: String },
+    escape: { type: String },
+    skip: { type: Number },
   },
   { _id: false, strict: false },
 );

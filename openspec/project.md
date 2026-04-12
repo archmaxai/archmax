@@ -121,6 +121,7 @@ pnpm --filter @archmax/api build   # tsc (emits JS to dist/)
 - **Mongoose models**: Interface → Schema → hot-reload-safe export (`mongoose.models.X || mongoose.model()`) — used for Project and Connection
 - **Soft delete**: Mongoose models use a shared plugin (`softDeletePlugin`) that adds `deleted`/`deletedAt` fields and auto-filters deleted records
 - **Semantic model file service**: `SemanticModelFileService` in `@archmax/core/services/semantic-model-files` handles all YAML file I/O (list, read, write, delete) with atomic writes (temp file + rename)
+- **Schema versioning**: Per-document `_schemaVersion` integer on every Mongoose model, with a startup migration runner (`runMigrations()` in `@archmax/core/infra/migrations`) that applies pending migrations in ascending version order. Migration scripts live in `infra/migrations/scripts/`, each exporting `{ model, version, description, up }`. New documents default to the latest version; legacy documents without the field are treated as version 0. See `specs/schema-migrations/spec.md` for full details.
 - **Env config**: Zod schema validation via `getEnv()` singleton in `@archmax/core/config/env`
 - **DB connection**: Singleton `connectDB()` with global mongoose cache in `@archmax/core/infra/db`
 - **DuckDB service**: Lazy per-project DuckDB instances in `@archmax/core/services/duckdb` — connections attached as named schemas via postgres/mysql/mssql extensions

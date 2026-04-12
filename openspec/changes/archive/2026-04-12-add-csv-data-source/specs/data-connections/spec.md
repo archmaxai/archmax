@@ -1,8 +1,5 @@
-# data-connections Specification
+## MODIFIED Requirements
 
-## Purpose
-Management of database connections within projects and DuckDB-based federation for cross-connection querying. Connections replace the former data-sources capability, are project-scoped, and support any DuckDB-compatible database type.
-## Requirements
 ### Requirement: Connection Model
 
 The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, csv), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. For `type: "csv"`, the `connectionConfig` SHALL accept: `filename` (string, required — must reference an existing file in the project's `uploads/` directory), `delimiter` (string, optional), `header` (boolean, optional), `quote` (string, optional), `escape` (string, optional), `skip` (number, optional). Standard database fields (`host`, `port`, `user`, `password`, `uri`, `database`, `schema`, `encrypt`) are not applicable to CSV connections.
@@ -62,36 +59,6 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 - **WHEN** a connection is created with `type: "csv"` and `connectionConfig: { filename: "nonexistent.csv" }`
 - **AND** the file does not exist in the project's `uploads/` directory
 - **THEN** a 400 error is returned indicating the file was not found
-
-### Requirement: Connection CRUD API
-
-The API SHALL expose CRUD endpoints for connections at `/api/projects/:projectId/connections`.
-
-#### Scenario: List connections for a project
-
-- **WHEN** a GET request is made to `/api/projects/:projectId/connections`
-- **THEN** all non-deleted, active connections for that project are returned
-
-#### Scenario: Create a connection
-
-- **WHEN** a POST request is made to `/api/projects/:projectId/connections` with valid config
-- **THEN** the connection is created under the project and returned with status 201
-
-#### Scenario: Update a connection
-
-- **WHEN** a PUT request is made to `/api/projects/:projectId/connections/:id`
-- **THEN** the connection is updated and the new version is returned
-
-#### Scenario: Soft-delete a connection
-
-- **WHEN** a DELETE request is made to `/api/projects/:projectId/connections/:id`
-- **THEN** the connection is soft-deleted
-- **AND** the corresponding schema is detached from the project's DuckDB instance
-
-#### Scenario: Connection not found
-
-- **WHEN** a request targets a non-existent or soft-deleted connection
-- **THEN** a 404 error is returned
 
 ### Requirement: DuckDB Federation
 
@@ -155,110 +122,7 @@ The system SHALL maintain a DuckDB instance per project that attaches all active
 - **AND** if successful, returns `{ ok: true }`
 - **AND** if the file cannot be read or parsed, returns `{ ok: false, error: "<message>" }`
 
-### Requirement: Connection Slug Migration
-
-The system SHALL provide a migration utility that populates the `slug` field for existing connections that lack one. The migration MUST derive the slug from the connection's `name` using the same lowercasing and sanitization logic as auto-generation, and MUST handle collisions by appending a numeric suffix (e.g. `_2`, `_3`).
-
-#### Scenario: Migrate existing connections
-
-- **WHEN** the migration runs and existing connections have no `slug` field
-- **THEN** each connection receives a slug derived from its name
-- **AND** duplicate slugs within the same project are disambiguated with numeric suffixes
-
-### Requirement: Credential Redaction
-All connection API responses SHALL redact sensitive credential fields before returning data to clients. The `password` field in `connectionConfig` SHALL be replaced with a sentinel value (`••••••••`). If `connectionConfig.uri` contains an embedded password, the password portion SHALL be replaced with the same sentinel. This applies to every endpoint that returns connection data: list, get, create, and update.
-
-#### Scenario: GET list redacts passwords
-- **WHEN** a GET request is made to `/api/projects/:projectId/connections`
-- **THEN** every connection in the response has `connectionConfig.password` replaced with `••••••••`
-- **AND** any embedded password in `connectionConfig.uri` is replaced with `••••••••`
-
-#### Scenario: POST create redacts response
-- **WHEN** a POST request creates a new connection with a plaintext password
-- **THEN** the 201 response body has `connectionConfig.password` replaced with `••••••••`
-
-#### Scenario: PUT update redacts response
-- **WHEN** a PUT request updates an existing connection
-- **THEN** the response body has `connectionConfig.password` replaced with `••••••••`
-
-### Requirement: Credential Preservation on Update
-
-The PUT endpoint SHALL preserve stored credentials when the client sends back redacted values. If the incoming `connectionConfig.password` equals the sentinel value (`********`) or is empty/absent, the server SHALL keep the previously stored password. If the incoming `connectionConfig.uri` contains the sentinel in its password portion, the server SHALL keep the previously stored URI. When `ENCRYPTION_KEY` is set and the client provides a new (non-sentinel, non-empty) password, the server SHALL encrypt the new value before persisting. This prevents accidental overwrite of credentials with redacted placeholders.
-
-#### Scenario: Sentinel password is preserved
-
-- **WHEN** a PUT request sends `connectionConfig.password` as `********`
-- **THEN** the server retains the existing stored password (encrypted or plaintext) and does not overwrite it with the sentinel
-
-#### Scenario: Empty password is preserved
-
-- **WHEN** a PUT request sends `connectionConfig.password` as an empty string or omits it entirely
-- **THEN** the server retains the existing stored password
-
-#### Scenario: New password overwrites stored value
-
-- **WHEN** a PUT request sends a `connectionConfig.password` that is neither empty nor the sentinel
-- **AND** `ENCRYPTION_KEY` is configured
-- **THEN** the server encrypts the new password with AES-256-GCM and stores the encrypted value
-
-#### Scenario: New password stored plaintext without ENCRYPTION_KEY
-
-- **WHEN** a PUT request sends a new `connectionConfig.password`
-- **AND** `ENCRYPTION_KEY` is not configured
-- **THEN** the server stores the new password as plaintext
-
-#### Scenario: Sentinel in URI is preserved
-
-- **WHEN** a PUT request sends a `connectionConfig.uri` containing `********` as the password portion
-- **THEN** the server retains the existing stored URI
-
-### Requirement: Connection Schema Filter
-
-When `connectionConfig.schema` is set on a connection, all schema-discovery surfaces (data browser table listing, MCP connection info, semantic model agent) SHALL use it to scope visible tables to that schema only. When `connectionConfig.schema` is not set, all schemas from the attached database remain visible (current behavior). The `get_project_connections` MCP tool SHALL include the connection's `slug` and `schema` (from `connectionConfig.schema`, if set) in its response so that AI agents can scope their `information_schema` queries accordingly.
-
-#### Scenario: Postgres connection with schema set to "public"
-- **WHEN** a Postgres connection has `connectionConfig.schema` set to `"public"`
-- **THEN** the data browser List Tables endpoint only returns tables where `table_schema = 'public'`
-- **AND** the MCP `get_project_connections` response includes `schema: "public"` for that connection
-
-#### Scenario: Connection with no schema configured
-- **WHEN** a connection has no `connectionConfig.schema` value (empty or absent)
-- **THEN** the data browser List Tables endpoint returns tables from all schemas
-- **AND** the MCP `get_project_connections` response omits the `schema` field for that connection
-
-#### Scenario: MCP tool returns slug and schema
-- **WHEN** an AI agent calls `get_project_connections` for a project
-- **THEN** each connection in the response includes `slug` and, if configured, `schema`
-
-### Requirement: Credential Encryption at Rest
-
-The system SHALL encrypt sensitive credential fields in `connectionConfig` before persisting to MongoDB when the `ENCRYPTION_KEY` environment variable is set. The `password` field SHALL be encrypted using AES-256-GCM via the shared `encrypt()` helper. The `uri` field, when it contains an embedded password, SHALL be encrypted in its entirety. When `ENCRYPTION_KEY` is not set, credentials SHALL be stored in plaintext (matching test-agent behavior). All code paths that consume stored credentials (DuckDB attach, test-connection, data browser) SHALL decrypt before use. API response redaction SHALL first decrypt the stored value (if encrypted), then apply the existing `********` sentinel replacement.
-
-#### Scenario: Password encrypted on create when ENCRYPTION_KEY is set
-
-- **WHEN** a connection is created with `connectionConfig.password: "s3cret"` and `ENCRYPTION_KEY` is configured
-- **THEN** the persisted MongoDB document contains an AES-256-GCM encrypted value in `connectionConfig.password`
-- **AND** the API response still returns `connectionConfig.password` as `********`
-
-#### Scenario: URI encrypted on create when ENCRYPTION_KEY is set
-
-- **WHEN** a connection is created with `connectionConfig.uri: "postgres://user:pass@host/db"` and `ENCRYPTION_KEY` is configured
-- **THEN** the persisted MongoDB document contains an encrypted value in `connectionConfig.uri`
-
-#### Scenario: Plaintext fallback when ENCRYPTION_KEY is absent
-
-- **WHEN** a connection is created with `connectionConfig.password: "s3cret"` and `ENCRYPTION_KEY` is not configured
-- **THEN** the password is stored as plaintext in MongoDB (current behavior preserved)
-
-#### Scenario: Credentials decrypted for DuckDB attach
-
-- **WHEN** a connection with encrypted credentials is attached to a project's DuckDB instance
-- **THEN** the credentials are decrypted before building the ATTACH string
-
-#### Scenario: Credentials decrypted for test-connection
-
-- **WHEN** a test-connection request is made for a connection with encrypted credentials
-- **THEN** the credentials are decrypted before attempting the connectivity test
+## ADDED Requirements
 
 ### Requirement: CSV File Path Resolution
 
@@ -278,4 +142,3 @@ The system SHALL resolve CSV file paths relative to the project's `uploads/` dir
 
 - **WHEN** a CSV connection is created with `filename: "subdir/data.csv"`
 - **THEN** a 400 error is returned indicating the filename must not contain path separators
-

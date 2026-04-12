@@ -1,11 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
+import { writeFile, mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import type { IConnectionConfig } from "../models/Connection";
 
 vi.mock("../config/env", () => ({
-  getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
+  getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "", projectsDir: "/tmp/test-projects" })),
 }));
 
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS } from "./duckdb";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS, csvTableName, buildReadCsvOptions, csvFilePath } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
@@ -445,6 +448,148 @@ describe("hardenConnection", () => {
       expect(rows[0][0]).toBe("from_b");
     } finally {
       dbB.disconnectSync();
+    }
+  });
+});
+
+// ── CSV helpers ──────────────────────────────────────────────────────
+
+describe("csvTableName", () => {
+  it("strips extension and lowercases", () => {
+    expect(csvTableName("Sales_Data.csv")).toBe("sales_data");
+  });
+
+  it("replaces spaces and special chars with underscores", () => {
+    expect(csvTableName("My Report (2024).csv")).toBe("my_report_2024");
+  });
+
+  it("prepends underscore for leading digit", () => {
+    expect(csvTableName("2024-revenue.csv")).toBe("_2024_revenue");
+  });
+
+  it("handles dotless filename", () => {
+    expect(csvTableName("data")).toBe("data");
+  });
+
+  it("handles multiple dots by stripping only final extension", () => {
+    expect(csvTableName("my.data.file.csv")).toBe("my_data_file");
+  });
+
+  it("handles empty stem", () => {
+    expect(csvTableName(".csv")).toBe("_");
+  });
+});
+
+describe("buildReadCsvOptions", () => {
+  it("returns empty string for no options", () => {
+    expect(buildReadCsvOptions({} as IConnectionConfig)).toBe("");
+  });
+
+  it("builds delimiter option", () => {
+    expect(buildReadCsvOptions({ delimiter: ";" } as IConnectionConfig)).toBe(", delim = ';'");
+  });
+
+  it("builds multiple options", () => {
+    const result = buildReadCsvOptions({ delimiter: "|", header: true, skip: 2 } as IConnectionConfig);
+    expect(result).toContain("delim = '|'");
+    expect(result).toContain("header = true");
+    expect(result).toContain("skip = 2");
+  });
+
+  it("includes quote and escape", () => {
+    const result = buildReadCsvOptions({ quote: "'", escape: "\\" } as IConnectionConfig);
+    expect(result).toContain("quote = '''");
+    expect(result).toContain("escape = '\\'");
+  });
+});
+
+describe("csvFilePath", () => {
+  it("resolves simple filename", () => {
+    const path = csvFilePath("proj1", "data.csv");
+    expect(path).toBe(join("/tmp/test-projects", "proj1", "uploads", "data.csv"));
+  });
+
+  it("rejects path traversal with ..", () => {
+    expect(() => csvFilePath("proj1", "../../../etc/passwd")).toThrow("path separators");
+  });
+
+  it("rejects forward slash", () => {
+    expect(() => csvFilePath("proj1", "sub/file.csv")).toThrow("path separators");
+  });
+
+  it("rejects backslash", () => {
+    expect(() => csvFilePath("proj1", "sub\\file.csv")).toThrow("path separators");
+  });
+});
+
+describe("CSV DuckDB attach", () => {
+  const CSV_DIR = join("/tmp/test-projects", "csv-test-proj", "uploads");
+  const CSV_CONTENT = `id,name,amount\n1,Alice,99.99\n2,Bob,50.00\n3,Charlie,75.50\n`;
+
+  beforeEach(async () => {
+    await mkdir(CSV_DIR, { recursive: true });
+    await writeFile(join(CSV_DIR, "sales.csv"), CSV_CONTENT);
+  });
+
+  afterEach(async () => {
+    await rm(join("/tmp/test-projects", "csv-test-proj"), { recursive: true, force: true });
+  });
+
+  it("materializes CSV into a DuckDB catalog and allows querying", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      const filePath = join(CSV_DIR, "sales.csv").replace(/'/g, "''");
+      await db.run("ATTACH ':memory:' AS test_csv");
+      await db.run(`CREATE TABLE test_csv."sales" AS SELECT * FROM read_csv('${filePath}')`);
+
+      const result = await db.run('SELECT COUNT(*) AS cnt FROM test_csv."sales"');
+      const rows: unknown[][] = [];
+      for await (const chunk of result) { rows.push(...chunk.getRows()); }
+      expect(Number(rows[0][0])).toBe(3);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("CSV catalog appears in SHOW DATABASES", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      const filePath = join(CSV_DIR, "sales.csv").replace(/'/g, "''");
+      await db.run("ATTACH ':memory:' AS test_csv");
+      await db.run(`CREATE TABLE test_csv."sales" AS SELECT * FROM read_csv('${filePath}')`);
+
+      const result = await db.run("SHOW DATABASES");
+      const rows: unknown[][] = [];
+      for await (const chunk of result) { rows.push(...chunk.getRows()); }
+      const dbNames = rows.map((r) => r[0]);
+      expect(dbNames).toContain("test_csv");
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("CSV data survives after enable_external_access = false", async () => {
+    const instance = await DuckDBInstance.create();
+    const setup = await instance.connect();
+    try {
+      const filePath = join(CSV_DIR, "sales.csv").replace(/'/g, "''");
+      await setup.run("ATTACH ':memory:' AS test_csv");
+      await setup.run(`CREATE TABLE test_csv."sales" AS SELECT * FROM read_csv('${filePath}')`);
+    } finally {
+      setup.disconnectSync();
+    }
+
+    const db = await instance.connect();
+    await hardenConnection(db);
+    try {
+      const result = await db.run('SELECT name FROM test_csv."sales" ORDER BY id');
+      const rows: unknown[][] = [];
+      for await (const chunk of result) { rows.push(...chunk.getRows()); }
+      expect(rows.map((r) => r[0])).toEqual(["Alice", "Bob", "Charlie"]);
+    } finally {
+      db.disconnectSync();
     }
   });
 });

@@ -3,14 +3,14 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
-import { testSingleConnection } from "@archmax/core/services/duckdb";
+import { testSingleConnection, testCsvConnection, csvFileExists } from "@archmax/core/services/duckdb";
 import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
 import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
 
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
-const connectionConfigSchema = z.object({
+const dbConnectionConfigSchema = z.object({
   host: z.string().optional(),
   port: z.number().optional(),
   database: z.string().optional(),
@@ -20,6 +20,19 @@ const connectionConfigSchema = z.object({
   uri: z.string().optional(),
   encrypt: z.boolean().optional(),
 }).strict();
+
+const SAFE_CSV_FILENAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+const csvConnectionConfigSchema = z.object({
+  filename: z.string().min(1).regex(SAFE_CSV_FILENAME, "Filename contains invalid characters"),
+  delimiter: z.string().max(4).optional(),
+  header: z.boolean().optional(),
+  quote: z.string().max(1).optional(),
+  escape: z.string().max(1).optional(),
+  skip: z.number().int().min(0).optional(),
+}).strict();
+
+const connectionConfigSchema = z.union([dbConnectionConfigSchema, csvConnectionConfigSchema]);
 
 export const REDACTED_SENTINEL = "********";
 
@@ -125,6 +138,14 @@ const app = new Hono()
     if (!project) throw AppError.notFound("Project not found");
 
     const body = c.req.valid("json");
+
+    if (body.type === "csv") {
+      const filename = (body.connectionConfig as { filename?: string }).filename;
+      if (!filename) throw AppError.badRequest("CSV connection requires a filename");
+      const exists = await csvFileExists(projectId, filename);
+      if (!exists) throw AppError.badRequest(`File "${filename}" not found in project uploads`);
+    }
+
     const slug = body.slug || slugifyConnectionName(body.name);
     const encryptedConfig = encryptConnectionCredentials(
       body.connectionConfig as Record<string, unknown>,
@@ -135,16 +156,31 @@ const app = new Hono()
   })
   .put("/:id", zValidator("json", updateSchema), async (c) => {
     await connectDB();
-    const query = { _id: c.req.param("id"), project: c.req.param("projectId")! };
+    const projectId = c.req.param("projectId")!;
+    const query = { _id: c.req.param("id"), project: projectId };
     const existing = await Connection.findOne(query).lean();
     if (!existing) throw AppError.notFound("Connection not found");
 
     const body = c.req.valid("json");
+
+    const effectiveType = body.type ?? existing.type;
+    if (effectiveType === "csv" && body.connectionConfig) {
+      const filename = (body.connectionConfig as { filename?: string }).filename;
+      if (filename) {
+        const exists = await csvFileExists(projectId, filename);
+        if (!exists) throw AppError.badRequest(`File "${filename}" not found in project uploads`);
+      }
+    }
+
     if (body.connectionConfig) {
-      body.connectionConfig = mergeConnectionConfig(
-        body.connectionConfig as Record<string, unknown>,
-        (existing.connectionConfig ?? {}) as Record<string, unknown>,
-      );
+      if (effectiveType === "csv") {
+        // CSV connections have no credentials to merge
+      } else {
+        body.connectionConfig = mergeConnectionConfig(
+          body.connectionConfig as Record<string, unknown>,
+          (existing.connectionConfig ?? {}) as Record<string, unknown>,
+        );
+      }
     }
 
     const conn = await Connection.findOneAndUpdate(query, { $set: body }, { new: true }).lean();
@@ -172,12 +208,16 @@ const app = new Hono()
     if (!conn) throw AppError.notFound("Connection not found");
 
     try {
-      const instance = await testSingleConnection(conn as IConnectionDocument);
-      const db = await instance.connect();
-      try {
-        await db.run("SELECT 1");
-      } finally {
-        db.disconnectSync();
+      if (conn.type === "csv") {
+        await testCsvConnection(conn as IConnectionDocument);
+      } else {
+        const instance = await testSingleConnection(conn as IConnectionDocument);
+        const db = await instance.connect();
+        try {
+          await db.run("SELECT 1");
+        } finally {
+          db.disconnectSync();
+        }
       }
       return c.json({ ok: true });
     } catch (err: unknown) {

@@ -73,6 +73,10 @@ interface Connection {
     user?: string;
     uri?: string;
     encrypt?: boolean;
+    filename?: string;
+    delimiter?: string;
+    header?: boolean;
+    skip?: number;
   };
   createdAt: string;
 }
@@ -83,6 +87,7 @@ const CONNECTION_TYPES = [
   "mssql",
   "sqlite",
   "duckdb",
+  "csv",
 ] as const;
 
 function ConnectionsPage() {
@@ -256,6 +261,7 @@ function ConnectionsPage() {
 
 const SCHEMA_TYPES = new Set(["postgres", "mysql", "mssql"]);
 const FILE_TYPES = new Set(["sqlite", "duckdb"]);
+const CSV_TYPE = "csv";
 
 function ConnectionFormDialog({
   open,
@@ -283,7 +289,29 @@ function ConnectionFormDialog({
   const [password, setPassword] = useState("");
   const [uri, setUri] = useState("");
   const [encrypt, setEncrypt] = useState(true);
+  const [csvFilename, setCsvFilename] = useState("");
+  const [csvDelimiter, setCsvDelimiter] = useState("");
+  const [csvHeader, setCsvHeader] = useState<boolean | undefined>(undefined);
+  const [csvSkip, setCsvSkip] = useState("");
   const [description, setDescription] = useState("");
+
+  const isCsv = type === CSV_TYPE;
+
+  const { data: documents } = useQuery({
+    queryKey: ["documents", projectId],
+    queryFn: async () => {
+      const res = await api.api.projects[":projectId"].documents.$get({
+        param: { projectId },
+      });
+      if (!res.ok) return [];
+      return res.json() as unknown as Promise<Array<{ filename: string; size: number; mimeType: string }>>;
+    },
+    enabled: isCsv,
+  });
+
+  const csvFiles = (documents ?? []).filter(
+    (d) => d.filename.toLowerCase().endsWith(".csv"),
+  );
 
   const uriPlaceholders: Record<string, string> = {
     postgres: "postgres://user:pass@host:5432/db",
@@ -323,6 +351,10 @@ function ConnectionFormDialog({
       setPassword("");
       setUri(initialEditing.connectionConfig.uri ?? "");
       setEncrypt(initialEditing.connectionConfig.encrypt ?? true);
+      setCsvFilename(initialEditing.connectionConfig.filename ?? "");
+      setCsvDelimiter(initialEditing.connectionConfig.delimiter ?? "");
+      setCsvHeader(initialEditing.connectionConfig.header);
+      setCsvSkip(initialEditing.connectionConfig.skip?.toString() ?? "");
       setDescription(initialEditing.description);
       setConnMode(initialEditing.connectionConfig.uri ? "uri" : "fields");
     } else {
@@ -338,6 +370,10 @@ function ConnectionFormDialog({
       setPassword("");
       setUri("");
       setEncrypt(true);
+      setCsvFilename("");
+      setCsvDelimiter("");
+      setCsvHeader(undefined);
+      setCsvSkip("");
       setDescription("");
       setConnMode("fields");
     }
@@ -347,6 +383,14 @@ function ConnectionFormDialog({
   const isFileType = FILE_TYPES.has(type);
 
   function buildConfig() {
+    if (isCsv) {
+      const config: Record<string, unknown> = {};
+      if (csvFilename) config.filename = csvFilename;
+      if (csvDelimiter) config.delimiter = csvDelimiter;
+      if (csvHeader != null) config.header = csvHeader;
+      if (csvSkip) config.skip = Number(csvSkip);
+      return config;
+    }
     const config: Record<string, unknown> = {};
     if (connMode === "uri") {
       if (uri) config.uri = uri;
@@ -486,6 +530,68 @@ function ConnectionFormDialog({
             </p>
           </div>
 
+          {isCsv ? (
+            <div className="content-group">
+              <div className="content-tight">
+                <Label htmlFor="conn-csv-file">CSV File</Label>
+                <Select value={csvFilename} onValueChange={setCsvFilename}>
+                  <SelectTrigger id="conn-csv-file">
+                    <SelectValue placeholder="Select an uploaded CSV file" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {csvFiles.length === 0 ? (
+                      <SelectItem value="_none" disabled>
+                        No CSV files uploaded
+                      </SelectItem>
+                    ) : (
+                      csvFiles.map((f) => (
+                        <SelectItem key={f.filename} value={f.filename}>
+                          {f.filename}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  Upload CSV files via the chat or the documents section first
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="content-tight">
+                  <Label htmlFor="conn-csv-delim">Delimiter</Label>
+                  <Input
+                    id="conn-csv-delim"
+                    value={csvDelimiter}
+                    onChange={(e) => setCsvDelimiter(e.target.value)}
+                    placeholder="auto"
+                    maxLength={4}
+                  />
+                </div>
+                <div className="content-tight">
+                  <Label htmlFor="conn-csv-skip">Skip rows</Label>
+                  <Input
+                    id="conn-csv-skip"
+                    value={csvSkip}
+                    onChange={(e) => setCsvSkip(e.target.value)}
+                    placeholder="0"
+                    type="number"
+                    min={0}
+                  />
+                </div>
+                <div className="flex items-end pb-0.5">
+                  <label className="flex items-center gap-2 text-sm" htmlFor="conn-csv-header">
+                    <Switch
+                      id="conn-csv-header"
+                      checked={csvHeader ?? true}
+                      onCheckedChange={(v) => setCsvHeader(v)}
+                    />
+                    Has header
+                  </label>
+                </div>
+              </div>
+            </div>
+          ) : (
           <Tabs
             value={connMode}
             onValueChange={(v) => setConnMode(v as "fields" | "uri")}
@@ -579,8 +685,9 @@ function ConnectionFormDialog({
               )}
             </TabsContent>
           </Tabs>
+          )}
 
-          {showSchema && (
+          {showSchema && !isCsv && (
             <div className="content-tight">
               <Label htmlFor="conn-schema">Schema</Label>
               <Input
