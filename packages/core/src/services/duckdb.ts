@@ -32,8 +32,11 @@ function extensionForType(type: string): string | null {
 
 export function buildAttachString(conn: IConnectionDocument): string {
   const key = getEnv().ENCRYPTION_KEY || null;
+  const raw = typeof (conn.connectionConfig as any).toObject === "function"
+    ? (conn.connectionConfig as any).toObject()
+    : conn.connectionConfig;
   const cfg = decryptConnectionCredentials(
-    conn.connectionConfig as Record<string, unknown>,
+    raw as Record<string, unknown>,
     key,
   ) as typeof conn.connectionConfig;
 

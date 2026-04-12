@@ -55,7 +55,9 @@ This is used internally by:
 
 ## Scoped VIEWs
 
-When AI agents use `execute_query`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs in a `_scope_<modelName>` schema. These VIEWs expose only the fields defined in the semantic model, acting as a curated and safe access layer.
+When AI agents use `execute_query`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs that expose only the fields defined in the model, acting as a curated and safe access layer.
+
+Internally these VIEWs live in a `_scope_<modelName>` DuckDB schema, but agents never need to know this. The `search_path` is set automatically per query so agents write bare dataset names (e.g. `FROM "orders"`) and the correct VIEW resolves transparently.
 
 ## Connection Lifecycle
 

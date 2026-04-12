@@ -29,7 +29,7 @@ Get an overview of a semantic model with datasets, relationships, and metrics. S
 | `scope` | `"datasets"` \| `"relationships"` \| `"metrics"` | No | Section to retrieve independently. Omit for full overview (first page of each section). |
 | `page` | number | No | Page number within the scope (default 1, items per page configured per project). Only meaningful with `scope`. |
 
-**Returns:** Compressed markdown digest (not raw YAML). Each dataset row includes its corresponding `_scope_<modelName>."<datasetName>"` VIEW name for use in queries.
+**Returns:** Compressed markdown digest (not raw YAML). Each dataset row includes its table name (the quoted dataset name, e.g. `"orders"`) for use in queries. Agents write bare dataset names in SQL — the correct schema is resolved automatically via DuckDB's `search_path`.
 
 ---
 
@@ -56,8 +56,8 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `modelName` | string | Yes | The semantic model whose datasets become `_scope_<modelName>.*` VIEWs |
-| `sql` | string | Yes | SQL query using `_scope_<modelName>."<datasetName>"` VIEWs, with `$1`, `$2`, ... placeholders |
+| `modelName` | string | Yes | The semantic model to query against |
+| `sql` | string | Yes | DuckDB SQL using bare dataset names (e.g. `FROM "orders"`), with `$1`, `$2`, ... placeholders |
 | `params` | string[] | No | Parameter values for positional placeholders (defaults to `[]`) |
 
 **Returns:** JSON with `columns` and `rows`. Results capped at 1,000 rows (includes `truncated: true` flag when exceeded). 30-second timeout.
@@ -66,16 +66,16 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 - Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
 - Multi-statement queries rejected
-- Raw catalog references (e.g., `shopify.public.orders`) rejected
-- Cross-model scope references (e.g., `_scope_other."table"`) rejected
-- Only `_scope_<modelName>.*` references for the requested model are permitted
+- Raw catalog references (e.g., `shopify.public.orders`) rejected — use bare dataset names instead
+- Explicit `_scope_` prefixes rejected — dataset names resolve automatically via `search_path`
+- `SET` statements blocked
 
 ### Security Hardening
 
 Each query runs in a DuckDB connection with:
 - `enable_external_access = false`: no file reads, network access, or COPY operations
 - `threads = 2`, `memory_limit = '512MB'`: resource limits
-- `lock_configuration = true`: prevents setting changes via injected SQL
+- `search_path` set to the model's scoped schema so bare dataset names resolve to the correct VIEWs
 
 ---
 

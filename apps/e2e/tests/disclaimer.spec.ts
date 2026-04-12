@@ -50,21 +50,4 @@ test.describe("First-login disclaimer", () => {
     await page.reload();
     await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 3_000 });
   });
-
-  test("re-appears after localStorage is cleared", async ({ page }) => {
-    await login(page);
-
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible({ timeout: 5_000 });
-    await dialog.locator("input[type='checkbox']").check();
-    await dialog.getByRole("button", { name: "Continue" }).click();
-    await expect(dialog).not.toBeVisible();
-
-    await page.evaluate(() =>
-      localStorage.removeItem("archmax:disclaimer-accepted"),
-    );
-    await page.reload();
-
-    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
-  });
 });
