@@ -370,16 +370,15 @@ describe("buildAttachString — postgres", () => {
 });
 
 describe("hardenConnection", () => {
-  it("disables external access and locks configuration", async () => {
+  it("disables external access", async () => {
     const instance = await DuckDBInstance.create();
     const db = await instance.connect();
-
     await hardenConnection(db);
 
     try {
       await expect(
-        db.run("SET enable_external_access = true"),
-      ).rejects.toThrow();
+        db.run("SELECT * FROM read_csv('/tmp/nonexistent.csv')"),
+      ).rejects.toThrow(/disabled/i);
     } finally {
       db.disconnectSync();
     }
@@ -409,6 +408,43 @@ describe("hardenConnection", () => {
       expect(rows).toHaveLength(1);
     } finally {
       db.disconnectSync();
+    }
+  });
+
+  it("allows different search_paths on successive connections", async () => {
+    const instance = await DuckDBInstance.create();
+    const setup = await instance.connect();
+    try {
+      await setup.run("CREATE SCHEMA _scope_a");
+      await setup.run("CREATE SCHEMA _scope_b");
+      await setup.run("CREATE TABLE src (val VARCHAR)");
+      await setup.run("INSERT INTO src VALUES ('from_a'), ('from_b')");
+      await setup.run('CREATE VIEW _scope_a."items" AS SELECT val FROM src WHERE val = \'from_a\'');
+      await setup.run('CREATE VIEW _scope_b."items" AS SELECT val FROM src WHERE val = \'from_b\'');
+    } finally {
+      setup.disconnectSync();
+    }
+
+    const dbA = await instance.connect();
+    await hardenConnection(dbA, "_scope_a");
+    try {
+      const result = await dbA.run('SELECT * FROM "items"');
+      const rows: unknown[][] = [];
+      for await (const chunk of result) { rows.push(...chunk.getRows()); }
+      expect(rows[0][0]).toBe("from_a");
+    } finally {
+      dbA.disconnectSync();
+    }
+
+    const dbB = await instance.connect();
+    await hardenConnection(dbB, "_scope_b");
+    try {
+      const result = await dbB.run('SELECT * FROM "items"');
+      const rows: unknown[][] = [];
+      for await (const chunk of result) { rows.push(...chunk.getRows()); }
+      expect(rows[0][0]).toBe("from_b");
+    } finally {
+      dbB.disconnectSync();
     }
   });
 });

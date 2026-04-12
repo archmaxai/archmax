@@ -4,24 +4,35 @@ import { createTestCase, createTestRun, createTestCaseResult } from "@archmax/co
 const mocks = vi.hoisted(() => ({
   testRunFind: vi.fn(),
   testRunFindOne: vi.fn(),
+  testRunFindById: vi.fn(),
   testRunCreate: vi.fn(),
   testRunUpdateOne: vi.fn(),
   testRunCountDocuments: vi.fn(),
   testCaseFind: vi.fn(),
   isRedisConfigured: vi.fn(),
   enqueueTestRunJob: vi.fn(),
+  removeTestRunJobs: vi.fn(),
   processTestCase: vi.fn(),
+  markTestRunCancelled: vi.fn(),
+  isTestRunCancelled: vi.fn(),
+  clearTestRunCancelledFlag: vi.fn(),
+  publishTestRunCancelSignal: vi.fn(),
 }));
 
 vi.mock("@archmax/core/infra/db", () => ({ connectDB: vi.fn() }));
 vi.mock("@archmax/core/infra/redis", () => ({
   isRedisConfigured: mocks.isRedisConfigured,
+  publishTestRunCancelSignal: mocks.publishTestRunCancelSignal,
 }));
 vi.mock("@archmax/core/queue/producer", () => ({
   enqueueTestRunJob: mocks.enqueueTestRunJob,
+  removeTestRunJobs: mocks.removeTestRunJobs,
 }));
 vi.mock("@archmax/core/services/test-runner", () => ({
   processTestCase: mocks.processTestCase,
+  markTestRunCancelled: mocks.markTestRunCancelled,
+  isTestRunCancelled: mocks.isTestRunCancelled,
+  clearTestRunCancelledFlag: mocks.clearTestRunCancelledFlag,
 }));
 vi.mock("@archmax/core/models/index", () => ({
   TestRun: {
@@ -192,6 +203,73 @@ describe("POST /test-runs", () => {
     expect(res.status).toBe(201);
     expect(mocks.enqueueTestRunJob).toHaveBeenCalledTimes(1);
     expect(mocks.processTestCase).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /test-runs/:runId/cancel", () => {
+  it("cancels a running test run", async () => {
+    const run = createTestRun({
+      _id: "run-1",
+      status: "running",
+      cases: [
+        createTestCaseResult({ status: "pending" }),
+        createTestCaseResult({ status: "running" }),
+        createTestCaseResult({ status: "passed" }),
+      ],
+    });
+    mocks.testRunFindOne.mockResolvedValue(run);
+    mocks.testRunUpdateOne.mockResolvedValue({});
+
+    const res = await app.request(`${BASE}/run-1/cancel`, { method: "POST" });
+    expect(res.status).toBe(200);
+
+    const body = await jsonBody<any>(res);
+    expect(body.ok).toBe(true);
+    expect(mocks.testRunUpdateOne).toHaveBeenCalled();
+    expect(mocks.markTestRunCancelled).toHaveBeenCalledWith("run-1");
+  });
+
+  it("returns 404 for non-existent run", async () => {
+    mocks.testRunFindOne.mockResolvedValue(null);
+
+    const res = await app.request(`${BASE}/missing/cancel`, { method: "POST" });
+    expect(res.status).toBe(404);
+
+    const body = await jsonBody<any>(res);
+    expect(body.error).toContain("not found");
+  });
+
+  it("returns 400 for already completed run", async () => {
+    const run = createTestRun({ _id: "run-1", status: "completed" });
+    mocks.testRunFindOne.mockResolvedValue(run);
+
+    const res = await app.request(`${BASE}/run-1/cancel`, { method: "POST" });
+    expect(res.status).toBe(400);
+
+    const body = await jsonBody<any>(res);
+    expect(body.error).toContain("pending or running");
+  });
+
+  it("publishes cancel signal and removes jobs when Redis is configured", async () => {
+    mocks.isRedisConfigured.mockReturnValue(true);
+    const run = createTestRun({
+      _id: "run-1",
+      status: "running",
+      cases: [
+        createTestCaseResult({ status: "pending" }),
+        createTestCaseResult({ status: "running" }),
+      ],
+    });
+    mocks.testRunFindOne.mockResolvedValue(run);
+    mocks.testRunUpdateOne.mockResolvedValue({});
+    mocks.publishTestRunCancelSignal.mockResolvedValue(undefined);
+    mocks.removeTestRunJobs.mockResolvedValue(1);
+
+    const res = await app.request(`${BASE}/run-1/cancel`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(mocks.publishTestRunCancelSignal).toHaveBeenCalledWith("run-1");
+    expect(mocks.removeTestRunJobs).toHaveBeenCalledWith("run-1", 2);
+    expect(mocks.markTestRunCancelled).not.toHaveBeenCalled();
   });
 });
 

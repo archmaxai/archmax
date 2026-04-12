@@ -177,7 +177,7 @@ The tools SHALL read from the current development state of semantic models (YAML
 
 ### Requirement: Test Run Model
 
-The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `testAgent` (ObjectId ref to TestAgent, required), `status` (enum: `pending`, `running`, `completed`, `failed`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string — snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `maxToolCalls` (number, optional — snapshot of the limit at execution time), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`), `agentResponse` (string — the agent's final text response), `toolCalls` (array of tool call records), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
+The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `testAgent` (ObjectId ref to TestAgent, required), `status` (enum: `pending`, `running`, `completed`, `failed`, `cancelled`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string -- snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `maxToolCalls` (number, optional -- snapshot of the limit at execution time), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`, `cancelled`), `agentResponse` (string -- the agent's final text response), `toolCalls` (array of tool call records), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
 
 #### Scenario: Create a test run
 
@@ -203,6 +203,13 @@ The system SHALL provide a `TestRun` Mongoose model representing a batch executi
 - **THEN** the case result status is `failed`
 - **AND** the `factResults` array shows which facts passed and which did not, with reasoning
 
+#### Scenario: Test run is cancelled
+
+- **WHEN** the user cancels a running or pending test run
+- **THEN** the TestRun status is set to `cancelled` and `completedAt` is set
+- **AND** all cases still in `pending` status are marked as `cancelled`
+- **AND** any in-flight cases (`running` status) are aborted and marked as `cancelled` with partial results preserved
+
 ### Requirement: Test Run Batch Execution
 
 The system SHALL execute test runs via a dedicated `test-runs` BullMQ queue processed by the worker (`apps/worker/`). When a batch run is initiated:
@@ -216,6 +223,8 @@ The system SHALL execute test runs via a dedicated `test-runs` BullMQ queue proc
 7. When all cases complete, the `TestRun` status is updated to `completed`
 
 The batch execution SHALL integrate with the existing worker infrastructure: same Redis connection, same graceful shutdown handling, same stalled job detection. When Redis is not configured, the API SHALL fall back to in-process execution (sequential).
+
+When a test run is cancelled, the system SHALL cooperatively abort in-flight test cases. In the Redis/worker path, the worker SHALL subscribe to a per-test-run cancel channel and abort the agent stream via `AbortController`. Queued BullMQ jobs that have not started SHALL be removed from the queue. In the in-process (no Redis) path, the sequential loop SHALL check a cancellation flag between cases and skip remaining ones.
 
 #### Scenario: Batch run enqueues jobs via worker
 
@@ -250,14 +259,32 @@ The batch execution SHALL integrate with the existing worker infrastructure: sam
 - **AND** the case result status is set to `error` with errorMessage "Exceeded max tool calls (3)"
 - **AND** the partial agent response and tool calls up to that point are preserved
 
+#### Scenario: Cancel aborts in-flight worker jobs
+
+- **GIVEN** a test run with 10 cases, 3 currently running in the worker, 5 still queued
+- **WHEN** the cancel endpoint is called
+- **THEN** the 5 queued BullMQ jobs are removed from the queue
+- **AND** the 3 running cases receive an abort signal and terminate their LLM streams
+- **AND** all 8 non-completed cases are marked as `cancelled`
+- **AND** the 2 already-completed cases retain their original status
+
+#### Scenario: Cancel stops in-process sequential execution
+
+- **GIVEN** `REDIS_URL` is not set and a test run is executing in-process
+- **WHEN** the cancel endpoint is called while case 3 of 10 is running
+- **THEN** cases 4 through 10 are skipped
+- **AND** case 3 completes (or is marked `cancelled` if still in the agent stream)
+- **AND** the run status is set to `cancelled`
+
 ### Requirement: Test Run API
 
 The API SHALL expose endpoints for managing test runs at `/api/projects/:projectId/test-runs`:
 
-- `GET /` — List all test runs for the project with server-side pagination (`page`, `limit` query params returning `{ items, total, page, limit }`); each item is a summary: id, testAgent name, case count, passed/failed/error counts, status, timestamps
-- `GET /:runId` — Get a single test run with full case results (the full embedded cases array)
-- `POST /` — Initiate a batch run (accepts `testCaseIds` array); returns the new TestRun ID
-- `DELETE /:runId` — Delete a test run
+- `GET /` -- List all test runs for the project with server-side pagination (`page`, `limit` query params returning `{ items, total, page, limit }`); each item is a summary: id, testAgent name, case count, passed/failed/error counts, status, timestamps
+- `GET /:runId` -- Get a single test run with full case results (the full embedded cases array)
+- `POST /` -- Initiate a batch run (accepts `testCaseIds` array); returns the new TestRun ID
+- `POST /:runId/cancel` -- Cancel a running or pending test run; marks remaining cases as `cancelled`, aborts in-flight executions, and sets the run status to `cancelled`
+- `DELETE /:runId` -- Delete a test run
 
 All endpoints SHALL require admin session auth.
 
@@ -277,6 +304,19 @@ All endpoints SHALL require admin session auth.
 - **WHEN** a GET request is made for a running test run
 - **THEN** the response includes the current status of each case (pending, running, passed, failed, error)
 - **AND** completed cases include their full results
+
+#### Scenario: Cancel a running test run
+
+- **WHEN** a POST request is made to `/:runId/cancel` for a run with status `running`
+- **THEN** the run status is set to `cancelled` and `completedAt` is set
+- **AND** all `pending` cases are marked as `cancelled`
+- **AND** in-flight cases are signaled for abort
+- **AND** the response returns `{ ok: true }`
+
+#### Scenario: Cancel a non-active test run
+
+- **WHEN** a POST request is made to `/:runId/cancel` for a run with status `completed`, `failed`, or `cancelled`
+- **THEN** a 400 error is returned indicating the run is not active
 
 ### Requirement: Testing UI — Test Agents Page
 
@@ -396,6 +436,8 @@ The frontend SHALL provide a Playground page at `/$projectId/testing/playground`
 
 The frontend SHALL provide a Test Runs page at `/$projectId/testing/runs` displaying a server-side-paginated table of all test runs for the project. Columns: status icon, agent name, case count, result summary (passed/failed/errors as badges), date. Each row links to the run detail page at `/$projectId/testing/runs/:runId`. The page auto-refreshes while any run is in `pending` or `running` status.
 
+The `cancelled` status SHALL be displayed with a neutral grey icon (ban/slash) consistent with the detail page styling.
+
 #### Scenario: View test runs list
 
 - **WHEN** the user navigates to `/$projectId/testing/runs`
@@ -411,9 +453,18 @@ The frontend SHALL provide a Test Runs page at `/$projectId/testing/runs` displa
 - **WHEN** no test runs exist for the project
 - **THEN** an empty state message is shown prompting the user to run a test batch from the Test Cases page
 
+#### Scenario: Cancelled run displayed in list
+
+- **WHEN** a cancelled test run exists
+- **THEN** it is displayed with a neutral grey ban icon and the status text "Cancelled"
+
 ### Requirement: Testing UI — Test Run Detail Page
 
 The frontend SHALL provide a Test Run Detail page at `/$projectId/testing/runs/:runId` showing run metadata (agent name, status, started/completed timestamps, overall pass/fail counts) and a client-side-paginated list of case results. Each case result shows: status icon, title, semantic model badge, input message, agent response (expandable), tool calls (expandable), fact results with pass/fail icons and reasoning, duration, and error message if applicable. The page auto-refreshes (polls every 3 seconds) while the run status is `pending` or `running`. A back link returns to the Test Runs list.
+
+A "Cancel Run" button SHALL be displayed in the page header next to the status badge when the run status is `pending` or `running`. Clicking the button SHALL call `POST /api/projects/:projectId/test-runs/:runId/cancel`. On success, the button SHALL disappear and the status badge SHALL update to `cancelled`. The button SHALL be disabled while the cancel request is in progress and SHALL display a loading indicator.
+
+The `cancelled` run status SHALL be rendered as a grey/neutral badge with text "Cancelled". Individual cases with `cancelled` status SHALL display a ban/slash icon in neutral grey.
 
 When a test case has `failed` or `error` status, the expanded detail view SHALL display a "Fix in Chat" button. Clicking the button SHALL navigate the user to `/$projectId/models/chat/new` with a `prefill` search parameter containing a structured correction prompt. The prompt SHALL include:
 - The semantic model name the test targeted
@@ -438,6 +489,26 @@ Additionally, a "Refine" button SHALL appear for all completed test cases (passe
 - **THEN** the page polls for updates every 3 seconds
 - **AND** case results update in real-time as they complete (pending -> running -> passed/failed/error)
 - **AND** the overall status badge updates when the run completes
+
+#### Scenario: Cancel a running test run from the UI
+
+- **WHEN** the user clicks the "Cancel Run" button on the detail page while the run is `running`
+- **THEN** a POST request is sent to `/:runId/cancel`
+- **AND** the button shows a loading state during the request
+- **AND** on success, the status badge updates to "Cancelled" and the cancel button disappears
+- **AND** the page stops polling
+
+#### Scenario: Cancel button not shown for terminal states
+
+- **WHEN** the user views a test run with status `completed`, `failed`, or `cancelled`
+- **THEN** the "Cancel Run" button is not displayed
+
+#### Scenario: Cancelled cases displayed correctly
+
+- **WHEN** a cancelled test run is viewed
+- **THEN** cases that were completed before cancellation show their original status (passed/failed/error)
+- **AND** cases that were cancelled show a neutral ban icon and "cancelled" status
+- **AND** the summary counts reflect the actual distribution
 
 #### Scenario: Paginate case results
 
@@ -471,8 +542,8 @@ Additionally, a "Refine" button SHALL appear for all completed test cases (passe
 - **WHEN** a test case has status `failed` or `error`
 - **THEN** a "Fix in Chat" button is displayed alongside the "Refine" button
 
-#### Scenario: No action buttons for pending or running cases
+#### Scenario: No action buttons for pending, running, or cancelled cases
 
-- **WHEN** a test case has status `pending` or `running`
+- **WHEN** a test case has status `pending`, `running`, or `cancelled`
 - **THEN** no "Fix in Chat" or "Refine" buttons are displayed in the expanded detail view
 

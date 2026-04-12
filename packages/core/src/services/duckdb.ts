@@ -224,14 +224,16 @@ export function getAttachedCatalogSlugs(
 }
 
 export async function hardenConnection(db: DuckDBConnection, searchPath?: string): Promise<void> {
-  try {
-    await db.run("SET enable_external_access = false");
-    if (searchPath) await db.run(`SET search_path = '${searchPath}'`);
-    await db.run("SET threads = 2");
-    await db.run("SET memory_limit = '512MB'");
-    await db.run("SET lock_configuration = true");
-  } catch {
-    // Instance-level config may already be locked by a prior connection.
-    // That's fine — the hardening settings are already in effect.
-  }
+  // Each SET is independent so one failure doesn't skip the rest.
+  // Security settings are applied once at the instance level; subsequent
+  // connections silently ignore the "already set" error.
+  try { await db.run("SET enable_external_access = false"); } catch { /* already set */ }
+  try { await db.run("SET threads = 2"); } catch { /* already set */ }
+  try { await db.run("SET memory_limit = '512MB'"); } catch { /* already set */ }
+  // search_path must succeed per-connection — it controls which model's
+  // scoped views are visible for this particular query.
+  if (searchPath) await db.run(`SET search_path = '${searchPath}'`);
+  // Not setting lock_configuration: it's instance-wide in DuckDB and would
+  // prevent search_path changes on subsequent connections. SQL validation
+  // (validateReadOnlySQL) blocks SET statements as the primary guard.
 }

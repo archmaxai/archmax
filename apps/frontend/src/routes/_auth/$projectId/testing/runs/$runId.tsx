@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   ArrowLeft,
+  Ban,
   CheckCircle2,
   XCircle,
   AlertCircle,
@@ -15,6 +17,7 @@ import {
   FlaskConical,
   MessageCircle,
   Wand2,
+  Square,
 } from "lucide-react";
 import {
   Badge,
@@ -153,6 +156,7 @@ function TestRunDetailPage() {
   const { project } = useProject();
   const { runId } = Route.useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [expandedCases, setExpandedCases] = useState<Set<number>>(new Set());
 
@@ -165,8 +169,30 @@ function TestRunDetailPage() {
       if (!res.ok) throw new Error("Failed to load test run");
       return res.json() as Promise<TestRunDetail>;
     },
-    refetchInterval: (query) =>
-      query.state.data?.status === "running" || query.state.data?.status === "pending" ? 3000 : false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running" || status === "pending" ? 3000 : false;
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.api.projects[":projectId"]["test-runs"][":runId"].cancel.$post({
+        param: { projectId: project._id, runId },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body as any)?.message ?? "Failed to cancel test run");
+      }
+    },
+    onSuccess: () => {
+      toast.success("Test run cancelled");
+      queryClient.invalidateQueries({ queryKey: ["test-run", runId] });
+      queryClient.invalidateQueries({ queryKey: ["test-runs", project._id] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to cancel test run");
+    },
   });
 
   const cases = run?.cases ?? [];
@@ -194,6 +220,7 @@ function TestRunDetailPage() {
       case "failed": return <XCircle className="h-4 w-4 text-red-500 shrink-0" />;
       case "error": return <AlertCircle className="h-4 w-4 text-yellow-500 shrink-0" />;
       case "running": return <Loader2 className="h-4 w-4 text-blue-500 animate-spin shrink-0" />;
+      case "cancelled": return <Ban className="h-4 w-4 text-muted-foreground shrink-0" />;
       default: return <Clock className="h-4 w-4 text-muted-foreground shrink-0" />;
     }
   }
@@ -204,35 +231,56 @@ function TestRunDetailPage() {
       case "failed": return <Badge variant="destructive">Failed</Badge>;
       case "running": return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Running</Badge>;
       case "pending": return <Badge variant="outline">Pending</Badge>;
+      case "cancelled": return <Badge variant="secondary">Cancelled</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   }
 
+  const isActive = run?.status === "running" || run?.status === "pending";
+
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
-        <div className="flex items-center gap-4">
-          <Link
-            to="/$projectId/testing/runs"
-            params={{ projectId: project._id }}
-          >
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div className="content-tight flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-heading text-2xl">Test Run</h1>
-              {run && runStatusBadge(run.status)}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link
+              to="/$projectId/testing/runs"
+              params={{ projectId: project._id }}
+            >
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <div className="content-tight">
+              <div className="flex items-center gap-3">
+                <h1 className="text-heading text-2xl">Test Run</h1>
+                {run && runStatusBadge(run.status)}
+              </div>
+              {run && (
+                <p className="text-subtle text-sm">
+                  Agent: {run.testAgent?.name ?? "—"}
+                  {run.startedAt && <> · Started {new Date(run.startedAt).toLocaleString()}</>}
+                  {run.completedAt && <> · Completed {new Date(run.completedAt).toLocaleString()}</>}
+                </p>
+              )}
             </div>
-            {run && (
-              <p className="text-subtle text-sm">
-                Agent: {run.testAgent?.name ?? "—"}
-                {run.startedAt && <> · Started {new Date(run.startedAt).toLocaleString()}</>}
-                {run.completedAt && <> · Completed {new Date(run.completedAt).toLocaleString()}</>}
-              </p>
-            )}
           </div>
+          {isActive && (
+            <Button
+              variant="default"
+              size="sm"
+              className="gap-1.5"
+              disabled={cancelMutation.isPending}
+              onClick={() => cancelMutation.mutate()}
+            >
+              {cancelMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Square className="h-3.5 w-3.5" />
+              )}
+              Cancel Run
+            </Button>
+          )}
         </div>
       </header>
 

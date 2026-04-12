@@ -13,7 +13,7 @@ export interface ITestCaseResult {
   inputMessage: string;
   expectedFacts: string[];
   maxToolCalls?: number;
-  status: "pending" | "running" | "passed" | "failed" | "error";
+  status: "pending" | "running" | "passed" | "failed" | "error" | "cancelled";
   agentResponse: string;
   toolCalls: { id: string; name: string; args: string; result?: string; status?: "completed" | "error" }[];
   factResults: IFactResult[];
@@ -24,7 +24,7 @@ export interface ITestCaseResult {
 export interface ITestRun {
   project: Types.ObjectId;
   testAgent: Types.ObjectId;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   cases: ITestCaseResult[];
   startedAt: Date | null;
   completedAt: Date | null;
@@ -52,7 +52,7 @@ const TestCaseResultSchema = new Schema<ITestCaseResult>(
     inputMessage: { type: String, required: true },
     expectedFacts: { type: [String], default: [] },
     maxToolCalls: { type: Number },
-    status: { type: String, required: true, enum: ["pending", "running", "passed", "failed", "error"], default: "pending" },
+    status: { type: String, required: true, enum: ["pending", "running", "passed", "failed", "error", "cancelled"], default: "pending" },
     agentResponse: { type: String, default: "" },
     toolCalls: [
       {
@@ -75,7 +75,7 @@ const TestRunSchema = new Schema<ITestRunDocument>(
   {
     project: { type: Schema.Types.ObjectId, ref: "Project", required: true },
     testAgent: { type: Schema.Types.ObjectId, ref: "TestAgent", required: true },
-    status: { type: String, required: true, enum: ["pending", "running", "completed", "failed"], default: "pending" },
+    status: { type: String, required: true, enum: ["pending", "running", "completed", "failed", "cancelled"], default: "pending" },
     cases: { type: [TestCaseResultSchema], default: [] },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
