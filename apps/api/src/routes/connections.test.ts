@@ -1,7 +1,28 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { redactConnectionConfig, mergeConnectionConfig, REDACTED_SENTINEL } from "./connections";
 
+vi.mock("@archmax/core/config/env", () => ({
+  getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
+}));
+
+vi.mock("@archmax/core/infra/crypto", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@archmax/core/infra/crypto")>();
+  return {
+    ...orig,
+    encryptConnectionCredentials: vi.fn(orig.encryptConnectionCredentials),
+    decryptConnectionCredentials: vi.fn(orig.decryptConnectionCredentials),
+  };
+});
+
+import { getEnv } from "@archmax/core/config/env";
+
+const mockGetEnv = vi.mocked(getEnv);
+
 describe("redactConnectionConfig", () => {
+  beforeEach(() => {
+    mockGetEnv.mockReturnValue({ ENCRYPTION_KEY: "" } as ReturnType<typeof getEnv>);
+  });
+
   it("redacts password field", () => {
     const config = { host: "localhost", port: 5432, password: "supersecret" };
     const result = redactConnectionConfig(config);
@@ -63,9 +84,23 @@ describe("redactConnectionConfig", () => {
     expect(result.uri).not.toContain("p%40ssw0rd");
     expect(result.uri).toContain("cluster.mongodb.net");
   });
+
+  it("decrypts encrypted password before redacting", () => {
+    const { encrypt } = require("@archmax/core/infra/crypto");
+    const key = "test-key-for-redact";
+    mockGetEnv.mockReturnValue({ ENCRYPTION_KEY: key } as ReturnType<typeof getEnv>);
+    const encrypted = encrypt("supersecret", key);
+    const config = { host: "localhost", password: encrypted };
+    const result = redactConnectionConfig(config);
+    expect(result.password).toBe("********");
+  });
 });
 
 describe("mergeConnectionConfig", () => {
+  beforeEach(() => {
+    mockGetEnv.mockReturnValue({ ENCRYPTION_KEY: "" } as ReturnType<typeof getEnv>);
+  });
+
   it("preserves stored password when incoming is sentinel", () => {
     const incoming = { host: "localhost", password: REDACTED_SENTINEL };
     const stored = { host: "localhost", password: "realpass" };
@@ -87,7 +122,7 @@ describe("mergeConnectionConfig", () => {
     expect(result.password).toBe("realpass");
   });
 
-  it("uses new password when incoming is a real value", () => {
+  it("uses new password when incoming is a real value (no encryption key)", () => {
     const incoming = { host: "localhost", password: "newpass" };
     const stored = { host: "localhost", password: "oldpass" };
     const result = mergeConnectionConfig(incoming, stored);
@@ -109,7 +144,7 @@ describe("mergeConnectionConfig", () => {
     expect(result.uri).toBe("postgresql://admin:secret@db.example.com:5432/mydb");
   });
 
-  it("uses new URI when incoming URI has a real password", () => {
+  it("uses new URI when incoming URI has a real password (no encryption key)", () => {
     const incoming = { uri: "postgresql://admin:newpass@db.example.com:5432/mydb" };
     const stored = { uri: "postgresql://admin:oldpass@db.example.com:5432/mydb" };
     const result = mergeConnectionConfig(incoming, stored);
@@ -141,5 +176,27 @@ describe("mergeConnectionConfig", () => {
     const result = mergeConnectionConfig(incoming, stored);
     expect(result.password).toBe("secret");
     expect(result.uri).toBe("postgresql://user:mypass@host/db");
+  });
+
+  it("encrypts new password when ENCRYPTION_KEY is set", () => {
+    const { encrypt, decrypt } = require("@archmax/core/infra/crypto");
+    const key = "test-key-for-merge";
+    mockGetEnv.mockReturnValue({ ENCRYPTION_KEY: key } as ReturnType<typeof getEnv>);
+    const incoming = { host: "localhost", password: "newpass" };
+    const stored = { host: "localhost", password: "oldpass" };
+    const result = mergeConnectionConfig(incoming, stored);
+    expect(result.password).not.toBe("newpass");
+    expect(decrypt(result.password as string, key)).toBe("newpass");
+  });
+
+  it("encrypts new URI when ENCRYPTION_KEY is set", () => {
+    const { decrypt } = require("@archmax/core/infra/crypto");
+    const key = "test-key-for-merge-uri";
+    mockGetEnv.mockReturnValue({ ENCRYPTION_KEY: key } as ReturnType<typeof getEnv>);
+    const incoming = { uri: "postgresql://admin:newpass@host/db" };
+    const stored = { uri: "postgresql://admin:oldpass@host/db" };
+    const result = mergeConnectionConfig(incoming, stored);
+    expect(result.uri).not.toBe("postgresql://admin:newpass@host/db");
+    expect(decrypt(result.uri as string, key)).toBe("postgresql://admin:newpass@host/db");
   });
 });

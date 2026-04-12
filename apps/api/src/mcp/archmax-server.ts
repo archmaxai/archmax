@@ -92,7 +92,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
     const start = Date.now();
     const args = { modelName, scope, page };
     const r = await getSemanticModelOverview(fileSvc, projectId, scopes, modelName, {
-      scope, page, itemsPerPage: ctx.mcpPageSize, showViewNames: true,
+      scope, page, itemsPerPage: ctx.mcpPageSize, showTableNames: true,
     });
     const result = toMcpResult(r);
     logCall(ctx, "get_semantic_model", args, result, Date.now() - start);
@@ -126,8 +126,8 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
   server.registerTool("execute_query", {
     description: EXECUTE_QUERY_DESCRIPTION,
     inputSchema: z.object({
-      modelName: z.string().describe("The semantic model whose datasets become _scope_<modelName>.* VIEWs"),
-      sql: z.string().describe('SQL query using _scope_<modelName>."<datasetName>" VIEWs, with $1, $2, ... placeholders'),
+      modelName: z.string().describe("The semantic model whose datasets become available as tables"),
+      sql: z.string().describe("DuckDB SQL query using dataset names as table names, with $1, $2, ... placeholders"),
       params: z.array(z.string()).optional().default([])
         .describe("Parameter values for positional placeholders"),
     }),

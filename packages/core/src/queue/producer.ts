@@ -60,3 +60,26 @@ export async function enqueueTestRunJob(
   });
 }
 
+export async function removeTestRunJobs(
+  testRunId: string,
+  caseCount: number,
+): Promise<number> {
+  const q = getTestQueue();
+  let removed = 0;
+  for (let i = 0; i < caseCount; i++) {
+    try {
+      const job = await q.getJob(`${testRunId}-${i}`);
+      if (job) {
+        const state = await job.getState();
+        if (state === "waiting" || state === "delayed") {
+          await job.remove();
+          removed++;
+        }
+      }
+    } catch {
+      // Job may already be active or completed
+    }
+  }
+  return removed;
+}
+

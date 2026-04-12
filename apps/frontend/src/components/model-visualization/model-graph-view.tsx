@@ -303,7 +303,6 @@ export function ModelGraphView({
   const pendingDatasetRef = useRef<string | null>(null);
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const renamePositionRef = useRef<{ x: number; y: number }>({ x: 100, y: 100 });
 
   const persistGroups = useCallback(
     (updated: DatasetGroup[]) => {
@@ -538,7 +537,6 @@ export function ModelGraphView({
     (groupId: string) => {
       const group = groups.find((g) => g.id === groupId);
       if (!group) return;
-      if (contextMenu) renamePositionRef.current = { x: contextMenu.x, y: contextMenu.y };
       setRenameValue(group.name);
       setRenamingGroupId(groupId);
       setContextMenu(null);
@@ -602,8 +600,6 @@ export function ModelGraphView({
 
       {creatingGroup && (
         <CreateGroupPopover
-          x={contextMenu?.x ?? 100}
-          y={contextMenu?.y ?? 100}
           value={newGroupName}
           onChange={setNewGroupName}
           onCommit={commitCreateGroup}
@@ -613,8 +609,6 @@ export function ModelGraphView({
 
       {renamingGroupId && (
         <RenameGroupPopover
-          x={renamePositionRef.current.x}
-          y={renamePositionRef.current.y}
           value={renameValue}
           onChange={setRenameValue}
           onCommit={commitRenameGroup}

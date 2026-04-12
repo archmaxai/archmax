@@ -5,14 +5,22 @@ TBD - created by archiving change add-testing-suite. Update Purpose after archiv
 ## Requirements
 ### Requirement: Test Agent Model
 
-The system SHALL provide a `TestAgent` Mongoose model with the following fields: `name` (string, required), `project` (ObjectId ref to Project, required, indexed), `semanticModels` (array of strings — semantic model names the agent can access), `systemPrompt` (string, required), `llmBaseUrl` (string, required — OpenAI-compatible base URL), `encryptedApiKey` (string, required — AES-256-GCM encrypted API key), `llmModel` (string, required — model identifier), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
+The system SHALL provide a `TestAgent` Mongoose model with the following fields: `name` (string, required), `project` (ObjectId ref to Project, required, indexed), `semanticModels` (array of strings -- semantic model names the agent can access), `systemPrompt` (string, required), `llmBaseUrl` (string, required -- OpenAI-compatible base URL), `encryptedApiKey` (string, required -- AES-256-GCM encrypted API key when `ENCRYPTION_KEY` is set, plaintext otherwise), `llmModel` (string, required -- model identifier), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
 
-The `llmBaseUrl` field SHALL be validated to ensure it uses the `https://` protocol and does not resolve to a private, loopback, or link-local IP address (RFC 1918, `127.0.0.0/8`, `169.254.0.0/16`, `::1`, `fe80::/10`). URLs targeting `http://` SHALL only be accepted when the host is `localhost` or `127.0.0.1` (for local development). The API SHALL reject API key storage when `ENCRYPTION_KEY` is not configured, returning a 400 error rather than storing the key in plaintext.
+The `llmBaseUrl` field SHALL be validated to ensure it uses the `https://` protocol and does not resolve to a private, loopback, or link-local IP address (RFC 1918, `127.0.0.0/8`, `169.254.0.0/16`, `::1`, `fe80::/10`). URLs targeting `http://` SHALL only be accepted when the host is `localhost` or `127.0.0.1` (for local development). When `ENCRYPTION_KEY` is configured, the API key SHALL be encrypted with AES-256-GCM before storage. When `ENCRYPTION_KEY` is not configured, the API key SHALL be stored in plaintext to allow the feature to work without additional setup.
 
-#### Scenario: Create a test agent
+#### Scenario: Create a test agent with ENCRYPTION_KEY set
 
 - **WHEN** a TestAgent is created with `name: "GPT-4o Agent"`, `project: "<projectId>"`, `semanticModels: ["ecommerce"]`, `systemPrompt: "You are a data analyst..."`, `llmBaseUrl: "https://api.openai.com/v1"`, API key `"sk-abc123"`, and `llmModel: "gpt-4o"`
+- **AND** `ENCRYPTION_KEY` is configured
 - **THEN** the API key is encrypted with AES-256-GCM using `ENCRYPTION_KEY` and stored as `encryptedApiKey`
+- **AND** the agent is persisted in MongoDB
+
+#### Scenario: Create a test agent without ENCRYPTION_KEY
+
+- **WHEN** a TestAgent is created with an `apiKey` field
+- **AND** the `ENCRYPTION_KEY` environment variable is not set
+- **THEN** the API key is stored as plaintext in `encryptedApiKey`
 - **AND** the agent is persisted in MongoDB
 
 #### Scenario: Soft-delete a test agent
@@ -24,13 +32,6 @@ The `llmBaseUrl` field SHALL be validated to ensure it uses the `https://` proto
 
 - **WHEN** a TestAgent is created or updated with `llmBaseUrl` pointing to a private IP address (e.g., `http://169.254.169.254/`, `http://10.0.0.1/v1`, `http://192.168.1.1/v1`)
 - **THEN** a 400 error is returned indicating that the URL targets a restricted address
-
-#### Scenario: API key rejected without ENCRYPTION_KEY
-
-- **WHEN** a TestAgent is created with an `apiKey` field
-- **AND** the `ENCRYPTION_KEY` environment variable is not set
-- **THEN** a 400 error is returned indicating that `ENCRYPTION_KEY` is required for API key storage
-- **AND** no plaintext key is written to MongoDB
 
 ### Requirement: Test Agent CRUD API
 
@@ -76,7 +77,7 @@ All endpoints SHALL require admin session auth.
 
 ### Requirement: Test Case Model
 
-The system SHALL provide a `TestCase` Mongoose model with the following fields: `title` (string, required), `project` (ObjectId ref to Project, required, indexed), `testAgent` (ObjectId ref to TestAgent, optional — may be null for auto-generated test cases), `semanticModel` (string, required — the semantic model name to test against), `inputMessage` (string, required — the natural language question to send to the agent), `expectedFacts` (array of strings, required, min 1 — factual assertions that the agent's response must satisfy), `tags` (array of strings, default empty — normalized to lowercase, trimmed), `maxToolCalls` (number, optional), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
+The system SHALL provide a `TestCase` Mongoose model with the following fields: `title` (string, required), `project` (ObjectId ref to Project, required, indexed), `testAgent` (ObjectId ref to TestAgent, optional), `semanticModel` (string, required), `inputMessage` (string, required), `expectedFacts` (array of strings, required, min 1), `tags` (array of strings, default empty, normalized to lowercase, trimmed), `maxToolCalls` (number, optional), `deleted` (boolean, default false), `deletedAt` (Date, optional), `createdAt` (Date), `updatedAt` (Date). The model SHALL use the shared soft-delete plugin.
 
 #### Scenario: Create a test case
 
@@ -90,9 +91,15 @@ The system SHALL provide a `TestCase` Mongoose model with the following fields: 
 
 #### Scenario: Create a test case without a test agent
 
-- **WHEN** a TestCase is created without a `testAgent` (e.g. auto-generated by the semantic model agent)
+- **WHEN** a TestCase is created without a `testAgent` (e.g. auto-generated by the semantic model agent when no agents exist)
 - **THEN** the test case is persisted with `testAgent` set to null
 - **AND** the test case appears in list queries but cannot be included in a batch run until a test agent is assigned
+
+#### Scenario: Create a test case with a test agent via the builder
+
+- **WHEN** a TestCase is created by the semantic model agent's `create_test_case` tool with a valid `testAgentId`
+- **THEN** the test case is persisted with `testAgent` set to the referenced agent
+- **AND** the test case is immediately eligible for inclusion in a batch run
 
 ### Requirement: Test Case CRUD API
 
@@ -170,7 +177,7 @@ The tools SHALL read from the current development state of semantic models (YAML
 
 ### Requirement: Test Run Model
 
-The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `testAgent` (ObjectId ref to TestAgent, required), `status` (enum: `pending`, `running`, `completed`, `failed`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string — snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `maxToolCalls` (number, optional — snapshot of the limit at execution time), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`), `agentResponse` (string — the agent's final text response), `toolCalls` (array of tool call records), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
+The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `testAgent` (ObjectId ref to TestAgent, required), `status` (enum: `pending`, `running`, `completed`, `failed`, `cancelled`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string -- snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `maxToolCalls` (number, optional -- snapshot of the limit at execution time), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`, `cancelled`), `agentResponse` (string -- the agent's final text response), `toolCalls` (array of tool call records), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
 
 #### Scenario: Create a test run
 
@@ -196,6 +203,13 @@ The system SHALL provide a `TestRun` Mongoose model representing a batch executi
 - **THEN** the case result status is `failed`
 - **AND** the `factResults` array shows which facts passed and which did not, with reasoning
 
+#### Scenario: Test run is cancelled
+
+- **WHEN** the user cancels a running or pending test run
+- **THEN** the TestRun status is set to `cancelled` and `completedAt` is set
+- **AND** all cases still in `pending` status are marked as `cancelled`
+- **AND** any in-flight cases (`running` status) are aborted and marked as `cancelled` with partial results preserved
+
 ### Requirement: Test Run Batch Execution
 
 The system SHALL execute test runs via a dedicated `test-runs` BullMQ queue processed by the worker (`apps/worker/`). When a batch run is initiated:
@@ -209,6 +223,8 @@ The system SHALL execute test runs via a dedicated `test-runs` BullMQ queue proc
 7. When all cases complete, the `TestRun` status is updated to `completed`
 
 The batch execution SHALL integrate with the existing worker infrastructure: same Redis connection, same graceful shutdown handling, same stalled job detection. When Redis is not configured, the API SHALL fall back to in-process execution (sequential).
+
+When a test run is cancelled, the system SHALL cooperatively abort in-flight test cases. In the Redis/worker path, the worker SHALL subscribe to a per-test-run cancel channel and abort the agent stream via `AbortController`. Queued BullMQ jobs that have not started SHALL be removed from the queue. In the in-process (no Redis) path, the sequential loop SHALL check a cancellation flag between cases and skip remaining ones.
 
 #### Scenario: Batch run enqueues jobs via worker
 
@@ -243,14 +259,32 @@ The batch execution SHALL integrate with the existing worker infrastructure: sam
 - **AND** the case result status is set to `error` with errorMessage "Exceeded max tool calls (3)"
 - **AND** the partial agent response and tool calls up to that point are preserved
 
+#### Scenario: Cancel aborts in-flight worker jobs
+
+- **GIVEN** a test run with 10 cases, 3 currently running in the worker, 5 still queued
+- **WHEN** the cancel endpoint is called
+- **THEN** the 5 queued BullMQ jobs are removed from the queue
+- **AND** the 3 running cases receive an abort signal and terminate their LLM streams
+- **AND** all 8 non-completed cases are marked as `cancelled`
+- **AND** the 2 already-completed cases retain their original status
+
+#### Scenario: Cancel stops in-process sequential execution
+
+- **GIVEN** `REDIS_URL` is not set and a test run is executing in-process
+- **WHEN** the cancel endpoint is called while case 3 of 10 is running
+- **THEN** cases 4 through 10 are skipped
+- **AND** case 3 completes (or is marked `cancelled` if still in the agent stream)
+- **AND** the run status is set to `cancelled`
+
 ### Requirement: Test Run API
 
 The API SHALL expose endpoints for managing test runs at `/api/projects/:projectId/test-runs`:
 
-- `GET /` — List all test runs for the project with server-side pagination (`page`, `limit` query params returning `{ items, total, page, limit }`); each item is a summary: id, testAgent name, case count, passed/failed/error counts, status, timestamps
-- `GET /:runId` — Get a single test run with full case results (the full embedded cases array)
-- `POST /` — Initiate a batch run (accepts `testCaseIds` array); returns the new TestRun ID
-- `DELETE /:runId` — Delete a test run
+- `GET /` -- List all test runs for the project with server-side pagination (`page`, `limit` query params returning `{ items, total, page, limit }`); each item is a summary: id, testAgent name, case count, passed/failed/error counts, status, timestamps
+- `GET /:runId` -- Get a single test run with full case results (the full embedded cases array)
+- `POST /` -- Initiate a batch run (accepts `testCaseIds` array); returns the new TestRun ID
+- `POST /:runId/cancel` -- Cancel a running or pending test run; marks remaining cases as `cancelled`, aborts in-flight executions, and sets the run status to `cancelled`
+- `DELETE /:runId` -- Delete a test run
 
 All endpoints SHALL require admin session auth.
 
@@ -271,9 +305,22 @@ All endpoints SHALL require admin session auth.
 - **THEN** the response includes the current status of each case (pending, running, passed, failed, error)
 - **AND** completed cases include their full results
 
+#### Scenario: Cancel a running test run
+
+- **WHEN** a POST request is made to `/:runId/cancel` for a run with status `running`
+- **THEN** the run status is set to `cancelled` and `completedAt` is set
+- **AND** all `pending` cases are marked as `cancelled`
+- **AND** in-flight cases are signaled for abort
+- **AND** the response returns `{ ok: true }`
+
+#### Scenario: Cancel a non-active test run
+
+- **WHEN** a POST request is made to `/:runId/cancel` for a run with status `completed`, `failed`, or `cancelled`
+- **THEN** a 400 error is returned indicating the run is not active
+
 ### Requirement: Testing UI — Test Agents Page
 
-The frontend SHALL provide a Test Agents page at `/$projectId/testing/agents` displaying a table of all test agents with columns: name, semantic models (as badges), LLM model, base URL, and actions (edit, delete). A "Create Test Agent" button SHALL open a form dialog with fields: name, semantic model multi-select (from available project models), system prompt (textarea), OpenAI base URL, API key (password input), and model name. After creation, the API key is no longer visible. Editing a test agent allows changing all fields; the API key field shows a placeholder and only updates if a new value is entered.
+The frontend SHALL provide a Test Agents page at `/$projectId/testing/agents` displaying a table of all test agents with columns: name, semantic models (as badges), LLM model, base URL, and actions (edit, delete). A "Create Test Agent" button SHALL open a form dialog with fields: name, semantic model multi-select (from available project models), system prompt (textarea), OpenAI base URL, API key (password input), and model name. After creation, the API key is no longer visible. Editing a test agent allows changing all fields; the API key field shows a placeholder and only updates if a new value is entered. The "Test Connection" button SHALL be available in both create and edit mode. When triggered during creation, the dialog SHALL first save the agent via POST; on success it SHALL transition to edit mode with the returned entity and then execute the LLM connectivity test. If the save fails, the test is aborted and validation errors are displayed. The button SHALL be disabled while a save or test operation is in progress and SHALL display a loading indicator.
 
 #### Scenario: Create a test agent via UI
 
@@ -293,11 +340,27 @@ The frontend SHALL provide a Test Agents page at `/$projectId/testing/agents` di
 - **WHEN** the user clicks delete and confirms
 - **THEN** the agent is soft-deleted via the API and removed from the table
 
+#### Scenario: Test connection during agent creation
+
+- **WHEN** the user clicks "Test Connection" while creating a new test agent and all required fields are filled
+- **THEN** the agent is saved via POST first
+- **AND** the dialog transitions to edit mode with the newly created agent
+- **AND** the LLM connectivity test executes against the saved agent
+- **AND** a success or error indicator is shown
+
+#### Scenario: Test connection during agent creation with validation error
+
+- **WHEN** the user clicks "Test Connection" while creating a new agent with missing or invalid fields
+- **THEN** the save fails with validation errors
+- **AND** the connectivity test is not attempted
+
 ### Requirement: Testing UI — Test Cases Page
 
 The frontend SHALL provide a Test Cases page at `/$projectId/testing/cases` displaying a paginated table of all test cases with columns: title, agent (badge), model (badge), input message (truncated), tags (badges), expected facts count, and actions (edit, delete). A "Create Test Case" button SHALL open a form dialog with fields: title, test agent, semantic model, input message, expected facts (dynamic list), tags (chip input), and max tool calls (optional number). A "Run Batch" button SHALL open a dialog with agent/model/tag filter controls and a live count of matching cases; on confirm, a batch run is initiated and the user is navigated to the test run detail page.
 
 Filter controls above the table SHALL allow filtering by agent, semantic model, and tags. Filtering is server-side via query params.
+
+The test case form dialog SHALL include a "Run Test" button in both create and edit mode. When clicked, the dialog SHALL first save the test case (create via POST or update via PUT), then initiate a single-case test run via the existing test-runs API (`POST /api/projects/:projectId/test-runs` with the saved case's ID). On successful run creation, the dialog SHALL close and the user SHALL be navigated to the test run detail page (`/$projectId/testing/runs/:runId`) to view live results. The "Run Test" button SHALL be disabled when no test agent is assigned (agent is required for execution) and while a save or run operation is in progress.
 
 #### Scenario: Create a test case via UI
 
@@ -315,6 +378,31 @@ Filter controls above the table SHALL allow filtering by agent, semantic model, 
 - **WHEN** the user clicks "Run Batch", optionally adjusts agent/model/tag filters in the dialog, and confirms
 - **THEN** a test run is initiated via the API with the matching case IDs
 - **AND** the user is navigated to `/$projectId/testing/runs/:runId` showing live progress
+
+#### Scenario: Run test during test case creation
+
+- **WHEN** the user clicks "Run Test" while creating a new test case with all required fields and a test agent assigned
+- **THEN** the test case is saved via POST first
+- **AND** a single-case test run is initiated via the test-runs API
+- **AND** the dialog closes and the user is navigated to `/$projectId/testing/runs/:runId`
+
+#### Scenario: Run test during test case editing
+
+- **WHEN** the user clicks "Run Test" while editing an existing test case
+- **THEN** the test case is updated via PUT first
+- **AND** a single-case test run is initiated via the test-runs API
+- **AND** the dialog closes and the user is navigated to `/$projectId/testing/runs/:runId`
+
+#### Scenario: Run test disabled without agent
+
+- **WHEN** the test case form has no test agent selected
+- **THEN** the "Run Test" button is disabled
+- **AND** a tooltip or visual cue indicates that an agent is required
+
+#### Scenario: Run test button disabled during operation
+
+- **WHEN** a save or run operation is in progress
+- **THEN** the "Run Test" button is disabled and shows a loading spinner
 
 ### Requirement: Testing UI — Playground Page
 
@@ -348,6 +436,8 @@ The frontend SHALL provide a Playground page at `/$projectId/testing/playground`
 
 The frontend SHALL provide a Test Runs page at `/$projectId/testing/runs` displaying a server-side-paginated table of all test runs for the project. Columns: status icon, agent name, case count, result summary (passed/failed/errors as badges), date. Each row links to the run detail page at `/$projectId/testing/runs/:runId`. The page auto-refreshes while any run is in `pending` or `running` status.
 
+The `cancelled` status SHALL be displayed with a neutral grey icon (ban/slash) consistent with the detail page styling.
+
 #### Scenario: View test runs list
 
 - **WHEN** the user navigates to `/$projectId/testing/runs`
@@ -363,9 +453,28 @@ The frontend SHALL provide a Test Runs page at `/$projectId/testing/runs` displa
 - **WHEN** no test runs exist for the project
 - **THEN** an empty state message is shown prompting the user to run a test batch from the Test Cases page
 
+#### Scenario: Cancelled run displayed in list
+
+- **WHEN** a cancelled test run exists
+- **THEN** it is displayed with a neutral grey ban icon and the status text "Cancelled"
+
 ### Requirement: Testing UI — Test Run Detail Page
 
 The frontend SHALL provide a Test Run Detail page at `/$projectId/testing/runs/:runId` showing run metadata (agent name, status, started/completed timestamps, overall pass/fail counts) and a client-side-paginated list of case results. Each case result shows: status icon, title, semantic model badge, input message, agent response (expandable), tool calls (expandable), fact results with pass/fail icons and reasoning, duration, and error message if applicable. The page auto-refreshes (polls every 3 seconds) while the run status is `pending` or `running`. A back link returns to the Test Runs list.
+
+A "Cancel Run" button SHALL be displayed in the page header next to the status badge when the run status is `pending` or `running`. Clicking the button SHALL call `POST /api/projects/:projectId/test-runs/:runId/cancel`. On success, the button SHALL disappear and the status badge SHALL update to `cancelled`. The button SHALL be disabled while the cancel request is in progress and SHALL display a loading indicator.
+
+The `cancelled` run status SHALL be rendered as a grey/neutral badge with text "Cancelled". Individual cases with `cancelled` status SHALL display a ban/slash icon in neutral grey.
+
+When a test case has `failed` or `error` status, the expanded detail view SHALL display a "Fix in Chat" button. Clicking the button SHALL navigate the user to `/$projectId/models/chat/new` with a `prefill` search parameter containing a structured correction prompt. The prompt SHALL include:
+- The semantic model name the test targeted
+- The original input message (the question that was asked)
+- The expected facts, indicating which passed and which failed along with the judge's reasoning
+- A summary of the agent's actual response
+
+The button SHALL use a secondary/outline visual style with a message-circle icon to indicate it opens a chat session. The button SHALL appear within the expanded case card, below the tabs section.
+
+Additionally, a "Refine" button SHALL appear for all completed test cases (passed, failed, or error). The "Refine" button SHALL navigate to the same chat route with a different prefill prompt focused on model efficiency: improving ai_context descriptions, simplifying naming, adding missing relationships, or reorganizing structure so the agent can answer with fewer tool calls. The "Refine" button SHALL use a wand icon.
 
 #### Scenario: View completed run detail
 
@@ -378,8 +487,28 @@ The frontend SHALL provide a Test Run Detail page at `/$projectId/testing/runs/:
 
 - **WHEN** the user navigates to a running test run detail page
 - **THEN** the page polls for updates every 3 seconds
-- **AND** case results update in real-time as they complete (pending → running → passed/failed/error)
+- **AND** case results update in real-time as they complete (pending -> running -> passed/failed/error)
 - **AND** the overall status badge updates when the run completes
+
+#### Scenario: Cancel a running test run from the UI
+
+- **WHEN** the user clicks the "Cancel Run" button on the detail page while the run is `running`
+- **THEN** a POST request is sent to `/:runId/cancel`
+- **AND** the button shows a loading state during the request
+- **AND** on success, the status badge updates to "Cancelled" and the cancel button disappears
+- **AND** the page stops polling
+
+#### Scenario: Cancel button not shown for terminal states
+
+- **WHEN** the user views a test run with status `completed`, `failed`, or `cancelled`
+- **THEN** the "Cancel Run" button is not displayed
+
+#### Scenario: Cancelled cases displayed correctly
+
+- **WHEN** a cancelled test run is viewed
+- **THEN** cases that were completed before cancellation show their original status (passed/failed/error)
+- **AND** cases that were cancelled show a neutral ban icon and "cancelled" status
+- **AND** the summary counts reflect the actual distribution
 
 #### Scenario: Paginate case results
 
@@ -391,4 +520,30 @@ The frontend SHALL provide a Test Run Detail page at `/$projectId/testing/runs/:
 
 - **WHEN** the user clicks the back link on the detail page
 - **THEN** the browser navigates to `/$projectId/testing/runs`
+
+#### Scenario: Fix failing test case via chat
+
+- **WHEN** a test case has status `failed` or `error`
+- **AND** the user expands the case result card
+- **THEN** a "Fix in Chat" button is displayed below the tabs section
+- **AND** clicking the button navigates to `/$projectId/models/chat/new?prefill=<prompt>`
+- **AND** the prefill prompt includes the semantic model name, input message, failed expected facts with reasoning, and the agent's response summary
+
+#### Scenario: Refine model via chat for any completed case
+
+- **WHEN** a test case has status `passed`, `failed`, or `error`
+- **AND** the user expands the case result card
+- **THEN** a "Refine" button is displayed below the tabs section
+- **AND** clicking the button navigates to `/$projectId/models/chat/new?prefill=<prompt>`
+- **AND** the prefill prompt focuses on improving the semantic model's navigability: ai_context, naming, relationships, and structure to reduce tool calls
+
+#### Scenario: Fix button only shown for failing test cases
+
+- **WHEN** a test case has status `failed` or `error`
+- **THEN** a "Fix in Chat" button is displayed alongside the "Refine" button
+
+#### Scenario: No action buttons for pending, running, or cancelled cases
+
+- **WHEN** a test case has status `pending`, `running`, or `cancelled`
+- **THEN** no "Fix in Chat" or "Refine" buttons are displayed in the expanded detail view
 

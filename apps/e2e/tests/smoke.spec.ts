@@ -37,6 +37,12 @@ test.describe("Authentication", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 });
+
+    const disclaimer = page.getByRole("dialog");
+    await expect(disclaimer).toBeVisible({ timeout: 5_000 });
+    await disclaimer.locator("input[type='checkbox']").check();
+    await disclaimer.getByRole("button", { name: "Continue" }).click();
+    await expect(disclaimer).not.toBeVisible();
   });
 
   test("rejects empty password", async ({ page }) => {

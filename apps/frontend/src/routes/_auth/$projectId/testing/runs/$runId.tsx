@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   ArrowLeft,
+  Ban,
   CheckCircle2,
   XCircle,
   AlertCircle,
@@ -13,6 +15,9 @@ import {
   ChevronDown,
   ChevronUp,
   FlaskConical,
+  MessageCircle,
+  Wand2,
+  Square,
 } from "lucide-react";
 import {
   Badge,
@@ -80,9 +85,78 @@ interface TestRunDetail {
 
 const PAGE_SIZE = 25;
 
+function buildFixPrompt(tc: CaseResult): string {
+  const failedFacts = tc.factResults
+    .filter((fr) => !fr.passed)
+    .map((fr) => `- "${fr.fact}" — ${fr.reasoning}`)
+    .join("\n");
+
+  const passedFacts = tc.factResults
+    .filter((fr) => fr.passed)
+    .map((fr) => `- "${fr.fact}"`)
+    .join("\n");
+
+  let prompt = `A test case against the semantic model "${tc.semanticModel}" failed.\n\n`;
+  prompt += `**Question asked:** ${tc.inputMessage}\n\n`;
+
+  if (failedFacts) {
+    prompt += `**Failed expected facts:**\n${failedFacts}\n\n`;
+  }
+  if (passedFacts) {
+    prompt += `**Passed expected facts:**\n${passedFacts}\n\n`;
+  }
+  if (tc.errorMessage) {
+    prompt += `**Error:** ${tc.errorMessage}\n\n`;
+  }
+  if (tc.agentResponse) {
+    const truncated = tc.agentResponse.length > 500
+      ? tc.agentResponse.slice(0, 500) + "..."
+      : tc.agentResponse;
+    prompt += `**Agent response:** ${truncated}\n\n`;
+  }
+
+  prompt += "Please investigate the semantic model and fix it so this test case passes.";
+  return prompt;
+}
+
+function buildRefinePrompt(tc: CaseResult): string {
+  let prompt = `A test case against the semantic model "${tc.semanticModel}" had execution issues.\n\n`;
+  prompt += `**Question asked:** ${tc.inputMessage}\n\n`;
+
+  if (tc.errorMessage) {
+    prompt += `**Error:** ${tc.errorMessage}\n\n`;
+  }
+  if (tc.toolCalls.length > 0) {
+    prompt += `**Tool calls made (${tc.toolCalls.length}):**\n`;
+    const toolSummary = tc.toolCalls
+      .map((t) => {
+        let line = `- \`${t.name}\``;
+        if (t.args) line += ` args: ${t.args}`;
+        if (t.result) {
+          const teaser = t.result.length > 200 ? t.result.slice(0, 200) + "..." : t.result;
+          line += `\n  output: ${teaser}`;
+        }
+        return line;
+      })
+      .join("\n");
+    prompt += `${toolSummary}\n\n`;
+  }
+  if (tc.agentResponse) {
+    const truncated = tc.agentResponse.length > 500
+      ? tc.agentResponse.slice(0, 500) + "..."
+      : tc.agentResponse;
+    prompt += `**Agent response:** ${truncated}\n\n`;
+  }
+
+  prompt += "The agent struggled with this query. Please review the semantic model and refine it to be easier to navigate: improve ai_context descriptions, simplify dataset/field naming, add missing relationships, or reorganize the structure so the agent can answer more efficiently with fewer tool calls.";
+  return prompt;
+}
+
 function TestRunDetailPage() {
   const { project } = useProject();
   const { runId } = Route.useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [expandedCases, setExpandedCases] = useState<Set<number>>(new Set());
 
@@ -95,8 +169,30 @@ function TestRunDetailPage() {
       if (!res.ok) throw new Error("Failed to load test run");
       return res.json() as Promise<TestRunDetail>;
     },
-    refetchInterval: (query) =>
-      query.state.data?.status === "running" || query.state.data?.status === "pending" ? 3000 : false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running" || status === "pending" ? 3000 : false;
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.api.projects[":projectId"]["test-runs"][":runId"].cancel.$post({
+        param: { projectId: project._id, runId },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body as any)?.message ?? "Failed to cancel test run");
+      }
+    },
+    onSuccess: () => {
+      toast.success("Test run cancelled");
+      queryClient.invalidateQueries({ queryKey: ["test-run", runId] });
+      queryClient.invalidateQueries({ queryKey: ["test-runs", project._id] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to cancel test run");
+    },
   });
 
   const cases = run?.cases ?? [];
@@ -124,6 +220,7 @@ function TestRunDetailPage() {
       case "failed": return <XCircle className="h-4 w-4 text-red-500 shrink-0" />;
       case "error": return <AlertCircle className="h-4 w-4 text-yellow-500 shrink-0" />;
       case "running": return <Loader2 className="h-4 w-4 text-blue-500 animate-spin shrink-0" />;
+      case "cancelled": return <Ban className="h-4 w-4 text-muted-foreground shrink-0" />;
       default: return <Clock className="h-4 w-4 text-muted-foreground shrink-0" />;
     }
   }
@@ -134,35 +231,56 @@ function TestRunDetailPage() {
       case "failed": return <Badge variant="destructive">Failed</Badge>;
       case "running": return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Running</Badge>;
       case "pending": return <Badge variant="outline">Pending</Badge>;
+      case "cancelled": return <Badge variant="secondary">Cancelled</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   }
 
+  const isActive = run?.status === "running" || run?.status === "pending";
+
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
-        <div className="flex items-center gap-4">
-          <Link
-            to="/$projectId/testing/runs"
-            params={{ projectId: project._id }}
-          >
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div className="content-tight flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-heading text-2xl">Test Run</h1>
-              {run && runStatusBadge(run.status)}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link
+              to="/$projectId/testing/runs"
+              params={{ projectId: project._id }}
+            >
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <div className="content-tight">
+              <div className="flex items-center gap-3">
+                <h1 className="text-heading text-2xl">Test Run</h1>
+                {run && runStatusBadge(run.status)}
+              </div>
+              {run && (
+                <p className="text-subtle text-sm">
+                  Agent: {run.testAgent?.name ?? "—"}
+                  {run.startedAt && <> · Started {new Date(run.startedAt).toLocaleString()}</>}
+                  {run.completedAt && <> · Completed {new Date(run.completedAt).toLocaleString()}</>}
+                </p>
+              )}
             </div>
-            {run && (
-              <p className="text-subtle text-sm">
-                Agent: {run.testAgent?.name ?? "—"}
-                {run.startedAt && <> · Started {new Date(run.startedAt).toLocaleString()}</>}
-                {run.completedAt && <> · Completed {new Date(run.completedAt).toLocaleString()}</>}
-              </p>
-            )}
           </div>
+          {isActive && (
+            <Button
+              variant="default"
+              size="sm"
+              className="gap-1.5"
+              disabled={cancelMutation.isPending}
+              onClick={() => cancelMutation.mutate()}
+            >
+              {cancelMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Square className="h-3.5 w-3.5" />
+              )}
+              Cancel Run
+            </Button>
+          )}
         </div>
       </header>
 
@@ -335,6 +453,45 @@ function TestRunDetailPage() {
                           </TabsContent>
                         )}
                       </Tabs>
+
+                      {(tc.status === "passed" || tc.status === "failed" || tc.status === "error") && (
+                        <div className="mt-3 flex justify-end gap-2 border-t border-border pt-3">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate({
+                                to: "/$projectId/models/chat/$conversationId",
+                                params: { projectId: project._id, conversationId: "new" },
+                                search: { prefill: buildRefinePrompt(tc) },
+                              });
+                            }}
+                          >
+                            <Wand2 className="h-3.5 w-3.5" />
+                            Refine
+                          </Button>
+                          {(tc.status === "failed" || tc.status === "error") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate({
+                                  to: "/$projectId/models/chat/$conversationId",
+                                  params: { projectId: project._id, conversationId: "new" },
+                                  search: { prefill: buildFixPrompt(tc) },
+                                });
+                              }}
+                            >
+                              <MessageCircle className="h-3.5 w-3.5" />
+                              Fix in Chat
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>

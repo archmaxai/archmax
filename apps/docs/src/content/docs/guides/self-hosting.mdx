@@ -40,6 +40,7 @@ docker run -d \
   --name archmax \
   -p 8080:8080 \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e ENCRYPTION_KEY=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \
   -e AGENT_API_KEY=your-api-key \
@@ -198,6 +199,7 @@ docker pull ghcr.io/archmaxai/archmax:latest
 docker stop archmax && docker rm archmax
 docker run -d --name archmax -p 8080:8080 \
   -e BETTER_AUTH_SECRET=your-existing-secret \
+  -e ENCRYPTION_KEY=your-existing-key \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=your-password \
   -e AGENT_API_KEY=your-api-key \
@@ -226,3 +228,23 @@ The AI agent's resource usage depends on your configured model provider (OpenRou
 - Always set a strong `BETTER_AUTH_SECRET` (at least 32 characters) and save it for reuse across restarts and upgrades.
 - Change `UI_PASSWORD` from the default `changeme` before exposing to users.
 - Place a reverse proxy (nginx, Caddy, Traefik) with TLS in front of port 8080 for HTTPS.
+
+### Credential Encryption
+
+By default, database connection passwords and test agent API keys are stored in plaintext in MongoDB. To encrypt them at rest, set the `ENCRYPTION_KEY` environment variable:
+
+```bash
+# Generate a key
+openssl rand -base64 32
+```
+
+```bash
+# Add to your environment
+ENCRYPTION_KEY=your-generated-key
+```
+
+When set, all stored credentials are encrypted with AES-256-GCM before being written to MongoDB. Existing plaintext credentials continue to work and will be encrypted the next time they are updated.
+
+<Aside type="caution">
+Save your `ENCRYPTION_KEY` and keep it consistent across restarts and upgrades. If you change or lose it, stored credentials become unreadable and you will need to re-enter them.
+</Aside>

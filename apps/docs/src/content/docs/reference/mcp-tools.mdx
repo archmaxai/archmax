@@ -5,6 +5,8 @@ description: Complete reference for all MCP tools exposed by archmax.
 
 All tools are available through the project MCP endpoint at `POST /mcp/<project-slug>/mcp`. Tools operate within the scope of the project identified by the URL slug.
 
+Semantic models are stored internally as [OSI](https://github.com/open-semantic-interchange/OSI) YAML, but all tools that return model information (`get_semantic_model`, `get_datasets`) serve a **compressed markdown digest** instead of raw YAML. This digest uses 3–5× fewer tokens while preserving field types, descriptions, enums, examples, relationships, and instructions.
+
 ## list_semantic_models
 
 List semantic models the authenticated token has access to.
@@ -27,7 +29,7 @@ Get an overview of a semantic model with datasets, relationships, and metrics. S
 | `scope` | `"datasets"` \| `"relationships"` \| `"metrics"` | No | Section to retrieve independently. Omit for full overview (first page of each section). |
 | `page` | number | No | Page number within the scope (default 1, items per page configured per project). Only meaningful with `scope`. |
 
-**Returns:** Markdown-formatted overview. Each dataset row includes its corresponding `_scope_<modelName>."<datasetName>"` VIEW name for use in queries.
+**Returns:** Compressed markdown digest (not raw YAML). Each dataset row includes its table name (the quoted dataset name, e.g. `"orders"`) for use in queries. Agents write bare dataset names in SQL — the correct schema is resolved automatically via DuckDB's `search_path`.
 
 ---
 
@@ -42,7 +44,7 @@ Get one or more datasets with all their fields as compact markdown lists with ty
 | `modelName` | string | Yes | The semantic model name (filename without `.yaml`) |
 | `datasets` | `{ name: string, page?: number }[]` | Yes | Datasets to retrieve (1–10), each with an optional `page` (default 1) |
 
-**Returns:** Compact markdown lists of fields with data types, expressions, dimension info, and AI context.
+**Returns:** Compressed markdown digest with compact field lists including data types, expressions, dimension info, enums, examples, and AI context.
 
 ---
 
@@ -54,8 +56,8 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `modelName` | string | Yes | The semantic model whose datasets become `_scope_<modelName>.*` VIEWs |
-| `sql` | string | Yes | SQL query using `_scope_<modelName>."<datasetName>"` VIEWs, with `$1`, `$2`, ... placeholders |
+| `modelName` | string | Yes | The semantic model to query against |
+| `sql` | string | Yes | DuckDB SQL using bare dataset names (e.g. `FROM "orders"`), with `$1`, `$2`, ... placeholders |
 | `params` | string[] | No | Parameter values for positional placeholders (defaults to `[]`) |
 
 **Returns:** JSON with `columns` and `rows`. Results capped at 1,000 rows (includes `truncated: true` flag when exceeded). 30-second timeout.
@@ -64,16 +66,16 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 - Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
 - Multi-statement queries rejected
-- Raw catalog references (e.g., `shopify.public.orders`) rejected
-- Cross-model scope references (e.g., `_scope_other."table"`) rejected
-- Only `_scope_<modelName>.*` references for the requested model are permitted
+- Raw catalog references (e.g., `shopify.public.orders`) rejected — use bare dataset names instead
+- Explicit `_scope_` prefixes rejected — dataset names resolve automatically via `search_path`
+- `SET` statements blocked
 
 ### Security Hardening
 
 Each query runs in a DuckDB connection with:
 - `enable_external_access = false`: no file reads, network access, or COPY operations
 - `threads = 2`, `memory_limit = '512MB'`: resource limits
-- `lock_configuration = true`: prevents setting changes via injected SQL
+- `search_path` set to the model's scoped schema so bare dataset names resolve to the correct VIEWs
 
 ---
 

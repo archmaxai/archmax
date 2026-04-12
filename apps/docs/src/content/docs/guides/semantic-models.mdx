@@ -5,6 +5,8 @@ description: How to create and manage semantic models that describe your databas
 
 Semantic models are YAML files that describe your database tables as datasets with typed fields, relationships, and metrics. They follow the [Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI) spec and use DuckDB SQL syntax for expressions.
 
+archmax uses the OSI YAML format as its internal storage format — every dataset, field, relationship, and metric is persisted as spec-compliant YAML on disk. When AI agents request model information through MCP tools, archmax converts the OSI YAML into a **compressed markdown digest** on-the-fly. This digest preserves all semantically relevant information (field types, descriptions, enums, relationships, examples) while using **3–5× fewer tokens** than the equivalent YAML, making agent interactions significantly cheaper and faster.
+
 ## File Structure
 
 Each project stores its semantic models under `<ARCHMAX_DATA_DIR>/projects/<projectId>/src/`. A model consists of a root file and per-dataset files:
@@ -133,3 +135,37 @@ You can also create and edit models manually through the YAML files or the admin
 ## Publishing
 
 After editing a model, click **Publish** to make it available to MCP clients. Publishing assembles the split source files (`src/`) into optimized single-file YAMLs in the `build/` directory. MCP tools in production always read from the published build.
+
+## How Agents See Your Models
+
+AI agents never interact with the raw OSI YAML files. Instead, the MCP tools (`get_semantic_model`, `get_datasets`) convert the YAML into a **compressed markdown digest** before returning it to the agent. This conversion:
+
+- **Reduces token usage by 3–5×** — the OSI YAML format includes verbose structures like `expression.dialects[].expression`, `custom_extensions[].vendor_name`, and deeply nested `ai_context` objects. The digest flattens these into compact markdown tables and bullet lists.
+- **Preserves all agent-relevant context** — field types, descriptions, enum values, example data, synonyms, relationships, metric expressions, and query instructions are all included.
+- **Supports pagination** — large models with many datasets or fields are paginated so agents can drill into specific sections without loading everything at once.
+
+For example, a field that looks like this in OSI YAML:
+
+```yaml
+- name: status
+  expression:
+    dialects:
+      - dialect: ANSI_SQL
+        expression: "status"
+  description: Current order status
+  custom_extensions:
+    - vendor_name: COMMON
+      data: '{"data_type":"VARCHAR","distinct_values":["pending","shipped","delivered"]}'
+  ai_context:
+    synonyms:
+      - order state
+    instructions: Filter on this field to segment by fulfillment stage
+```
+
+Becomes a single line in the markdown digest:
+
+```
+- **status** `VARCHAR` {pending, shipped, delivered} — Current order status | _order state_ | Note: Filter on this field to segment by fulfillment stage
+```
+
+This compression is what makes it practical to give agents full context about large models without burning through token budgets.

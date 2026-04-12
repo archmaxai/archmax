@@ -7,6 +7,20 @@ import type { IToolCallRecord } from "../models/Conversation";
 
 const RESULT_TRUNCATE = 500;
 
+const cancelledTestRuns = new Set<string>();
+
+export function markTestRunCancelled(testRunId: string): void {
+  cancelledTestRuns.add(testRunId);
+}
+
+export function isTestRunCancelled(testRunId: string): boolean {
+  return cancelledTestRuns.has(testRunId);
+}
+
+export function clearTestRunCancelledFlag(testRunId: string): void {
+  cancelledTestRuns.delete(testRunId);
+}
+
 export function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
@@ -109,9 +123,18 @@ export async function processTestCase(
   inputMessage: string,
   expectedFacts: string[],
   maxToolCalls?: number,
+  signal?: AbortSignal,
 ): Promise<void> {
   await connectDB();
   const start = Date.now();
+
+  if (signal?.aborted) {
+    await TestRun.updateOne(
+      { _id: testRunId },
+      { $set: { [`cases.${caseIndex}.status`]: "cancelled", [`cases.${caseIndex}.durationMs`]: 0 } },
+    );
+    return;
+  }
 
   await TestRun.updateOne(
     { _id: testRunId },
@@ -131,13 +154,29 @@ export async function processTestCase(
     try {
       const stream = await agent.stream(
         { messages: [new HumanMessage(inputMessage)] },
-        { recursionLimit, streamMode: "values" as const },
+        { recursionLimit, streamMode: "values" as const, signal },
       );
       for await (const state of stream) {
         lastState = state;
       }
     } catch (err) {
       streamError = err instanceof Error ? err : new Error(String(err));
+    }
+
+    if (signal?.aborted) {
+      const { agentResponse, toolCalls } = extractMessages(lastState?.messages || []);
+      await TestRun.updateOne(
+        { _id: testRunId },
+        {
+          $set: {
+            [`cases.${caseIndex}.status`]: "cancelled",
+            [`cases.${caseIndex}.agentResponse`]: agentResponse,
+            [`cases.${caseIndex}.toolCalls`]: toolCalls,
+            [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+          },
+        },
+      );
+      return;
     }
 
     const { agentResponse, toolCalls } = extractMessages(lastState?.messages || []);
@@ -191,16 +230,35 @@ export async function processTestCase(
       },
     );
   } catch (err) {
+    if (signal?.aborted) {
+      try {
+        await TestRun.updateOne(
+          { _id: testRunId },
+          {
+            $set: {
+              [`cases.${caseIndex}.status`]: "cancelled",
+              [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+            },
+          },
+        );
+      } catch { /* best-effort */ }
+      return;
+    }
+
     console.error(`[test-runner] Case ${caseIndex} error:`, err);
-    await TestRun.updateOne(
-      { _id: testRunId },
-      {
-        $set: {
-          [`cases.${caseIndex}.status`]: "error",
-          [`cases.${caseIndex}.errorMessage`]: err instanceof Error ? err.message : "Unknown error",
-          [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+    try {
+      await TestRun.updateOne(
+        { _id: testRunId },
+        {
+          $set: {
+            [`cases.${caseIndex}.status`]: "error",
+            [`cases.${caseIndex}.errorMessage`]: err instanceof Error ? err.message : "Unknown error",
+            [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+          },
         },
-      },
-    );
+      );
+    } catch (dbErr) {
+      console.error(`[test-runner] Failed to persist error status for case ${caseIndex}:`, dbErr);
+    }
   }
 }

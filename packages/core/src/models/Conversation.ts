@@ -28,6 +28,7 @@ export interface IConversation {
   testAgent?: Types.ObjectId;
   title: string;
   messages: IMessage[];
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -62,6 +63,7 @@ const ConversationSchema = new Schema<IConversationDocument>(
     testAgent: { type: Schema.Types.ObjectId, ref: "TestAgent", default: null },
     title: { type: String, default: "New conversation" },
     messages: { type: [MessageSchema], default: [] },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

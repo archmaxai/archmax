@@ -39,6 +39,7 @@ export interface IProject {
   description: string;
   mcpPageSize: number;
   github?: IGitHubConfig;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -62,6 +63,7 @@ const ProjectSchema = new Schema<IProjectDocument>(
     description: { type: String, default: "" },
     mcpPageSize: { type: Number, default: 50, min: 10, max: 200 },
     github: { type: GitHubConfigSchema, default: undefined },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

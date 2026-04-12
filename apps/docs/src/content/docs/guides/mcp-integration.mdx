@@ -5,6 +5,8 @@ description: Connect AI agents to your semantic layer using the Model Context Pr
 
 archmax exposes your semantic models to AI agents through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Agents discover available models, browse datasets and fields, and run scoped SQL queries.
 
+While semantic models are stored internally as [OSI](https://github.com/open-semantic-interchange/OSI) YAML files, the MCP tools never return raw YAML. Instead, models are converted on-the-fly into a **compressed markdown digest** that uses **3–5× fewer tokens** than the equivalent YAML while preserving all semantically relevant context. See [Semantic Models — How Agents See Your Models](/guides/semantic-models/#how-agents-see-your-models) for details on the digest format.
+
 ## Endpoints
 
 Each project has two MCP endpoints:
@@ -44,23 +46,25 @@ Tokens are created in the admin UI under **MCP Access**. Each token has:
 
 ## Query Execution
 
-The `execute_query` tool lets agents run SQL against your data through sandboxed VIEWs. Instead of accessing raw tables, queries reference scoped VIEWs:
+The `execute_query` tool lets agents run SQL against your data through sandboxed VIEWs. Instead of accessing raw tables, agents write SQL with bare dataset names — the correct scoped schema is resolved automatically via DuckDB's `search_path`:
 
 ```sql
 SELECT o.total_amount, c.name
-FROM _scope_ecommerce."orders" o
-JOIN _scope_ecommerce."customers" c
+FROM "orders" o
+JOIN "customers" c
   ON o.customer_id = c.customer_id
 WHERE o.created_at > '2024-01-01'
 LIMIT 100
 ```
 
+Agents should **not** add schema or catalog prefixes. The `search_path` ensures that `"orders"` resolves to the correct scoped VIEW for the requested model.
+
 ### Security
 
 - Queries are validated to only allow `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements
-- Raw catalog references (e.g., `shopify.public.orders`) are rejected
-- Cross-model scope references are blocked
-- Each query runs with DuckDB security hardening: external access disabled, resource limits, locked configuration
+- Raw catalog references (e.g., `shopify.public.orders`) are rejected — use bare dataset names
+- Explicit `_scope_` prefixes are rejected — names resolve automatically
+- Each query runs with DuckDB security hardening: external access disabled, resource limits, `SET` statements blocked
 - Results are capped at 1,000 rows with a 30-second timeout
 
 ## Client Configuration Examples

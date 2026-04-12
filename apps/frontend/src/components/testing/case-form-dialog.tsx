@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Play, Loader2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -29,6 +29,7 @@ interface CaseFormDialogProps {
   agents: TestAgentItem[];
   testCase?: TestCaseItem;
   onSuccess: () => void;
+  onRunNavigate?: (runId: string) => void;
 }
 
 export function CaseFormDialog({
@@ -38,6 +39,7 @@ export function CaseFormDialog({
   agents,
   testCase,
   onSuccess,
+  onRunNavigate,
 }: CaseFormDialogProps) {
   const [title, setTitle] = useState(testCase?.title ?? "");
   const [testAgentId, setTestAgentId] = useState(testCase?.testAgent?._id ?? "");
@@ -67,29 +69,55 @@ export function CaseFormDialog({
     setTagInput("");
   }
 
+  function buildPayload() {
+    const expectedFacts = facts.filter((f) => f.trim().length > 0);
+    const parsed = maxToolCalls ? parseInt(maxToolCalls, 10) : undefined;
+    const payload: any = { title, testAgentId, semanticModel, inputMessage, expectedFacts, tags };
+    if (parsed && parsed > 0) payload.maxToolCalls = parsed;
+    return payload;
+  }
+
+  async function saveTestCase(): Promise<TestCaseItem> {
+    const payload = buildPayload();
+    if (testCase) {
+      const res = await api.api.projects[":projectId"]["test-cases"][":caseId"].$put({
+        param: { projectId, caseId: testCase._id },
+        json: payload,
+      });
+      if (!res.ok) throw new Error("Failed to update test case");
+      return res.json() as unknown as TestCaseItem;
+    }
+    const res = await api.api.projects[":projectId"]["test-cases"].$post({
+      param: { projectId },
+      json: payload,
+    });
+    if (!res.ok) throw new Error("Failed to create test case");
+    return res.json() as unknown as TestCaseItem;
+  }
+
   const mutation = useMutation({
-    mutationFn: async () => {
-      const expectedFacts = facts.filter((f) => f.trim().length > 0);
-      const parsed = maxToolCalls ? parseInt(maxToolCalls, 10) : undefined;
-      const payload: any = { title, testAgentId, semanticModel, inputMessage, expectedFacts, tags };
-      if (parsed && parsed > 0) payload.maxToolCalls = parsed;
-      if (testCase) {
-        const res = await api.api.projects[":projectId"]["test-cases"][":caseId"].$put({
-          param: { projectId, caseId: testCase._id },
-          json: payload,
-        });
-        if (!res.ok) throw new Error("Failed to update test case");
-      } else {
-        const res = await api.api.projects[":projectId"]["test-cases"].$post({
-          param: { projectId },
-          json: payload,
-        });
-        if (!res.ok) throw new Error("Failed to create test case");
-      }
-    },
+    mutationFn: saveTestCase,
     onSuccess: () => {
       toast.success(testCase ? "Test case updated" : "Test case created");
       onSuccess();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const runMutation = useMutation({
+    mutationFn: async () => {
+      const saved = await saveTestCase();
+      const res = await api.api.projects[":projectId"]["test-runs"].$post({
+        param: { projectId },
+        json: { testCaseIds: [saved._id] },
+      });
+      if (!res.ok) throw new Error("Failed to start test run");
+      return res.json() as unknown as { _id: string };
+    },
+    onSuccess: (data) => {
+      toast.success(testCase ? "Test case updated" : "Test case created");
+      onSuccess();
+      onRunNavigate?.(data._id);
     },
     onError: (err) => toast.error(err.message),
   });
@@ -101,7 +129,10 @@ export function CaseFormDialog({
     semanticModel.length > 0 &&
     inputMessage.trim().length > 0 &&
     validFacts.length > 0 &&
-    !mutation.isPending;
+    !mutation.isPending &&
+    !runMutation.isPending;
+
+  const canRun = canSubmit && testAgentId.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -197,7 +228,7 @@ export function CaseFormDialog({
             <Label>Tags</Label>
             <div className="flex gap-2">
               <Input
-                placeholder="Add a tag…"
+                placeholder="Add a tag..."
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
@@ -233,6 +264,20 @@ export function CaseFormDialog({
         </div>
 
         <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="mr-auto"
+            disabled={!canRun}
+            onClick={() => runMutation.mutate()}
+          >
+            {runMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="mr-2 h-4 w-4" />
+            )}
+            Run Test
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!canSubmit} onClick={() => mutation.mutate()}>
             {mutation.isPending ? "Saving..." : testCase ? "Save Changes" : "Create Case"}

@@ -45,7 +45,7 @@ function makeGetOverviewTool(fileSvc: SemanticModelFileService, projectId: strin
       const r = await getSemanticModelOverview(fileSvc, projectId, scopes, modelName, {
         scope: scope as "datasets" | "relationships" | "metrics" | undefined,
         page,
-        showViewNames: true,
+        showTableNames: true,
       });
       return r.text;
     },

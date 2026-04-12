@@ -3,7 +3,9 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
-import { getProjectInstance } from "@archmax/core/services/duckdb";
+import { testSingleConnection } from "@archmax/core/services/duckdb";
+import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
+import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
 
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -21,8 +23,13 @@ const connectionConfigSchema = z.object({
 
 export const REDACTED_SENTINEL = "********";
 
+function getEncryptionKey(): string | null {
+  return getEnv().ENCRYPTION_KEY || null;
+}
+
 export function redactConnectionConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const redacted = { ...config };
+  const decrypted = decryptConnectionCredentials(config, getEncryptionKey());
+  const redacted = { ...decrypted };
   if (redacted.password) redacted.password = REDACTED_SENTINEL;
   if (typeof redacted.uri === "string") {
     try {
@@ -51,6 +58,7 @@ export function mergeConnectionConfig(
   stored: Record<string, unknown>,
 ): Record<string, unknown> {
   const merged = { ...incoming };
+  const key = getEncryptionKey();
 
   const pw = merged.password as string | undefined;
   if (!pw || pw === REDACTED_SENTINEL) {
@@ -59,12 +67,16 @@ export function mergeConnectionConfig(
     } else {
       delete merged.password;
     }
+  } else {
+    merged.password = key ? encryptConnectionCredentials({ password: pw }, key).password : pw;
   }
 
   if (typeof merged.uri === "string" && uriContainsSentinel(merged.uri)) {
     if (typeof stored.uri === "string") {
       merged.uri = stored.uri;
     }
+  } else if (typeof merged.uri === "string") {
+    merged.uri = key ? encryptConnectionCredentials({ uri: merged.uri }, key).uri : merged.uri;
   }
 
   return merged;
@@ -114,7 +126,11 @@ const app = new Hono()
 
     const body = c.req.valid("json");
     const slug = body.slug || slugifyConnectionName(body.name);
-    const conn = await Connection.create({ ...body, slug, project: projectId });
+    const encryptedConfig = encryptConnectionCredentials(
+      body.connectionConfig as Record<string, unknown>,
+      getEncryptionKey(),
+    );
+    const conn = await Connection.create({ ...body, connectionConfig: encryptedConfig, slug, project: projectId });
     return c.json(redactConnection(conn.toObject() as unknown as Record<string, unknown>), 201);
   })
   .put("/:id", zValidator("json", updateSchema), async (c) => {
@@ -156,11 +172,7 @@ const app = new Hono()
     if (!conn) throw AppError.notFound("Connection not found");
 
     try {
-      const instance = await getProjectInstance(
-        projectId,
-        [conn] as IConnectionDocument[],
-        { readOnly: true },
-      );
+      const instance = await testSingleConnection(conn as IConnectionDocument);
       const db = await instance.connect();
       try {
         await db.run("SELECT 1");
@@ -168,11 +180,9 @@ const app = new Hono()
         db.disconnectSync();
       }
       return c.json({ ok: true });
-    } catch {
-      return c.json(
-        { ok: false, error: "Connection test failed. Check your connection settings and try again." },
-        400,
-      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Connection test failed";
+      return c.json({ ok: false, error: message }, 400);
     }
   });
 

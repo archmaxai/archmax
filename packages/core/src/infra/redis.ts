@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 import { getEnv } from "../config/env";
-import { JOB_CANCEL_CHANNEL_PREFIX } from "../queue/constants";
+import { JOB_CANCEL_CHANNEL_PREFIX, TEST_RUN_CANCEL_CHANNEL_PREFIX } from "../queue/constants";
 
 let redis: Redis | null = null;
 let connectionAttempted = false;
@@ -123,4 +123,57 @@ export async function clearCancelFlag(
   if (!client) return;
 
   client.del(`${CANCEL_FLAG_PREFIX}${conversationId}`).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Test Run Cancellation (cross-process signaling for test-run workers)
+// ---------------------------------------------------------------------------
+
+const TEST_RUN_CANCEL_FLAG_PREFIX = "test-run-cancel-flag:";
+
+export async function publishTestRunCancelSignal(
+  testRunId: string,
+): Promise<void> {
+  const client = getRedis();
+  if (!client) return;
+
+  try {
+    await Promise.all([
+      client.publish(
+        `${TEST_RUN_CANCEL_CHANNEL_PREFIX}${testRunId}`,
+        "cancel",
+      ),
+      client.setex(
+        `${TEST_RUN_CANCEL_FLAG_PREFIX}${testRunId}`,
+        CANCEL_FLAG_TTL_SECONDS,
+        "1",
+      ),
+    ]);
+  } catch (err) {
+    console.error("[redis] Failed to publish test run cancel signal:", err);
+  }
+}
+
+export async function isTestRunCancelFlagSet(
+  testRunId: string,
+): Promise<boolean> {
+  const client = getRedis();
+  if (!client) return false;
+
+  try {
+    return (
+      (await client.exists(`${TEST_RUN_CANCEL_FLAG_PREFIX}${testRunId}`)) === 1
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function clearTestRunCancelFlag(
+  testRunId: string,
+): Promise<void> {
+  const client = getRedis();
+  if (!client) return;
+
+  client.del(`${TEST_RUN_CANCEL_FLAG_PREFIX}${testRunId}`).catch(() => {});
 }

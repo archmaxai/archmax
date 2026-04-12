@@ -10,6 +10,7 @@ export interface ITestCase {
   expectedFacts: string[];
   tags: string[];
   maxToolCalls?: number;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -26,6 +27,7 @@ const TestCaseSchema = new Schema<ITestCaseDocument>(
     expectedFacts: { type: [String], required: true, validate: [(v: string[]) => v.length >= 1, "At least one expected fact is required"] },
     tags: { type: [String], default: [], set: (v: string[]) => v.map((t) => t.trim().toLowerCase()).filter(Boolean) },
     maxToolCalls: { type: Number },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

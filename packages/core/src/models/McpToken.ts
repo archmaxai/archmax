@@ -9,6 +9,7 @@ export interface IMcpToken {
   scopes: string[];
   expiresAt: Date | null;
   lastUsedAt: Date | null;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,6 +24,7 @@ const McpTokenSchema = new Schema<IMcpTokenDocument>(
     scopes: { type: [String], default: [] },
     expiresAt: { type: Date, default: null },
     lastUsedAt: { type: Date, default: null },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

@@ -108,8 +108,6 @@ export function GraphContextMenu({
 }
 
 interface GroupNamePopoverProps {
-  x: number;
-  y: number;
   value: string;
   onChange: (value: string) => void;
   onCommit: () => void;
@@ -120,8 +118,6 @@ interface GroupNamePopoverProps {
 }
 
 function GroupNamePopover({
-  x,
-  y,
   value,
   onChange,
   onCommit,
@@ -138,10 +134,9 @@ function GroupNamePopover({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-40" onClick={onCancel}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center" onClick={onCancel}>
       <div
-        className="absolute z-50 rounded-xl bg-popover text-popover-foreground p-3 shadow-popup"
-        style={{ left: x, top: y }}
+        className="z-50 rounded-xl bg-popover text-popover-foreground p-3 shadow-popup"
         onClick={(e) => e.stopPropagation()}
       >
         <label className="text-sm font-medium text-muted-foreground mb-1.5 block">
@@ -176,5 +171,5 @@ export function CreateGroupPopover(props: Omit<GroupNamePopoverProps, "label" | 
 }
 
 export function RenameGroupPopover(props: Omit<GroupNamePopoverProps, "label" | "commitLabel" | "placeholder">) {
-  return <GroupNamePopover label="Rename group" commitLabel="Rename" {...props} />;
+  return <GroupNamePopover label="Rename group" placeholder="Group name" commitLabel="Rename" {...props} />;
 }

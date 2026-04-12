@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   SemanticModelDigest,
   DEFAULT_ITEMS_PER_PAGE,
+  buildSourceMap,
   formatField,
   oneLine,
   normalizeAiContext,
@@ -135,12 +136,7 @@ describe("formatField", () => {
     expect(line).toContain("Ex: `123`");
   });
 
-  it("omits expression when it matches field name", () => {
-    const field = makeField({ name: "email", description: "Email" });
-    expect(formatField(field)).not.toContain("Expr:");
-  });
-
-  it("includes expression when it differs from field name", () => {
+  it("does not leak raw expressions to querying agents", () => {
     const field = makeField({
       name: "customer_id",
       description: "FK to customers",
@@ -151,7 +147,8 @@ describe("formatField", () => {
       },
     });
     const line = formatField(field);
-    expect(line).toContain("Expr: `CAST(JSON_EXTRACT_STRING(customer, '$.id') AS BIGINT)`");
+    expect(line).not.toContain("Expr:");
+    expect(line).not.toContain("JSON_EXTRACT_STRING");
   });
 
   it("includes enum values inline with type", () => {
@@ -221,7 +218,7 @@ describe("SemanticModelDigest.overview", () => {
     expect(content).toContain("> Use orders as central table");
   });
 
-  it("renders dataset summary table with VIEW column by default", () => {
+  it("renders dataset summary table with Table Name column by default", () => {
     const model = makeModel({
       name: "test",
       datasets: [
@@ -235,11 +232,11 @@ describe("SemanticModelDigest.overview", () => {
     });
     const { content } = SemanticModelDigest.overview(model);
     expect(content).toContain("## Datasets (1)");
-    expect(content).toContain("| Dataset | Source | Fields | VIEW | Description |");
-    expect(content).toContain('| orders | shop.public.orders | 2 | `_scope_test."orders"` | Order data |');
+    expect(content).toContain("| Dataset | Table Name | Fields | Description |");
+    expect(content).toContain('| orders | `"orders"` | 2 | Order data |');
   });
 
-  it("renders dataset summary table without VIEW column when showViewNames is false", () => {
+  it("renders dataset summary table without Table Name column when showTableNames is false", () => {
     const model = makeModel({
       name: "test",
       datasets: [
@@ -251,11 +248,11 @@ describe("SemanticModelDigest.overview", () => {
         }),
       ],
     });
-    const { content } = SemanticModelDigest.overview(model, { showViewNames: false });
+    const { content } = SemanticModelDigest.overview(model, { showTableNames: false });
     expect(content).toContain("## Datasets (1)");
-    expect(content).toContain("| Dataset | Source | Fields | Description |");
-    expect(content).toContain("| orders | shop.public.orders | 2 | Order data |");
-    expect(content).not.toContain("VIEW");
+    expect(content).toContain("| Dataset | Fields | Description |");
+    expect(content).toContain("| orders | 2 | Order data |");
+    expect(content).not.toContain("Table Name");
   });
 
   it("renders relationships as join paths", () => {
@@ -394,7 +391,7 @@ describe("SemanticModelDigest.dataset", () => {
   it("renders dataset header with source and page info", () => {
     const ds = makeDataset({ name: "orders", source: "shop.public.orders", fields: [makeField({ name: "id" })] });
     const { content } = SemanticModelDigest.dataset(ds);
-    expect(content).toContain("# orders (shop.public.orders) — page 1/1");
+    expect(content).toContain("# orders — page 1/1");
   });
 
   it("includes primary key and aliases in metadata line", () => {
@@ -473,6 +470,27 @@ describe("SemanticModelDigest.dataset", () => {
     expect(content).toContain("2. **Revenue by month**");
   });
 
+  it("rewrites validated query source paths to bare dataset names when sourceMap is provided", () => {
+    const ds = makeDataset({
+      name: "orders",
+      source: "shop.public.orders",
+      custom_extensions: [
+        {
+          vendor_name: "COMMON",
+          data: JSON.stringify({
+            validated_queries: [
+              { description: "Row count", query: "SELECT COUNT(*) FROM shop.public.orders" },
+            ],
+          }),
+        },
+      ],
+    });
+    const srcMap = buildSourceMap([ds]);
+    const { content } = SemanticModelDigest.dataset(ds, 1, 50, srcMap);
+    expect(content).toContain('`SELECT COUNT(*) FROM "orders"`');
+    expect(content).not.toContain("shop.public.orders");
+  });
+
   it("omits validated queries section when absent", () => {
     const ds = makeDataset({ name: "orders", source: "shop.public.orders" });
     const { content } = SemanticModelDigest.dataset(ds);
@@ -501,8 +519,8 @@ describe("SemanticModelDigest.datasets (batch)", () => {
     const ds1 = makeDataset({ name: "orders", source: "s.p.orders", fields: fields20 });
     const ds2 = makeDataset({ name: "customers", source: "s.p.customers", fields: fields20 });
     const result = SemanticModelDigest.datasets([ds1, ds2], 1);
-    expect(result.content).toContain("# orders (s.p.orders)");
-    expect(result.content).toContain("# customers (s.p.customers)");
+    expect(result.content).toContain("# orders —");
+    expect(result.content).toContain("# customers —");
     expect(result.content).toContain("\n\n---\n\n");
     expect(result.page).toBe(1);
     expect(result.totalPages).toBe(1);
@@ -591,12 +609,16 @@ describe("SemanticModelDigest.overview validated queries", () => {
   it("includes validated queries section when model has queries", () => {
     const model = makeModel({
       name: "ecommerce",
+      datasets: [
+        makeDataset({ name: "orders", source: "shop.public.orders" }),
+        makeDataset({ name: "customers", source: "shop.public.customers" }),
+      ],
       custom_extensions: [
         {
           vendor_name: "COMMON",
           data: JSON.stringify({
             validated_queries: [
-              { description: "Top customers", query: "SELECT c.email, SUM(o.total) FROM orders o JOIN customers c ON o.cid = c.id GROUP BY 1 ORDER BY 2 DESC LIMIT 10" },
+              { description: "Top customers", query: "SELECT c.email, SUM(o.total) FROM shop.public.orders o JOIN shop.public.customers c ON o.cid = c.id GROUP BY 1 ORDER BY 2 DESC LIMIT 10" },
             ],
           }),
         },
@@ -604,7 +626,10 @@ describe("SemanticModelDigest.overview validated queries", () => {
     });
     const { content } = SemanticModelDigest.overview(model);
     expect(content).toContain("## Validated Queries (1)");
-    expect(content).toContain("1. **Top customers** — `SELECT c.email");
+    expect(content).toContain('"orders"');
+    expect(content).toContain('"customers"');
+    expect(content).not.toContain("shop.public.orders");
+    expect(content).not.toContain("shop.public.customers");
   });
 
   it("omits validated queries section when model has no queries", () => {

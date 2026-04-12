@@ -11,6 +11,9 @@ import {
   makeMvTool,
   makeCpTool,
   makeReadDocumentTool,
+  makeListTestAgentsTool,
+  makeListTestCasesTool,
+  makeDeleteTestCaseTool,
   makeCreateTestCaseTool,
   buildSystemPrompt,
 } from "./agent-tools";
@@ -54,12 +57,15 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
   const mvTool = makeMvTool(backend);
   const cpTool = makeCpTool(backend);
   const readDocTool = makeReadDocumentTool(projectId);
+  const listTestAgentsTool = makeListTestAgentsTool(projectId);
+  const listTestCasesTool = makeListTestCasesTool(projectId);
+  const deleteTestCaseTool = makeDeleteTestCaseTool(projectId);
   const createTestCaseTool = makeCreateTestCaseTool(projectId);
 
   return createDeepAgent({
     model: llm,
     backend,
-    tools: [executeQuery, rmTool, mvTool, cpTool, readDocTool, createTestCaseTool],
+    tools: [executeQuery, rmTool, mvTool, cpTool, readDocTool, listTestAgentsTool, listTestCasesTool, deleteTestCaseTool, createTestCaseTool],
     systemPrompt: buildSystemPrompt(connections),
   });
 }

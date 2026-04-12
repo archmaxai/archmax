@@ -3,9 +3,9 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { TestRun, TestCase, TestAgent } from "@archmax/core/models/index";
-import { isRedisConfigured } from "@archmax/core/infra/redis";
-import { enqueueTestRunJob } from "@archmax/core/queue/producer";
-import { processTestCase } from "@archmax/core/services/test-runner";
+import { isRedisConfigured, publishTestRunCancelSignal } from "@archmax/core/infra/redis";
+import { enqueueTestRunJob, removeTestRunJobs } from "@archmax/core/queue/producer";
+import { processTestCase, markTestRunCancelled, isTestRunCancelled, clearTestRunCancelledFlag } from "@archmax/core/services/test-runner";
 import { AppError } from "../utils/errors";
 
 const createSchema = z.object({
@@ -108,12 +108,22 @@ const app = new Hono()
         });
       }
     } else {
+      const runId = run._id.toString();
       (async () => {
-        try {
-          for (let i = 0; i < cases.length; i++) {
-            const tc = cases[i] as any;
+        for (let i = 0; i < cases.length; i++) {
+          if (isTestRunCancelled(runId)) {
+            for (let j = i; j < cases.length; j++) {
+              await TestRun.updateOne(
+                { _id: runId },
+                { $set: { [`cases.${j}.status`]: "cancelled" } },
+              );
+            }
+            break;
+          }
+          const tc = cases[i] as any;
+          try {
             await processTestCase(
-              run._id.toString(),
+              runId,
               i,
               tc.testAgent.toString(),
               tc.semanticModel,
@@ -121,16 +131,62 @@ const app = new Hono()
               tc.expectedFacts,
               tc.maxToolCalls,
             );
+          } catch (err) {
+            console.error(`[test-runs] In-process case ${i} failed:`, err);
           }
-          await TestRun.updateOne({ _id: run._id }, { status: "completed", completedAt: new Date() });
+        }
+        clearTestRunCancelledFlag(runId);
+        try {
+          const latest = await TestRun.findById(run._id).lean();
+          if (latest && latest.status !== "cancelled") {
+            const hasFailures = latest.cases.some((c: any) => c.status === "error" || c.status === "pending");
+            await TestRun.updateOne(
+              { _id: run._id },
+              { status: hasFailures ? "failed" : "completed", completedAt: new Date() },
+            );
+          }
         } catch (err) {
-          console.error("[test-runs] In-process batch failed:", err);
-          await TestRun.updateOne({ _id: run._id }, { status: "failed", completedAt: new Date() });
+          console.error("[test-runs] Failed to finalize run:", err);
         }
       })();
     }
 
     return c.json({ _id: run._id, status: "running" }, 201);
+  })
+  .post("/:runId/cancel", async (c) => {
+    await connectDB();
+    const projectId = c.req.param("projectId")!;
+    const runId = c.req.param("runId")!;
+
+    const run = await TestRun.findOne({ _id: runId, project: projectId });
+    if (!run) throw AppError.notFound("Test run not found");
+    if (run.status !== "pending" && run.status !== "running") {
+      throw AppError.badRequest("Only pending or running test runs can be cancelled");
+    }
+
+    await TestRun.updateOne(
+      { _id: runId, "cases.status": "pending" },
+      { $set: { "cases.$[pending].status": "cancelled" } },
+      { arrayFilters: [{ "pending.status": "pending" }] },
+    );
+
+    await TestRun.updateOne(
+      { _id: runId },
+      { status: "cancelled", completedAt: new Date() },
+    );
+
+    if (isRedisConfigured()) {
+      await publishTestRunCancelSignal(runId);
+      try {
+        await removeTestRunJobs(runId, run.cases.length);
+      } catch (err) {
+        console.error("[test-runs] Failed to remove queued jobs:", err);
+      }
+    } else {
+      markTestRunCancelled(runId);
+    }
+
+    return c.json({ ok: true });
   })
   .delete("/:runId", async (c) => {
     await connectDB();

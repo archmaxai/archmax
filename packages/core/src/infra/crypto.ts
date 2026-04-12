@@ -34,3 +34,54 @@ export function decrypt(ciphertext: string, key: string): string {
   decipher.setAuthTag(authTag);
   return decipher.update(encrypted) + decipher.final("utf-8");
 }
+
+/**
+ * Try to decrypt a value; return the original string if decryption fails
+ * (assumes the value is already plaintext).
+ */
+function tryDecrypt(value: string, key: string): string {
+  try {
+    return decrypt(value, key);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Encrypt sensitive fields (password, uri) in a connection config object.
+ * Returns a shallow copy with encrypted values. No-op when key is null.
+ */
+export function encryptConnectionCredentials(
+  config: Record<string, unknown>,
+  key: string | null,
+): Record<string, unknown> {
+  if (!key) return config;
+  const result = { ...config };
+  if (typeof result.password === "string" && result.password) {
+    result.password = encrypt(result.password, key);
+  }
+  if (typeof result.uri === "string" && result.uri) {
+    result.uri = encrypt(result.uri, key);
+  }
+  return result;
+}
+
+/**
+ * Decrypt sensitive fields (password, uri) in a connection config object.
+ * Falls back to the original value if decryption fails (plaintext data).
+ * No-op when key is null.
+ */
+export function decryptConnectionCredentials(
+  config: Record<string, unknown>,
+  key: string | null,
+): Record<string, unknown> {
+  if (!key) return config;
+  const result = { ...config };
+  if (typeof result.password === "string" && result.password) {
+    result.password = tryDecrypt(result.password, key);
+  }
+  if (typeof result.uri === "string" && result.uri) {
+    result.uri = tryDecrypt(result.uri, key);
+  }
+  return result;
+}

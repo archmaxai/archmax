@@ -4,6 +4,8 @@ export const TEST_RUNS_QUEUE = "test-runs";
 
 export const JOB_CANCEL_CHANNEL_PREFIX = "job-cancel:";
 
+export const TEST_RUN_CANCEL_CHANNEL_PREFIX = "test-run-cancel:";
+
 export const STREAM_EVENTS_CHANNEL_PREFIX = "stream-events:";
 
 export const STREAM_BUFFER_PREFIX = "stream-buffer:";

@@ -9,6 +9,7 @@ export interface IImprovement {
   status: "pending" | "implemented";
   implementedAt: Date | null;
   createdVia: string;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +25,7 @@ const ImprovementSchema = new Schema<IImprovementDocument>(
     status: { type: String, enum: ["pending", "implemented"], default: "pending" },
     implementedAt: { type: Date, default: null },
     createdVia: { type: String, required: true },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

@@ -49,6 +49,13 @@ async function loginAndSaveState(page: Page, context: BrowserContext) {
   await page.locator("#password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 });
+
+  const disclaimer = page.getByRole("dialog");
+  if (await disclaimer.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    await disclaimer.locator("input[type='checkbox']").check();
+    await disclaimer.getByRole("button", { name: "Continue" }).click();
+  }
+
   await context.storageState({ path: AUTH_FILE });
 }
 
@@ -463,7 +470,7 @@ test.describe.serial("MCP Layer", () => {
   test("execute_query returns data from Postgres", async ({ request }) => {
     const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
       modelName: MODEL_NAME,
-      sql: `SELECT * FROM _scope_${MODEL_NAME}."products" ORDER BY id LIMIT 10`,
+      sql: `SELECT * FROM "products" ORDER BY id LIMIT 10`,
     });
     expect((body as any).result?.isError).toBeFalsy();
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
@@ -475,8 +482,8 @@ test.describe.serial("MCP Layer", () => {
       modelName: MODEL_NAME,
       sql: [
         `SELECT p.name AS product, o.quantity`,
-        `FROM _scope_${MODEL_NAME}."products" p`,
-        `JOIN _scope_${MODEL_NAME}."orders" o ON p.name = o.product_name`,
+        `FROM "products" p`,
+        `JOIN "orders" o ON p.name = o.product_name`,
         `ORDER BY p.name LIMIT 10`,
       ].join(" "),
     });

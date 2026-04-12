@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "playwright test",
+    "test": "FORCE_COLOR=0 playwright test",
     "test:headed": "playwright test --headed",
     "report": "playwright show-report"
   },
