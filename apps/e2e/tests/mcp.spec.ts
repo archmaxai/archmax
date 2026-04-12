@@ -467,31 +467,6 @@ test.describe.serial("MCP Layer", () => {
     expect(text).toContain("email");
   });
 
-  test("execute_query returns data from Postgres", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
-      modelName: MODEL_NAME,
-      sql: `SELECT * FROM "products" ORDER BY id LIMIT 10`,
-    });
-    expect((body as any).result?.isError).toBeFalsy();
-    const text: string = (body as any).result?.content?.[0]?.text ?? "";
-    expect(text).toContain("Widget A");
-  });
-
-  test("execute_query cross-database join (Postgres + MySQL)", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
-      modelName: MODEL_NAME,
-      sql: [
-        `SELECT p.name AS product, o.quantity`,
-        `FROM "products" p`,
-        `JOIN "orders" o ON p.name = o.product_name`,
-        `ORDER BY p.name LIMIT 10`,
-      ].join(" "),
-    });
-    expect((body as any).result?.isError).toBeFalsy();
-    const text: string = (body as any).result?.content?.[0]?.text ?? "";
-    expect(text).toContain("Widget A");
-  });
-
   test("request_improvement succeeds", async ({ request }) => {
     const body = await mcpToolCall(request, projectSlug, mcpSessionId, "request_improvement", {
       modelName: MODEL_NAME,

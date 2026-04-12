@@ -10,10 +10,25 @@ import { getEnv } from "../config/env";
 interface ProjectDuckDB {
   instance: DuckDBInstance;
   attachedConnections: Set<string>;
+  attachedSlugs: Set<string>;
   readOnly: boolean;
 }
 
 const projectInstances = new Map<string, ProjectDuckDB>();
+const projectLocks = new Map<string, Promise<void>>();
+
+async function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = projectLocks.get(projectId) ?? Promise.resolve();
+  let resolve!: () => void;
+  const next = new Promise<void>((r) => { resolve = r; });
+  projectLocks.set(projectId, next);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    resolve();
+  }
+}
 
 export const COMMUNITY_EXTENSIONS = new Set(["mssql"]);
 
@@ -113,6 +128,11 @@ async function attachCsvConnection(
   const cfg = conn.connectionConfig;
   if (!cfg.filename) return;
 
+  if (entry.attachedSlugs.has(conn.slug)) {
+    entry.attachedConnections.add(conn._id.toString());
+    return;
+  }
+
   const projectId = conn.project.toString();
   const filePath = csvFilePath(projectId, cfg.filename);
   const tableName = csvTableName(cfg.filename);
@@ -121,14 +141,13 @@ async function attachCsvConnection(
 
   const db = await entry.instance.connect();
   try {
-    try { await db.run("SET enable_external_access = true"); } catch { /* already enabled */ }
     await db.run(`ATTACH ':memory:' AS ${conn.slug}`);
     await db.run(
       `CREATE TABLE ${conn.slug}."${tableName}" AS SELECT * FROM read_csv('${escapedPath}'${readOpts})`,
     );
+    entry.attachedSlugs.add(conn.slug);
     entry.attachedConnections.add(conn._id.toString());
   } finally {
-    try { await db.run("SET enable_external_access = false"); } catch { /* ignored */ }
     db.disconnectSync();
   }
 }
@@ -163,26 +182,52 @@ export async function getProjectInstance(
   connections: IConnectionDocument[],
   options?: { readOnly?: boolean },
 ): Promise<DuckDBInstance> {
-  const readOnly = options?.readOnly ?? true;
-  let entry = projectInstances.get(projectId);
-
-  if (!entry) {
-    const instance = await DuckDBInstance.create();
-    entry = { instance, attachedConnections: new Set(), readOnly };
-    projectInstances.set(projectId, entry);
+  // Fast path: instance exists and every connection is already attached.
+  // Safe without the lock because the Sets are only mutated inside the
+  // lock and JS is single-threaded between await points.
+  const existing = projectInstances.get(projectId);
+  if (existing && connections.every((c) => existing.attachedConnections.has(c._id.toString()))) {
+    return existing.instance;
   }
 
-  for (const conn of connections) {
-    const connId = conn._id.toString();
-    if (entry.attachedConnections.has(connId)) continue;
-    if (conn.type === "csv") {
-      await attachCsvConnection(entry, conn);
-    } else {
-      await attachConnection(entry, conn);
+  return withProjectLock(projectId, async () => {
+    const readOnly = options?.readOnly ?? true;
+    let entry = projectInstances.get(projectId);
+
+    if (!entry) {
+      const instance = await DuckDBInstance.create();
+      entry = { instance, attachedConnections: new Set(), attachedSlugs: new Set(), readOnly };
+      projectInstances.set(projectId, entry);
     }
-  }
 
-  return entry.instance;
+    const pending = connections.filter(
+      (c) => !entry.attachedConnections.has(c._id.toString()),
+    );
+    if (pending.length === 0) return entry.instance;
+
+    // enable_external_access is instance-wide — set it once before all
+    // attachments and disable once after so parallel ATTACH / read_csv
+    // calls don't race over the toggle.
+    const gate = await entry.instance.connect();
+    try { await gate.run("SET enable_external_access = true"); } catch { /* already enabled */ }
+    gate.disconnectSync();
+
+    try {
+      await Promise.all(
+        pending.map((conn) =>
+          conn.type === "csv"
+            ? attachCsvConnection(entry, conn)
+            : attachConnection(entry, conn),
+        ),
+      );
+    } finally {
+      const cleanup = await entry.instance.connect();
+      try { await cleanup.run("SET enable_external_access = false"); } catch { /* ignored */ }
+      cleanup.disconnectSync();
+    }
+
+    return entry.instance;
+  });
 }
 
 async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument): Promise<void> {
@@ -191,12 +236,6 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
 
   const db = await entry.instance.connect();
   try {
-    // If a prior hardenConnection() disabled external access at the instance
-    // level, INSTALL/LOAD will fail because they need the extensions directory.
-    // Temporarily re-enable it; the caller's hardenConnection() re-disables it
-    // before any user-provided SQL executes.
-    try { await db.run("SET enable_external_access = true"); } catch { /* already enabled */ }
-
     const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
     await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
@@ -206,7 +245,6 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
     await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}${readOnlyClause})`);
     entry.attachedConnections.add(conn._id.toString());
   } finally {
-    try { await db.run("SET enable_external_access = false"); } catch { /* ignored */ }
     db.disconnectSync();
   }
 }

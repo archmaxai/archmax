@@ -92,12 +92,27 @@ test.describe.serial("CSV Data Source", () => {
         },
       },
     );
-    expect(res.status()).toBe(200);
+    expect(res.status()).toBe(201);
     const body = await res.json();
     expect(body.filename).toBe(CSV_FILENAME);
   });
 
   test("create CSV connection via API", async ({ request }) => {
+    // Reuse existing connection if it was already created (idempotent for retries)
+    const listRes = await request.get(
+      `${BASE_URL}/api/projects/${projectId}/connections`,
+      { headers: apiHeaders(cookie) },
+    );
+    if (listRes.ok()) {
+      const existing: Array<{ _id: string; slug: string; type: string }> = await listRes.json();
+      const old = existing.find((c) => c.slug === CONNECTION_SLUG);
+      if (old) {
+        connectionId = old._id;
+        expect(old.type).toBe("csv");
+        return;
+      }
+    }
+
     const res = await request.post(
       `${BASE_URL}/api/projects/${projectId}/connections`,
       {
@@ -164,7 +179,7 @@ test.describe.serial("CSV Data Source", () => {
 
     const row = page.getByRole("row").filter({ hasText: CONNECTION_NAME });
     await expect(row).toBeVisible({ timeout: 10_000 });
-    await expect(row.getByText("csv")).toBeVisible();
+    await expect(row.locator('[data-slot="badge"]', { hasText: "csv" })).toBeVisible();
 
     await context.close();
   });

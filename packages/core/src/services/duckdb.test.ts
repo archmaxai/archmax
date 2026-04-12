@@ -8,7 +8,7 @@ vi.mock("../config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "", projectsDir: "/tmp/test-projects" })),
 }));
 
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS, csvTableName, buildReadCsvOptions, csvFilePath } from "./duckdb";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS, csvTableName, buildReadCsvOptions, csvFilePath, getProjectInstance } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
