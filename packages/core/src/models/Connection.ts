@@ -43,6 +43,7 @@ export interface IConnection {
   connectionConfig: IConnectionConfig;
   description: string;
   isActive: boolean;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -72,6 +73,7 @@ const ConnectionSchema = new Schema<IConnectionDocument>(
     connectionConfig: { type: ConnectionConfigSchema, required: true },
     description: { type: String, default: "" },
     isActive: { type: Boolean, default: true },
+    _schemaVersion: { type: Number, default: 1 },
   },
   { timestamps: true },
 );

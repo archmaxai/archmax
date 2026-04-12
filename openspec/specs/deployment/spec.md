@@ -9,6 +9,8 @@ The Dockerfile SHALL create the `archmax` system user and a dedicated `/data` di
 
 The entrypoint SHALL validate critical environment variables before starting application processes. When validation fails, the container stays running with a clear error message instead of crash-looping.
 
+The API server SHALL await database connection, schema migrations, and admin seeding to complete before accepting HTTP traffic. The worker SHALL await database connection and schema migrations before processing jobs.
+
 #### Scenario: Non-root process execution
 
 - **WHEN** the container starts
@@ -22,6 +24,11 @@ The entrypoint SHALL validate critical environment variables before starting app
 - **THEN** the container remains running (does not exit or crash-loop)
 - **AND** `docker logs` shows a human-readable error with fix instructions
 - **AND** no stack traces or raw JSON error output appear in the logs
+
+#### Scenario: Migrations complete before traffic
+
+- **WHEN** the API server starts
+- **THEN** database connection, schema migrations, and admin seeding complete before the HTTP server begins accepting requests
 
 ### Requirement: Unified Data Directory
 
@@ -165,56 +172,67 @@ The `HEALTHCHECK` SHALL:
 The CI pipeline SHALL run Playwright end-to-end browser tests against the Docker image on every pull request. The E2E test infrastructure SHALL:
 
 - Live in a dedicated `apps/e2e/` workspace package with `@playwright/test`
-- Use a `docker-compose.ci.yml` that starts the application Docker image alongside MongoDB, Redis, **PostgreSQL**, **MySQL**, **Microsoft SQL Server** (official Linux container image from Microsoft Container Registry, e.g. `mcr.microsoft.com/mssql/server`), and a **SQLite** database file **mounted into the app container** at a documented path so the app can open it by filesystem path
+- Use a `docker-compose.ci.yml` that starts the application Docker image alongside MongoDB and Redis
 - Run after the Docker image is built and pushed to GHCR
 - Execute tests against `localhost:8080` (the nginx entrypoint of the Docker image)
 - Upload Playwright HTML reports and failure screenshots as GitHub Actions artifacts
 - Block the PR from merging if any E2E test fails
 
-The CI workflow SHALL generate random `UI_USERNAME` and `UI_PASSWORD` values at runtime and inject them into the Docker Compose stack and the Playwright test process via `E2E_USERNAME` and `E2E_PASSWORD`. Credentials MUST NOT be hardcoded in any committed file (compose defaults used only for local development MUST be documented as such).
+The CI workflow SHALL generate random `UI_USERNAME` and `UI_PASSWORD` values at runtime and inject them into the Docker Compose stack and the Playwright test environment via `E2E_USERNAME` and `E2E_PASSWORD` env vars. Credentials MUST NOT be hardcoded in any committed file (compose file, test file, or workflow).
 
-`docker-compose.ci.yml` SHALL use environment variable interpolation (`${UI_USERNAME}`, `${UI_PASSWORD}`) for admin credentials.
+`docker-compose.ci.yml` SHALL use environment variable interpolation (`${UI_USERNAME}`, `${UI_PASSWORD}`) instead of hardcoded credential values.
 
-The E2E test suite SHALL read login credentials exclusively from `E2E_USERNAME` and `E2E_PASSWORD` environment variables when running in CI, and MAY use documented defaults for local runs.
+The E2E test suite SHALL read login credentials exclusively from `E2E_USERNAME` and `E2E_PASSWORD` environment variables and MUST NOT contain hardcoded usernames or passwords.
 
 The test suite SHALL cover at minimum:
-
 - Health endpoint returns healthy
 - Unauthenticated redirect to login page
 - Login page renders correctly (heading, username field, password field, sign-in button)
-- Successful login with valid credentials
+- Successful login with valid randomly-generated credentials
 - Failed login with empty password
 - Failed login with correct username and wrong password
 - Failed login with wrong username and wrong password
-- **Data federation**: After login, ensure a project exists (create via UI if necessary), register active connections for PostgreSQL, MySQL, Microsoft SQL Server, and SQLite using parameters consistent with the compose network and mounted SQLite path, run **Test Connection** from the UI for each connection, and verify each succeeds
 
 #### Scenario: PR with passing E2E tests
 
 - **WHEN** a pull request is opened or updated
 - **AND** the Docker image builds successfully
 - **THEN** the E2E job generates random `UI_USERNAME` and `UI_PASSWORD` values
-- **AND** starts the application with MongoDB, Redis, and the federated database services via Docker Compose
-- **AND** waits for the health endpoint to return healthy and for database services to be ready
-- **AND** runs Playwright tests against the running application
+- **AND** starts the Docker image with the generated credentials via Docker Compose
+- **AND** waits for the health endpoint to return healthy
+- **AND** runs Playwright tests with `E2E_USERNAME` and `E2E_PASSWORD` set to the generated values
 - **AND** the GitHub check is marked as successful
 
 #### Scenario: PR with failing E2E tests
 
-- **WHEN** a Playwright test fails (e.g., login page does not render, navigation error, or a federated connection test fails)
+- **WHEN** a Playwright test fails (e.g., login page does not render, navigation error)
 - **THEN** the GitHub check is marked as failed
 - **AND** the Playwright HTML report and failure screenshots are uploaded as artifacts
 - **AND** the PR is blocked from merging
 
 #### Scenario: Docker image fails to start
 
-- **WHEN** the Docker image starts but the health endpoint does not return healthy within the workflow’s configured wait window
+- **WHEN** the Docker image starts but the health endpoint does not return healthy within 60 seconds
 - **THEN** the E2E job fails without running Playwright tests
 - **AND** the container logs are captured for debugging
 
-#### Scenario: Contributor reproduces E2E locally
+#### Scenario: Empty password rejected at login
 
-- **WHEN** a contributor builds or pulls the application image, sets `APP_IMAGE` (or equivalent) and aligns `E2E_USERNAME` / `E2E_PASSWORD` with `UI_USERNAME` / `UI_PASSWORD` in compose, and runs `docker compose -f docker-compose.ci.yml up -d` followed by the documented Playwright command
-- **THEN** the same E2E tests executed in CI can pass locally against `localhost:8080`
+- **WHEN** the e2e test submits the correct username with an empty password
+- **THEN** the login form shows an error
+- **AND** the user remains on the login page
+
+#### Scenario: Wrong password rejected at login
+
+- **WHEN** the e2e test submits the correct username with an incorrect password
+- **THEN** the login form shows an error banner
+- **AND** the user remains on the login page
+
+#### Scenario: Wrong username and password rejected at login
+
+- **WHEN** the e2e test submits an unknown username with an incorrect password
+- **THEN** the login form shows an error banner
+- **AND** the user remains on the login page
 
 ### Requirement: Agent API Configuration Guidance in .env.example
 

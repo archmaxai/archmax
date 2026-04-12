@@ -2,6 +2,7 @@ import "./env";
 
 import { Worker } from "bullmq";
 import { connectDB } from "@archmax/core/infra/db";
+import { runMigrations } from "@archmax/core/infra/migrations/runner";
 import { closeRedis } from "@archmax/core/infra/redis";
 import { getQueueConnectionOptions } from "@archmax/core/queue/connection";
 import {
@@ -27,6 +28,8 @@ async function main() {
 
   await connectDB();
   console.log("[worker] MongoDB connected");
+
+  await runMigrations();
 
   const connection = getQueueConnectionOptions();
 

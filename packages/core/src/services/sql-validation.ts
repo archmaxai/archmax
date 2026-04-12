@@ -14,11 +14,11 @@ export function validateReadOnlySQL(sql: string): string | null {
 /**
  * Validates SQL for scoped MCP queries. Checks:
  * 1. Read-only (SELECT/WITH/EXPLAIN/DESCRIBE only, no multi-statement)
- * 2. No direct catalog references — only _scope_<modelName>.* VIEWs allowed
+ * 2. No direct catalog references — only bare dataset names allowed (resolved via search_path)
  * 3. No information_schema access
- * 4. No cross-model scope access (_scope_<otherModel>.* rejected)
+ * 4. No explicit _scope_ schema references — search_path handles resolution
  */
-export function validateScopedSQL(sql: string, catalogSlugs: string[], modelName: string): string | null {
+export function validateScopedSQL(sql: string, catalogSlugs: string[]): string | null {
   const readOnlyError = validateReadOnlySQL(sql);
   if (readOnlyError) return readOnlyError;
 
@@ -28,19 +28,17 @@ export function validateScopedSQL(sql: string, catalogSlugs: string[], modelName
     if (pattern.test(sql)) {
       return (
         `Direct reference to catalog "${catalog}" is not allowed. ` +
-        `Use _scope_${modelName}.* VIEW names instead (e.g. _scope_${modelName}."dataset").`
+        `Use dataset names directly (e.g. FROM orders) — they resolve automatically.`
       );
     }
   }
 
   if (/\binformation_schema\b/i.test(sql)) {
-    return `Querying information_schema is not allowed. Use the available _scope_${modelName}.* VIEWs.`;
+    return "Querying information_schema is not allowed. Use dataset names directly.";
   }
 
-  const escapedModel = modelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const crossScopePattern = new RegExp(`\\b_scope_(?!${escapedModel}\\b)[\\w.-]+\\.`, "i");
-  if (crossScopePattern.test(sql)) {
-    return `Cross-model scope access is not allowed. Only _scope_${modelName}.* VIEWs are accessible for this query.`;
+  if (/\b_scope_\w+\./i.test(sql)) {
+    return "Do not use _scope_ prefixes. Use dataset names directly (e.g. FROM orders) — they resolve automatically via search_path.";
   }
 
   return null;

@@ -148,6 +148,13 @@ function TestCasesPage() {
     });
   }, [navigate, project._id]);
 
+  const handleRunNavigate = useCallback((runId: string) => {
+    navigate({
+      to: "/$projectId/testing/runs/$runId",
+      params: { projectId: project._id, runId },
+    });
+  }, [navigate, project._id]);
+
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
@@ -346,6 +353,7 @@ function TestCasesPage() {
           setCreateOpen(false);
           queryClient.invalidateQueries({ queryKey: ["test-cases", project._id] });
         }}
+        onRunNavigate={handleRunNavigate}
       />
 
       {editCase && (
@@ -359,6 +367,7 @@ function TestCasesPage() {
             setEditCase(null);
             queryClient.invalidateQueries({ queryKey: ["test-cases", project._id] });
           }}
+          onRunNavigate={handleRunNavigate}
         />
       )}
 

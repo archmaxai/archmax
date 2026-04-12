@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
+import { decryptConnectionCredentials } from "../infra/crypto";
+import { getEnv } from "../config/env";
 
 interface ProjectDuckDB {
   instance: DuckDBInstance;
@@ -29,7 +31,11 @@ function extensionForType(type: string): string | null {
 }
 
 export function buildAttachString(conn: IConnectionDocument): string {
-  const cfg = conn.connectionConfig;
+  const key = getEnv().ENCRYPTION_KEY || null;
+  const cfg = decryptConnectionCredentials(
+    conn.connectionConfig as Record<string, unknown>,
+    key,
+  ) as typeof conn.connectionConfig;
 
   if (cfg.uri) {
     return cfg.uri;
@@ -98,6 +104,29 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
   }
 }
 
+/**
+ * Create a fresh DuckDB instance, attach a single connection, and return it.
+ * Used for connectivity tests so results are not affected by cached state.
+ */
+export async function testSingleConnection(conn: IConnectionDocument): Promise<DuckDBInstance> {
+  const ext = extensionForType(conn.type);
+  if (!ext) throw new Error(`Unsupported connection type: ${conn.type}`);
+
+  const instance = await DuckDBInstance.create();
+  const db = await instance.connect();
+  try {
+    const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
+    await db.run(`INSTALL ${ext}${installSuffix}`);
+    await db.run(`LOAD ${ext}`);
+
+    const connStr = buildAttachString(conn).replace(/'/g, "''");
+    await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}, READ_ONLY)`);
+  } finally {
+    db.disconnectSync();
+  }
+  return instance;
+}
+
 
 // ── Scoped VIEWs for MCP ──────────────────────────────────────────────
 
@@ -136,22 +165,43 @@ export async function createScopedViews(
 
   const schema = scopeSchemaName(model.name);
   const db = await instance.connect();
+  const viewErrors: Array<{ dataset: string; field: string; error: string }> = [];
   try {
     await db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
     for (const ds of model.datasets) {
       if (ds.fields.length === 0) continue;
-      const columns = ds.fields.map((f) => {
+
+      const validColumns: string[] = [];
+      for (const f of ds.fields) {
         const expr = f.expression.dialects[0]?.expression ?? f.name;
-        return expr === f.name ? `"${f.name}"` : `${expr} AS "${f.name}"`;
-      });
+        const col = expr === f.name ? `"${f.name}"` : `${expr} AS "${f.name}"`;
+        try {
+          await db.run(`SELECT ${col} FROM ${ds.source} LIMIT 0`);
+          validColumns.push(col);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          viewErrors.push({ dataset: ds.name, field: f.name, error: msg });
+        }
+      }
+
+      if (validColumns.length === 0) continue;
       const viewName = scopedViewName(model.name, ds.name);
       await db.run(
-        `CREATE OR REPLACE VIEW ${viewName} AS SELECT ${columns.join(", ")} FROM ${ds.source}`,
+        `CREATE OR REPLACE VIEW ${viewName} AS SELECT ${validColumns.join(", ")} FROM ${ds.source}`,
       );
     }
     scopeViewCache.set(cacheKey, { hash });
   } finally {
     db.disconnectSync();
+  }
+
+  if (viewErrors.length > 0) {
+    const summary = viewErrors
+      .map((e) => `  ${e.dataset}.${e.field}: ${e.error}`)
+      .join("\n");
+    console.warn(
+      `[createScopedViews] Skipped ${viewErrors.length} invalid field expression(s) in model "${model.name}":\n${summary}`,
+    );
   }
 }
 
@@ -173,9 +223,10 @@ export function getAttachedCatalogSlugs(
   return connections.map((c) => c.slug);
 }
 
-export async function hardenConnection(db: DuckDBConnection): Promise<void> {
+export async function hardenConnection(db: DuckDBConnection, searchPath?: string): Promise<void> {
   try {
     await db.run("SET enable_external_access = false");
+    if (searchPath) await db.run(`SET search_path = '${searchPath}'`);
     await db.run("SET threads = 2");
     await db.run("SET memory_limit = '512MB'");
     await db.run("SET lock_configuration = true");

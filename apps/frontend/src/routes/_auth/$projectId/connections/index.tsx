@@ -166,7 +166,7 @@ function ConnectionsPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Slug</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead>Host / URI</TableHead>
+                  <TableHead>Description</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
@@ -180,10 +180,7 @@ function ConnectionsPage() {
                       <Badge variant="outline">{conn.type}</Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground max-w-xs truncate text-sm">
-                      {conn.connectionConfig.uri ??
-                        conn.connectionConfig.host ??
-                        conn.connectionConfig.database ??
-                        "—"}
+                      {conn.description || <span className="italic">No description</span>}
                     </TableCell>
                     <TableCell>
                       <Badge variant={conn.isActive ? "default" : "secondary"}>
@@ -264,7 +261,7 @@ function ConnectionFormDialog({
   open,
   onOpenChange,
   projectId,
-  editing,
+  editing: initialEditing,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -272,6 +269,7 @@ function ConnectionFormDialog({
   editing: Connection | null;
 }) {
   const queryClient = useQueryClient();
+  const [editing, setEditing] = useState<Connection | null>(initialEditing);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
@@ -311,21 +309,22 @@ function ConnectionFormDialog({
 
   useEffect(() => {
     if (!open) return;
-    if (editing) {
-      setName(editing.name);
-      setSlug(editing.slug);
+    setEditing(initialEditing);
+    if (initialEditing) {
+      setName(initialEditing.name);
+      setSlug(initialEditing.slug);
       setSlugTouched(true);
-      setType(editing.type);
-      setHost(editing.connectionConfig.host ?? "");
-      setPort(editing.connectionConfig.port?.toString() ?? "");
-      setDatabase(editing.connectionConfig.database ?? "");
-      setSchema(editing.connectionConfig.schema ?? "");
-      setUser(editing.connectionConfig.user ?? "");
+      setType(initialEditing.type);
+      setHost(initialEditing.connectionConfig.host ?? "");
+      setPort(initialEditing.connectionConfig.port?.toString() ?? "");
+      setDatabase(initialEditing.connectionConfig.database ?? "");
+      setSchema(initialEditing.connectionConfig.schema ?? "");
+      setUser(initialEditing.connectionConfig.user ?? "");
       setPassword("");
-      setUri(editing.connectionConfig.uri ?? "");
-      setEncrypt(editing.connectionConfig.encrypt ?? true);
-      setDescription(editing.description);
-      setConnMode(editing.connectionConfig.uri ? "uri" : "fields");
+      setUri(initialEditing.connectionConfig.uri ?? "");
+      setEncrypt(initialEditing.connectionConfig.encrypt ?? true);
+      setDescription(initialEditing.description);
+      setConnMode(initialEditing.connectionConfig.uri ? "uri" : "fields");
     } else {
       setName("");
       setSlug("");
@@ -342,46 +341,52 @@ function ConnectionFormDialog({
       setDescription("");
       setConnMode("fields");
     }
-  }, [open, editing]);
+  }, [open, initialEditing]);
 
   const showSchema = SCHEMA_TYPES.has(type);
   const isFileType = FILE_TYPES.has(type);
 
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const config: Record<string, unknown> = {};
-      if (connMode === "uri") {
-        if (uri) config.uri = uri;
-      } else if (isFileType) {
-        if (database) config.database = database;
-      } else {
-        if (host) config.host = host;
-        if (port) config.port = Number(port);
-        if (database) config.database = database;
-        if (user) config.user = user;
-        if (password) config.password = password;
-      }
-      if (schema) config.schema = schema;
-      if (type === "mssql") config.encrypt = encrypt;
+  function buildConfig() {
+    const config: Record<string, unknown> = {};
+    if (connMode === "uri") {
+      if (uri) config.uri = uri;
+    } else if (isFileType) {
+      if (database) config.database = database;
+    } else {
+      if (host) config.host = host;
+      if (port) config.port = Number(port);
+      if (database) config.database = database;
+      if (user) config.user = user;
+      if (password) config.password = password;
+    }
+    if (schema) config.schema = schema;
+    if (type === "mssql") config.encrypt = encrypt;
+    return config;
+  }
 
-      const effectiveSlug = slug || autoSlug(name);
+  async function saveConnection(): Promise<Connection> {
+    const config = buildConfig();
+    const effectiveSlug = slug || autoSlug(name);
 
-      if (editing) {
-        const res = await api.api.projects[":projectId"].connections[":id"].$put({
-          param: { projectId, id: editing._id },
-          json: { name, slug: effectiveSlug, type: type as any, connectionConfig: config, description },
-        });
-        if (!res.ok) throw new Error("Failed to update");
-        return res.json();
-      }
-
-      const res = await api.api.projects[":projectId"].connections.$post({
-        param: { projectId },
+    if (editing) {
+      const res = await api.api.projects[":projectId"].connections[":id"].$put({
+        param: { projectId, id: editing._id },
         json: { name, slug: effectiveSlug, type: type as any, connectionConfig: config, description },
       });
-      if (!res.ok) throw new Error("Failed to create");
-      return res.json();
-    },
+      if (!res.ok) throw new Error("Failed to update");
+      return res.json() as unknown as Connection;
+    }
+
+    const res = await api.api.projects[":projectId"].connections.$post({
+      param: { projectId },
+      json: { name, slug: effectiveSlug, type: type as any, connectionConfig: config, description },
+    });
+    if (!res.ok) throw new Error("Failed to create");
+    return res.json() as unknown as Connection;
+  }
+
+  const mutation = useMutation({
+    mutationFn: saveConnection,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["connections", projectId] });
       onOpenChange(false);
@@ -392,18 +397,28 @@ function ConnectionFormDialog({
     },
   });
 
+  async function testConnection(connId: string) {
+    const res = await api.api.projects[":projectId"].connections[":id"].test.$post({
+      param: { projectId, id: connId },
+      json: {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error((body as any)?.error ?? "Connection test failed");
+    }
+    return res.json();
+  }
+
   const testMutation = useMutation({
     mutationFn: async () => {
-      if (!editing) return;
-      const res = await api.api.projects[":projectId"].connections[":id"].test.$post({
-        param: { projectId, id: editing._id },
-        json: {},
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error((body as any)?.error ?? "Connection test failed");
+      let conn = editing;
+      if (!conn) {
+        conn = await saveConnection();
+        setEditing(conn);
+        queryClient.invalidateQueries({ queryKey: ["connections", projectId] });
+        toast.success("Connection created");
       }
-      return res.json();
+      return testConnection(conn._id);
     },
     onSuccess: () => toast.success("Connection is healthy"),
     onError: (err) => toast.error(err.message),
@@ -608,22 +623,20 @@ function ConnectionFormDialog({
           </div>
 
           <DialogFooter>
-            {editing && (
-              <Button
-                type="button"
-                variant="outline"
-                className="mr-auto"
-                disabled={testMutation.isPending}
-                onClick={() => testMutation.mutate()}
-              >
-                {testMutation.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Zap className="mr-2 h-4 w-4" />
-                )}
-                Test Connection
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="outline"
+              className="mr-auto"
+              disabled={testMutation.isPending || mutation.isPending || !name.trim()}
+              onClick={() => testMutation.mutate()}
+            >
+              {testMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Zap className="mr-2 h-4 w-4" />
+              )}
+              Test Connection
+            </Button>
             <Button
               type="button"
               variant="outline"

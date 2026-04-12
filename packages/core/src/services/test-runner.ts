@@ -192,15 +192,19 @@ export async function processTestCase(
     );
   } catch (err) {
     console.error(`[test-runner] Case ${caseIndex} error:`, err);
-    await TestRun.updateOne(
-      { _id: testRunId },
-      {
-        $set: {
-          [`cases.${caseIndex}.status`]: "error",
-          [`cases.${caseIndex}.errorMessage`]: err instanceof Error ? err.message : "Unknown error",
-          [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+    try {
+      await TestRun.updateOne(
+        { _id: testRunId },
+        {
+          $set: {
+            [`cases.${caseIndex}.status`]: "error",
+            [`cases.${caseIndex}.errorMessage`]: err instanceof Error ? err.message : "Unknown error",
+            [`cases.${caseIndex}.durationMs`]: Date.now() - start,
+          },
         },
-      },
-    );
+      );
+    } catch (dbErr) {
+      console.error(`[test-runner] Failed to persist error status for case ${caseIndex}:`, dbErr);
+    }
   }
 }

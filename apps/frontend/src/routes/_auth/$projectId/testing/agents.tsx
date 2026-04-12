@@ -210,7 +210,7 @@ function AgentFormDialog({
   open,
   onOpenChange,
   projectId,
-  agent,
+  agent: initialAgent,
   onSuccess,
 }: {
   open: boolean;
@@ -219,16 +219,18 @@ function AgentFormDialog({
   agent?: TestAgentItem;
   onSuccess: () => void;
 }) {
-  const [name, setName] = useState(agent?.name ?? "");
+  const queryClient = useQueryClient();
+  const [agent, setAgent] = useState(initialAgent);
+  const [name, setName] = useState(initialAgent?.name ?? "");
   const [selectedModels, setSelectedModels] = useState<Set<string>>(
-    new Set(agent?.semanticModels ?? []),
+    new Set(initialAgent?.semanticModels ?? []),
   );
   const [systemPrompt, setSystemPrompt] = useState(
-    agent?.systemPrompt ?? "You are a data analyst. Use the available tools to explore semantic models and answer questions by querying the database.",
+    initialAgent?.systemPrompt ?? "You are a data analyst. Use the available tools to explore semantic models and answer questions by querying the database.",
   );
-  const [llmBaseUrl, setLlmBaseUrl] = useState(agent?.llmBaseUrl ?? "https://openrouter.ai/api/v1");
+  const [llmBaseUrl, setLlmBaseUrl] = useState(initialAgent?.llmBaseUrl ?? "https://openrouter.ai/api/v1");
   const [apiKey, setApiKey] = useState("");
-  const [llmModel, setLlmModel] = useState(agent?.llmModel ?? "");
+  const [llmModel, setLlmModel] = useState(initialAgent?.llmModel ?? "");
 
   const { data: models = [] } = useQuery<SemanticModelSummary[]>({
     queryKey: ["semantic-models", projectId],
@@ -241,37 +243,40 @@ function AgentFormDialog({
     },
   });
 
+  async function saveAgent(): Promise<TestAgentItem> {
+    if (agent) {
+      const body: Record<string, unknown> = {
+        name,
+        semanticModels: Array.from(selectedModels),
+        systemPrompt,
+        llmBaseUrl,
+        llmModel,
+      };
+      if (apiKey) body.apiKey = apiKey;
+      const res = await api.api.projects[":projectId"]["test-agents"][":agentId"].$put({
+        param: { projectId, agentId: agent._id },
+        json: body as any,
+      });
+      if (!res.ok) throw new Error("Failed to update agent");
+      return res.json() as unknown as TestAgentItem;
+    }
+    const res = await api.api.projects[":projectId"]["test-agents"].$post({
+      param: { projectId },
+      json: {
+        name,
+        semanticModels: Array.from(selectedModels),
+        systemPrompt,
+        llmBaseUrl,
+        apiKey,
+        llmModel,
+      },
+    });
+    if (!res.ok) throw new Error("Failed to create agent");
+    return res.json() as unknown as TestAgentItem;
+  }
+
   const mutation = useMutation({
-    mutationFn: async () => {
-      if (agent) {
-        const body: Record<string, unknown> = {
-          name,
-          semanticModels: Array.from(selectedModels),
-          systemPrompt,
-          llmBaseUrl,
-          llmModel,
-        };
-        if (apiKey) body.apiKey = apiKey;
-        const res = await api.api.projects[":projectId"]["test-agents"][":agentId"].$put({
-          param: { projectId, agentId: agent._id },
-          json: body as any,
-        });
-        if (!res.ok) throw new Error("Failed to update agent");
-      } else {
-        const res = await api.api.projects[":projectId"]["test-agents"].$post({
-          param: { projectId },
-          json: {
-            name,
-            semanticModels: Array.from(selectedModels),
-            systemPrompt,
-            llmBaseUrl,
-            apiKey,
-            llmModel,
-          },
-        });
-        if (!res.ok) throw new Error("Failed to create agent");
-      }
-    },
+    mutationFn: saveAgent,
     onSuccess: () => {
       toast.success(agent ? "Agent updated" : "Agent created");
       onSuccess();
@@ -288,18 +293,28 @@ function AgentFormDialog({
     });
   }
 
+  async function testAgentConnection(agentId: string) {
+    const res = await api.api.projects[":projectId"]["test-agents"][":agentId"]["test-connection"].$post({
+      param: { projectId, agentId },
+      json: {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error((body as any)?.error ?? "Connection test failed");
+    }
+    return res.json();
+  }
+
   const testMutation = useMutation({
     mutationFn: async () => {
-      if (!agent) return;
-      const res = await api.api.projects[":projectId"]["test-agents"][":agentId"]["test-connection"].$post({
-        param: { projectId, agentId: agent._id },
-        json: {},
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error((body as any)?.error ?? "Connection test failed");
+      let current = agent;
+      if (!current) {
+        current = await saveAgent();
+        setAgent(current);
+        queryClient.invalidateQueries({ queryKey: ["test-agents", projectId] });
+        toast.success("Agent created");
       }
-      return res.json();
+      return testAgentConnection(current._id);
     },
     onSuccess: () => toast.success("LLM connection is healthy"),
     onError: (err) => toast.error(err.message),
@@ -310,6 +325,14 @@ function AgentFormDialog({
     llmBaseUrl.trim().length > 0 &&
     llmModel.trim().length > 0 &&
     (agent || apiKey.trim().length > 0) &&
+    !mutation.isPending;
+
+  const canTest =
+    name.trim().length > 0 &&
+    llmBaseUrl.trim().length > 0 &&
+    llmModel.trim().length > 0 &&
+    (agent || apiKey.trim().length > 0) &&
+    !testMutation.isPending &&
     !mutation.isPending;
 
   return (
@@ -402,22 +425,20 @@ function AgentFormDialog({
         </div>
 
         <DialogFooter>
-          {agent && (
-            <Button
-              type="button"
-              variant="outline"
-              className="mr-auto"
-              disabled={testMutation.isPending}
-              onClick={() => testMutation.mutate()}
-            >
-              {testMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Zap className="mr-2 h-4 w-4" />
-              )}
-              Test Connection
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            className="mr-auto"
+            disabled={!canTest}
+            onClick={() => testMutation.mutate()}
+          >
+            {testMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Zap className="mr-2 h-4 w-4" />
+            )}
+            Test Connection
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!canSubmit} onClick={() => mutation.mutate()}>
             {mutation.isPending ? "Saving..." : agent ? "Save Changes" : "Create Agent"}

@@ -12,6 +12,7 @@ export interface IMcpCallLog {
   isError: boolean;
   errorMessage: string | null;
   clientIp: string;
+  _schemaVersion: number;
   createdAt: Date;
 }
 
@@ -30,6 +31,7 @@ const McpCallLogSchema = new Schema<IMcpCallLogDocument>(
     isError: { type: Boolean, default: false },
     errorMessage: { type: String, default: null },
     clientIp: { type: String, required: true },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

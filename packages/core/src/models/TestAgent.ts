@@ -9,6 +9,7 @@ export interface ITestAgent {
   llmBaseUrl: string;
   encryptedApiKey: string;
   llmModel: string;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +25,7 @@ const TestAgentSchema = new Schema<ITestAgentDocument>(
     llmBaseUrl: { type: String, required: true },
     encryptedApiKey: { type: String, required: true },
     llmModel: { type: String, required: true },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

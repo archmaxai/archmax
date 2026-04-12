@@ -74,6 +74,10 @@ export function ChatInput({
     el.style.height = el.scrollHeight + "px";
   }, []);
 
+  useEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

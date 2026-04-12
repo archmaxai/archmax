@@ -10,7 +10,9 @@ A semantic layer for your data: archmax describes it, you sharpen it, AI agents 
 
 > **Heads up: archmax is experimental.** The core ideas are stable, but APIs, file formats, and configuration may change between releases. We try to avoid breaking changes, but can't guarantee stability yet. Pin your version and check the changelog before upgrading.
 
-Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax is the runtime that turns OSI models into a live, queryable semantic layer for AI agents.
+Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax uses OSI YAML as its internal storage format for semantic model definitions — every dataset, field, relationship, and metric is persisted as spec-compliant YAML files on disk.
+
+Because the OSI YAML format is verbose and token-intensive, archmax **does not serve raw YAML to AI agents**. Instead, when an agent requests model information through MCP tools, the OSI model is converted on-the-fly into a **compressed markdown digest** that preserves all semantically relevant information (field types, descriptions, enums, relationships, examples) while using **3–5× fewer tokens** than the equivalent YAML. This makes agent interactions significantly cheaper and faster without sacrificing context quality.
 
 <table>
 <tr>
@@ -52,7 +54,8 @@ Instead of raw database access, agents get:
 - **Business context**: field descriptions, synonyms, examples, and enum values so the agent knows `amt_01` is "gross revenue in EUR"
 - **Guardrails**: read-only queries scoped to sandboxed VIEWs, not raw tables; token-based access with model-level permissions
 - **Federation**: a single query interface across Postgres, MySQL, MSSQL, SQLite, and DuckDB, powered by DuckDB's in-process engine
-- **Structure**: typed datasets, explicit relationships, and reusable metric definitions grounded in the OSI spec
+- **Structure**: typed datasets, explicit relationships, and reusable metric definitions stored as [OSI](https://github.com/open-semantic-interchange/OSI) YAML
+- **Token efficiency**: OSI models are converted to compressed markdown digests before being sent to agents, reducing token usage by 3–5× compared to raw YAML
 
 The result: AI agents that query your data reliably, safely, and with understanding, not guesswork.
 

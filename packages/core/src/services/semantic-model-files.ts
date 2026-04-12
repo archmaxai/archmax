@@ -130,8 +130,8 @@ export class SemanticModelFileService {
       try {
         const model = await this.get(projectId, name);
         if (model) models.push(model);
-      } catch {
-        // skip invalid files
+      } catch (err) {
+        console.warn(`[SemanticModelFileService] Skipping invalid model "${name}" in ${dir}:`, err instanceof Error ? err.message : err);
       }
     }
 

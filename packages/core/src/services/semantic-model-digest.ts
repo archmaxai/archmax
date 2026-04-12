@@ -1,7 +1,24 @@
 import type { SemanticModel, Dataset, Field, CustomExtension } from "./semantic-model-schema";
-import { scopedViewName } from "./duckdb";
 
 export const DEFAULT_ITEMS_PER_PAGE = 50;
+
+export type SourceMap = Map<string, string>;
+
+export function buildSourceMap(datasets: Dataset[]): SourceMap {
+  const map = new Map<string, string>();
+  for (const ds of datasets) {
+    map.set(ds.source, `"${ds.name}"`);
+  }
+  return map;
+}
+
+function rewriteQuerySources(query: string, sourceMap: SourceMap): string {
+  let result = query;
+  for (const [raw, view] of sourceMap) {
+    result = result.replaceAll(raw, view);
+  }
+  return result;
+}
 
 export interface DigestPage {
   content: string;
@@ -15,7 +32,7 @@ export interface OverviewOptions {
   scope?: OverviewScope;
   page?: number;
   itemsPerPage?: number;
-  showViewNames?: boolean;
+  showTableNames?: boolean;
 }
 
 interface NormalizedAiContext {
@@ -61,26 +78,24 @@ function appendDatasetsSection(
   requestedPage: number,
   perPage: number,
   scopeHint?: OverviewScope,
-  showViewNames?: boolean,
-  modelName?: string,
+  showTableNames?: boolean,
 ): PaginationResult<Dataset> {
   const result = paginate(datasets, requestedPage, perPage);
   lines.push("", `## Datasets (${datasets.length})`);
-  if (showViewNames && modelName) {
-    lines.push("| Dataset | Source | Fields | VIEW | Description |");
-    lines.push("|---------|--------|--------|------|-------------|");
+  if (showTableNames) {
+    lines.push("| Dataset | Table Name | Fields | Description |");
+    lines.push("|---------|------------|--------|-------------|");
     for (const ds of result.pageItems) {
-      const viewName = scopedViewName(modelName, ds.name);
       lines.push(
-        `| ${ds.name} | ${ds.source} | ${ds.fields.length} | \`${viewName}\` | ${oneLine(ds.description)} |`,
+        `| ${ds.name} | \`"${ds.name}"\` | ${ds.fields.length} | ${oneLine(ds.description)} |`,
       );
     }
   } else {
-    lines.push("| Dataset | Source | Fields | Description |");
-    lines.push("|---------|--------|--------|-------------|");
+    lines.push("| Dataset | Fields | Description |");
+    lines.push("|---------|--------|-------------|");
     for (const ds of result.pageItems) {
       lines.push(
-        `| ${ds.name} | ${ds.source} | ${ds.fields.length} | ${oneLine(ds.description)} |`,
+        `| ${ds.name} | ${ds.fields.length} | ${oneLine(ds.description)} |`,
       );
     }
   }
@@ -130,7 +145,7 @@ export class SemanticModelDigest {
     const scope = options?.scope;
     const requestedPage = options?.page ?? 1;
     const perPage = options?.itemsPerPage ?? DEFAULT_ITEMS_PER_PAGE;
-    const showViews = options?.showViewNames ?? true;
+    const showTableNames = options?.showTableNames ?? true;
 
     const lines: string[] = [`# ${model.name}`];
     if (model.description) lines.push(oneLine(model.description));
@@ -139,7 +154,7 @@ export class SemanticModelDigest {
     if (ctx?.instructions) lines.push("", `> ${oneLine(ctx.instructions)}`);
 
     if (!scope) {
-      appendDatasetsSection(lines, model.datasets, 1, perPage, "datasets", showViews, model.name);
+      appendDatasetsSection(lines, model.datasets, 1, perPage, "datasets", showTableNames);
 
       if (model.relationships.length > 0) {
         appendRelationshipsSection(lines, model.relationships, 1, perPage, "relationships");
@@ -151,9 +166,10 @@ export class SemanticModelDigest {
 
       const modelQueries = parseValidatedQueries(model.custom_extensions);
       if (modelQueries.length > 0) {
+        const srcMap = buildSourceMap(model.datasets);
         lines.push("", `## Validated Queries (${modelQueries.length})`);
         modelQueries.forEach((q, i) => {
-          lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${q.query}\``);
+          lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${rewriteQuerySources(q.query, srcMap)}\``);
         });
       }
 
@@ -163,7 +179,7 @@ export class SemanticModelDigest {
     let result: PaginationResult<unknown>;
     switch (scope) {
       case "datasets":
-        result = appendDatasetsSection(lines, model.datasets, requestedPage, perPage, undefined, showViews, model.name);
+        result = appendDatasetsSection(lines, model.datasets, requestedPage, perPage, undefined, showTableNames);
         break;
       case "relationships":
         result = appendRelationshipsSection(lines, model.relationships, requestedPage, perPage);
@@ -180,15 +196,16 @@ export class SemanticModelDigest {
     datasets: Dataset[],
     page: number,
     itemsPerPage: number = DEFAULT_ITEMS_PER_PAGE,
+    sourceMap?: SourceMap,
   ): DigestPage {
     if (datasets.length === 0) {
       return { content: "No datasets provided.", page: 1, totalPages: 1 };
     }
     if (datasets.length === 1) {
-      return SemanticModelDigest.dataset(datasets[0], page, itemsPerPage);
+      return SemanticModelDigest.dataset(datasets[0], page, itemsPerPage, sourceMap);
     }
     const sections = datasets.map((ds) =>
-      SemanticModelDigest.dataset(ds, 1, itemsPerPage).content,
+      SemanticModelDigest.dataset(ds, 1, itemsPerPage, sourceMap).content,
     );
     return {
       content: sections.join("\n\n---\n\n"),
@@ -197,7 +214,7 @@ export class SemanticModelDigest {
     };
   }
 
-  static dataset(dataset: Dataset, page = 1, itemsPerPage = DEFAULT_ITEMS_PER_PAGE): DigestPage {
+  static dataset(dataset: Dataset, page = 1, itemsPerPage = DEFAULT_ITEMS_PER_PAGE, sourceMap?: SourceMap): DigestPage {
     const perPage = itemsPerPage;
     const totalPages = Math.max(1, Math.ceil(dataset.fields.length / perPage));
     const clamped = Math.max(1, Math.min(page, totalPages));
@@ -205,7 +222,7 @@ export class SemanticModelDigest {
     const pageFields = dataset.fields.slice(start, start + perPage);
 
     const lines: string[] = [
-      `# ${dataset.name} (${dataset.source}) — page ${clamped}/${totalPages}`,
+      `# ${dataset.name} — page ${clamped}/${totalPages}`,
     ];
     if (dataset.description) lines.push(oneLine(dataset.description));
 
@@ -232,7 +249,8 @@ export class SemanticModelDigest {
     if (dsQueries.length > 0) {
       lines.push("", `## Validated Queries (${dsQueries.length})`);
       dsQueries.forEach((q, i) => {
-        lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${q.query}\``);
+        const sql = sourceMap ? rewriteQuerySources(q.query, sourceMap) : q.query;
+        lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${sql}\``);
       });
     }
 
@@ -253,11 +271,6 @@ export function formatField(f: Field): string {
   }
 
   let core = `- **${f.name}** ${typeStr} — ${oneLine(f.description)}`;
-
-  const expr = f.expression?.dialects?.[0]?.expression;
-  if (expr && expr !== f.name) {
-    core += ` Expr: \`${expr}\`.`;
-  }
 
   if (ext?.example_data?.length) {
     core += ` Ex: ${ext.example_data.map((e) => `\`${e}\``).join(", ")}`;

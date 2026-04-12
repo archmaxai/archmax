@@ -4,6 +4,8 @@ import { authClient } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/project-context";
 import { AppShell } from "@/components/layout/app-shell";
+import { DisclaimerDialog } from "@/components/disclaimer-dialog";
+import { useDisclaimerAccepted } from "@/lib/use-disclaimer-accepted";
 
 export const Route = createFileRoute("/_auth")({
   beforeLoad: async () => {
@@ -16,6 +18,8 @@ export const Route = createFileRoute("/_auth")({
 });
 
 function AuthLayout() {
+  const { accepted, accept } = useDisclaimerAccepted();
+
   const projectMatch = useMatch({
     from: "/_auth/$projectId",
     shouldThrow: false,
@@ -36,6 +40,7 @@ function AuthLayout() {
 
   return (
     <AppShell project={project ?? null}>
+      {!accepted && <DisclaimerDialog onAccept={accept} />}
       <Outlet />
     </AppShell>
   );

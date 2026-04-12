@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
+
+vi.mock("../config/env", () => ({
+  getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
+}));
+
 import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
@@ -200,6 +205,47 @@ describe("createScopedViews", () => {
     }
   });
 
+  it("skips invalid field expressions and keeps valid ones", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [
+        { name: "id" },
+        { name: "bad_field", expression: "json_extract_string(elem, '$.foo')" },
+        { name: "name" },
+      ]),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await createScopedViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    const db = await instance.connect();
+    try {
+      const result = await db.run('SELECT * FROM _scope_shop."orders"');
+      const columns = result.columnNames();
+      expect(columns).toEqual(["id", "name"]);
+      expect(columns).not.toContain("bad_field");
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("logs a warning for skipped field expressions", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [
+        { name: "id" },
+        { name: "broken", expression: "nonexistent_column + 1" },
+      ]),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await createScopedViews(instance, projectId, model);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("Skipped 1 invalid field expression");
+    expect(warnSpy.mock.calls[0][0]).toContain("orders.broken");
+    warnSpy.mockRestore();
+  });
+
   it("recreates views after cache invalidation", async () => {
     const model = makeModel("shop", [
       makeDataset("orders", "test_source", [{ name: "id" }]),
@@ -334,6 +380,33 @@ describe("hardenConnection", () => {
       await expect(
         db.run("SET enable_external_access = true"),
       ).rejects.toThrow();
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("sets search_path when provided", async () => {
+    const instance = await DuckDBInstance.create();
+    const setup = await instance.connect();
+    try {
+      await setup.run("CREATE SCHEMA _scope_test");
+      await setup.run("CREATE TABLE raw_data (id INTEGER)");
+      await setup.run("INSERT INTO raw_data VALUES (1)");
+      await setup.run('CREATE VIEW _scope_test."orders" AS SELECT id FROM raw_data');
+    } finally {
+      setup.disconnectSync();
+    }
+
+    const db = await instance.connect();
+    await hardenConnection(db, "_scope_test");
+
+    try {
+      const result = await db.run('SELECT * FROM "orders"');
+      const rows: unknown[][] = [];
+      for await (const chunk of result) {
+        rows.push(...chunk.getRows());
+      }
+      expect(rows).toHaveLength(1);
     } finally {
       db.disconnectSync();
     }

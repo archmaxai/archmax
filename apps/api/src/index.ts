@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import app from "./app";
 import { validateEnvOrSleep } from "@archmax/core/config/env";
 import { connectDB } from "@archmax/core/infra/db";
+import { runMigrations } from "@archmax/core/infra/migrations/runner";
 import { seedAdmin } from "./lib/seed-admin";
 
 const env = await validateEnvOrSleep();
@@ -64,11 +65,9 @@ function printBanner(port: number) {
   console.log(art + info.join("\n"));
 }
 
-connectDB()
-  .then(() => seedAdmin())
-  .catch((err) => {
-    console.error("Failed to initialize:", err);
-  });
+await connectDB();
+await runMigrations();
+await seedAdmin();
 
 const server = serve({
   fetch: app.fetch,

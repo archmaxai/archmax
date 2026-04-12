@@ -28,6 +28,7 @@ export interface ITestRun {
   cases: ITestCaseResult[];
   startedAt: Date | null;
   completedAt: Date | null;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -78,6 +79,7 @@ const TestRunSchema = new Schema<ITestRunDocument>(
     cases: { type: [TestCaseResultSchema], default: [] },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

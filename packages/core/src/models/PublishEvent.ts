@@ -5,6 +5,7 @@ export interface IPublishEvent {
   message: string;
   modelNames: string[];
   contentHash: string;
+  _schemaVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -17,6 +18,7 @@ const PublishEventSchema = new Schema<IPublishEventDocument>(
     message: { type: String, required: true },
     modelNames: [{ type: String }],
     contentHash: { type: String, required: true },
+    _schemaVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

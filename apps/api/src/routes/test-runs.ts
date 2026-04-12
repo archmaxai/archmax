@@ -109,9 +109,9 @@ const app = new Hono()
       }
     } else {
       (async () => {
-        try {
-          for (let i = 0; i < cases.length; i++) {
-            const tc = cases[i] as any;
+        for (let i = 0; i < cases.length; i++) {
+          const tc = cases[i] as any;
+          try {
             await processTestCase(
               run._id.toString(),
               i,
@@ -121,11 +121,19 @@ const app = new Hono()
               tc.expectedFacts,
               tc.maxToolCalls,
             );
+          } catch (err) {
+            console.error(`[test-runs] In-process case ${i} failed:`, err);
           }
-          await TestRun.updateOne({ _id: run._id }, { status: "completed", completedAt: new Date() });
+        }
+        try {
+          const latest = await TestRun.findById(run._id).lean();
+          const hasFailures = latest?.cases.some((c: any) => c.status === "error" || c.status === "pending");
+          await TestRun.updateOne(
+            { _id: run._id },
+            { status: hasFailures ? "failed" : "completed", completedAt: new Date() },
+          );
         } catch (err) {
-          console.error("[test-runs] In-process batch failed:", err);
-          await TestRun.updateOne({ _id: run._id }, { status: "failed", completedAt: new Date() });
+          console.error("[test-runs] Failed to finalize run:", err);
         }
       })();
     }

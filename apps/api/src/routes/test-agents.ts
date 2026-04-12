@@ -3,7 +3,8 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { TestAgent } from "@archmax/core/models/index";
-import { encrypt, decrypt } from "@archmax/core/infra/crypto";
+import { encrypt } from "@archmax/core/infra/crypto";
+import { decryptApiKey } from "@archmax/core/services/playground-agent";
 import { getEnv } from "@archmax/core/config/env";
 import { validateSafeUrl } from "@archmax/core/infra/url-validation";
 import { AppError } from "../utils/errors";
@@ -66,8 +67,7 @@ const app = new Hono()
     if (urlError) throw AppError.badRequest(`Invalid llmBaseUrl: ${urlError}`);
 
     const key = getEncryptionKey();
-    if (!key) throw AppError.badRequest("ENCRYPTION_KEY must be set to store API keys");
-    const encryptedApiKey = encrypt(apiKey, key);
+    const encryptedApiKey = key ? encrypt(apiKey, key) : apiKey;
 
     const agent = await TestAgent.create({ ...rest, encryptedApiKey, project: projectId });
     return c.json(stripApiKey(agent.toObject() as unknown as Record<string, unknown>), 201);
@@ -88,8 +88,7 @@ const app = new Hono()
 
     if (body.apiKey) {
       const key = getEncryptionKey();
-      if (!key) throw AppError.badRequest("ENCRYPTION_KEY must be set to store API keys");
-      update.encryptedApiKey = encrypt(body.apiKey, key);
+      update.encryptedApiKey = key ? encrypt(body.apiKey, key) : body.apiKey;
       delete update.apiKey;
     } else {
       delete update.apiKey;
@@ -110,13 +109,7 @@ const app = new Hono()
     const raw = (agent as any).encryptedApiKey as string;
     if (!raw) return c.json({ ok: false, error: "No API key configured" }, 400);
 
-    const key = getEncryptionKey();
-    let apiKey: string;
-    try {
-      apiKey = key ? decrypt(raw, key) : raw;
-    } catch {
-      return c.json({ ok: false, error: "Failed to decrypt API key" }, 500);
-    }
+    const apiKey = decryptApiKey(raw);
 
     const baseUrl = ((agent as any).llmBaseUrl as string).replace(/\/+$/, "");
     const urlError = await validateSafeUrl(baseUrl);

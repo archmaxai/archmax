@@ -17,6 +17,8 @@ Make sure you have archmax running first. See the [Installation](/getting-starte
 
    Open `http://localhost:8080` (or your configured URL) and log in with the credentials you set during installation. The default username is `admin` (configurable via `UI_USERNAME`), and the password is whatever you set in `UI_PASSWORD`.
 
+   On your first login, a disclaimer dialog will appear. It highlights important operational considerations: LLM token costs from long-running agents, potential load on your source databases (especially data lakes where large data scans may occur), the fact that schema metadata (which may include PII) is sent to your LLM provider, and that AI-generated models should be reviewed. Read it carefully, check the acknowledgment box, and click **Continue**.
+
 2. **Create a Project**
 
    After logging in, click **New Project** on the dashboard. Give it a name and an optional description. A project groups related database connections and their semantic models.

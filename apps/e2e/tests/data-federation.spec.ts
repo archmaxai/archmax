@@ -42,6 +42,13 @@ async function loginAndSaveState(page: Page, context: BrowserContext) {
   await page.locator("#password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 });
+
+  const disclaimer = page.getByRole("dialog");
+  if (await disclaimer.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    await disclaimer.locator("input[type='checkbox']").check();
+    await disclaimer.getByRole("button", { name: "Continue" }).click();
+  }
+
   await context.storageState({ path: AUTH_FILE });
 }
 

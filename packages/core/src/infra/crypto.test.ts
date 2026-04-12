@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encrypt, decrypt } from "./crypto";
+import { encrypt, decrypt, encryptConnectionCredentials, decryptConnectionCredentials } from "./crypto";
 
 const KEY = "test-encryption-key-for-unit-tests";
 
@@ -63,6 +63,75 @@ describe("crypto", () => {
       bytes[12] ^= 0xff;
       const tampered = bytes.toString("hex");
       expect(() => decrypt(tampered, KEY)).toThrow();
+    });
+  });
+
+  describe("encryptConnectionCredentials", () => {
+    it("encrypts password and uri when key is provided", () => {
+      const config = { host: "localhost", password: "secret", uri: "postgres://u:p@host/db" };
+      const result = encryptConnectionCredentials(config, KEY);
+      expect(result.host).toBe("localhost");
+      expect(result.password).not.toBe("secret");
+      expect(result.uri).not.toBe("postgres://u:p@host/db");
+      expect(decrypt(result.password as string, KEY)).toBe("secret");
+      expect(decrypt(result.uri as string, KEY)).toBe("postgres://u:p@host/db");
+    });
+
+    it("returns config unchanged when key is null", () => {
+      const config = { host: "localhost", password: "secret" };
+      const result = encryptConnectionCredentials(config, null);
+      expect(result.password).toBe("secret");
+    });
+
+    it("skips empty password and uri", () => {
+      const config = { host: "localhost", password: "", uri: "" };
+      const result = encryptConnectionCredentials(config, KEY);
+      expect(result.password).toBe("");
+      expect(result.uri).toBe("");
+    });
+
+    it("does not mutate the original object", () => {
+      const config = { password: "secret" };
+      encryptConnectionCredentials(config, KEY);
+      expect(config.password).toBe("secret");
+    });
+  });
+
+  describe("decryptConnectionCredentials", () => {
+    it("decrypts password and uri when key is provided", () => {
+      const encrypted = encryptConnectionCredentials(
+        { host: "localhost", password: "secret", uri: "postgres://u:p@host/db" },
+        KEY,
+      );
+      const result = decryptConnectionCredentials(encrypted, KEY);
+      expect(result.password).toBe("secret");
+      expect(result.uri).toBe("postgres://u:p@host/db");
+      expect(result.host).toBe("localhost");
+    });
+
+    it("returns config unchanged when key is null", () => {
+      const config = { host: "localhost", password: "secret" };
+      const result = decryptConnectionCredentials(config, null);
+      expect(result.password).toBe("secret");
+    });
+
+    it("falls back to original value for plaintext passwords", () => {
+      const config = { password: "already-plaintext" };
+      const result = decryptConnectionCredentials(config, KEY);
+      expect(result.password).toBe("already-plaintext");
+    });
+
+    it("falls back to original value for plaintext URIs", () => {
+      const config = { uri: "postgres://u:p@host/db" };
+      const result = decryptConnectionCredentials(config, KEY);
+      expect(result.uri).toBe("postgres://u:p@host/db");
+    });
+
+    it("does not mutate the original object", () => {
+      const encrypted = encryptConnectionCredentials({ password: "secret" }, KEY);
+      const original = { ...encrypted };
+      decryptConnectionCredentials(encrypted, KEY);
+      expect(encrypted.password).toBe(original.password);
     });
   });
 });

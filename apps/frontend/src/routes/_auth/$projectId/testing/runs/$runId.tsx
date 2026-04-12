@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -13,6 +13,8 @@ import {
   ChevronDown,
   ChevronUp,
   FlaskConical,
+  MessageCircle,
+  Wand2,
 } from "lucide-react";
 import {
   Badge,
@@ -80,9 +82,77 @@ interface TestRunDetail {
 
 const PAGE_SIZE = 25;
 
+function buildFixPrompt(tc: CaseResult): string {
+  const failedFacts = tc.factResults
+    .filter((fr) => !fr.passed)
+    .map((fr) => `- "${fr.fact}" — ${fr.reasoning}`)
+    .join("\n");
+
+  const passedFacts = tc.factResults
+    .filter((fr) => fr.passed)
+    .map((fr) => `- "${fr.fact}"`)
+    .join("\n");
+
+  let prompt = `A test case against the semantic model "${tc.semanticModel}" failed.\n\n`;
+  prompt += `**Question asked:** ${tc.inputMessage}\n\n`;
+
+  if (failedFacts) {
+    prompt += `**Failed expected facts:**\n${failedFacts}\n\n`;
+  }
+  if (passedFacts) {
+    prompt += `**Passed expected facts:**\n${passedFacts}\n\n`;
+  }
+  if (tc.errorMessage) {
+    prompt += `**Error:** ${tc.errorMessage}\n\n`;
+  }
+  if (tc.agentResponse) {
+    const truncated = tc.agentResponse.length > 500
+      ? tc.agentResponse.slice(0, 500) + "..."
+      : tc.agentResponse;
+    prompt += `**Agent response:** ${truncated}\n\n`;
+  }
+
+  prompt += "Please investigate the semantic model and fix it so this test case passes.";
+  return prompt;
+}
+
+function buildRefinePrompt(tc: CaseResult): string {
+  let prompt = `A test case against the semantic model "${tc.semanticModel}" had execution issues.\n\n`;
+  prompt += `**Question asked:** ${tc.inputMessage}\n\n`;
+
+  if (tc.errorMessage) {
+    prompt += `**Error:** ${tc.errorMessage}\n\n`;
+  }
+  if (tc.toolCalls.length > 0) {
+    prompt += `**Tool calls made (${tc.toolCalls.length}):**\n`;
+    const toolSummary = tc.toolCalls
+      .map((t) => {
+        let line = `- \`${t.name}\``;
+        if (t.args) line += ` args: ${t.args}`;
+        if (t.result) {
+          const teaser = t.result.length > 200 ? t.result.slice(0, 200) + "..." : t.result;
+          line += `\n  output: ${teaser}`;
+        }
+        return line;
+      })
+      .join("\n");
+    prompt += `${toolSummary}\n\n`;
+  }
+  if (tc.agentResponse) {
+    const truncated = tc.agentResponse.length > 500
+      ? tc.agentResponse.slice(0, 500) + "..."
+      : tc.agentResponse;
+    prompt += `**Agent response:** ${truncated}\n\n`;
+  }
+
+  prompt += "The agent struggled with this query. Please review the semantic model and refine it to be easier to navigate: improve ai_context descriptions, simplify dataset/field naming, add missing relationships, or reorganize the structure so the agent can answer more efficiently with fewer tool calls.";
+  return prompt;
+}
+
 function TestRunDetailPage() {
   const { project } = useProject();
   const { runId } = Route.useParams();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [expandedCases, setExpandedCases] = useState<Set<number>>(new Set());
 
@@ -335,6 +405,45 @@ function TestRunDetailPage() {
                           </TabsContent>
                         )}
                       </Tabs>
+
+                      {(tc.status === "passed" || tc.status === "failed" || tc.status === "error") && (
+                        <div className="mt-3 flex justify-end gap-2 border-t border-border pt-3">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate({
+                                to: "/$projectId/models/chat/$conversationId",
+                                params: { projectId: project._id, conversationId: "new" },
+                                search: { prefill: buildRefinePrompt(tc) },
+                              });
+                            }}
+                          >
+                            <Wand2 className="h-3.5 w-3.5" />
+                            Refine
+                          </Button>
+                          {(tc.status === "failed" || tc.status === "error") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate({
+                                  to: "/$projectId/models/chat/$conversationId",
+                                  params: { projectId: project._id, conversationId: "new" },
+                                  search: { prefill: buildFixPrompt(tc) },
+                                });
+                              }}
+                            >
+                              <MessageCircle className="h-3.5 w-3.5" />
+                              Fix in Chat
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>

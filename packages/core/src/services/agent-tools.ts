@@ -1,7 +1,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod/v4";
 import { getEnv } from "../config/env";
-import { Connection, TestCase, type IConnectionDocument } from "../models/index";
+import { Connection, TestAgent, TestCase, type IConnectionDocument } from "../models/index";
 import { connectDB } from "../infra/db";
 import { getProjectInstance, hardenConnection } from "./duckdb";
 import { validateReadOnlySQL } from "./sql-validation";
@@ -83,10 +83,12 @@ export function makeExecuteQueryTool(projectId: string) {
       name: "executeQuery",
       description:
         "Run a read-only SQL query against the project's DuckDB instance. " +
+        "The SQL engine is DuckDB — use DuckDB SQL syntax, NOT PostgreSQL or MySQL. " +
         "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed. " +
         "All database connections are attached as named catalogs — you MUST fully qualify every table as catalog.schema.table (e.g. Shopify.public.shopify_orders). " +
         "Use $1, $2, ... placeholders and provide values in the params array. " +
-        "Results are limited to 1000 rows.",
+        "Results are limited to 1000 rows. " +
+        "For JSON arrays use UNNEST(from_json(col, '[\"JSON\"]')) AS t(elem), NOT json_array_elements (PostgreSQL-only).",
       schema: z.object({
         sql: z.string().describe("SQL query with $1, $2, ... placeholders"),
         params: z.array(z.unknown()).describe("Parameter values for placeholders").default([]),
@@ -200,6 +202,108 @@ export function makeReadDocumentTool(projectId: string) {
   );
 }
 
+export function makeListTestAgentsTool(projectId: string) {
+  return tool(
+    async () => {
+      try {
+        await connectDB();
+        const agents = await TestAgent.find({ project: projectId })
+          .select("name semanticModels llmModel")
+          .lean();
+        return JSON.stringify(
+          agents.map((a) => ({
+            id: (a as any)._id.toString(),
+            name: a.name,
+            semanticModels: a.semanticModels,
+            llmModel: a.llmModel,
+          })),
+        );
+      } catch (err: any) {
+        console.error("[list_test_agents] Error:", err);
+        return JSON.stringify({ error: err.message ?? "Failed to list test agents" });
+      }
+    },
+    {
+      name: "list_test_agents",
+      description:
+        "List all test agents configured for the current project. Returns each agent's id, " +
+        "name, assigned semantic models, and LLM model. Use this before creating test cases " +
+        "to check if an agent can be assigned.",
+      schema: z.object({}),
+    },
+  );
+}
+
+export function makeListTestCasesTool(projectId: string) {
+  return tool(
+    async ({ semanticModel }: { semanticModel?: string }) => {
+      try {
+        await connectDB();
+        const filter: Record<string, unknown> = { project: projectId };
+        if (semanticModel) filter.semanticModel = semanticModel;
+        const cases = await TestCase.find(filter)
+          .select("title semanticModel inputMessage expectedFacts tags testAgent")
+          .populate("testAgent", "name")
+          .lean();
+        return JSON.stringify(
+          cases.map((c) => ({
+            id: (c as any)._id.toString(),
+            title: c.title,
+            semanticModel: c.semanticModel,
+            inputMessage: c.inputMessage,
+            expectedFactsCount: c.expectedFacts.length,
+            tags: c.tags,
+            testAgent: c.testAgent ? { id: (c.testAgent as any)._id.toString(), name: (c.testAgent as any).name } : null,
+          })),
+        );
+      } catch (err: any) {
+        console.error("[list_test_cases] Error:", err);
+        return JSON.stringify({ error: err.message ?? "Failed to list test cases" });
+      }
+    },
+    {
+      name: "list_test_cases",
+      description:
+        "List existing test cases for the current project. Optionally filter by semantic model name. " +
+        "Use this to see what test coverage already exists before creating new test cases.",
+      schema: z.object({
+        semanticModel: z
+          .string()
+          .optional()
+          .describe("Filter by semantic model name. Omit to list all test cases."),
+      }),
+    },
+  );
+}
+
+export function makeDeleteTestCaseTool(projectId: string) {
+  return tool(
+    async ({ testCaseId }: { testCaseId: string }) => {
+      try {
+        await connectDB();
+        const tc = await TestCase.findOne({ _id: testCaseId, project: projectId });
+        if (!tc) {
+          return JSON.stringify({ error: "Test case not found in this project" });
+        }
+        await tc.softDelete();
+        return JSON.stringify({ deleted: { id: testCaseId, title: tc.title } });
+      } catch (err: any) {
+        console.error("[delete_test_case] Error:", err);
+        return JSON.stringify({ error: err.message ?? "Failed to delete test case" });
+      }
+    },
+    {
+      name: "delete_test_case",
+      description:
+        "Soft-delete a test case by ID. Use list_test_cases first to find the ID. " +
+        "The test case will no longer appear in listings or batch runs.",
+      schema: z.object({
+        testCaseId: z.string().describe("The ID of the test case to delete (from list_test_cases)"),
+      }),
+    },
+  );
+}
+
 export function makeCreateTestCaseTool(projectId: string) {
   return tool(
     async ({
@@ -207,11 +311,13 @@ export function makeCreateTestCaseTool(projectId: string) {
       semanticModel,
       inputMessage,
       expectedFacts,
+      testAgentId,
     }: {
       title: string;
       semanticModel: string;
       inputMessage: string;
       expectedFacts: string[];
+      testAgentId?: string;
     }) => {
       if (expectedFacts.length === 0) {
         return JSON.stringify({ error: "At least one expected fact is required" });
@@ -219,6 +325,16 @@ export function makeCreateTestCaseTool(projectId: string) {
 
       try {
         await connectDB();
+
+        let testAgent: string | undefined;
+        if (testAgentId) {
+          const agent = await TestAgent.findOne({ _id: testAgentId, project: projectId }).lean();
+          if (!agent) {
+            return JSON.stringify({ error: "Test agent not found in this project" });
+          }
+          testAgent = testAgentId;
+        }
+
         const tc = await TestCase.create({
           title,
           project: projectId,
@@ -226,12 +342,14 @@ export function makeCreateTestCaseTool(projectId: string) {
           inputMessage,
           expectedFacts,
           tags: ["auto-generated"],
+          ...(testAgent && { testAgent }),
         });
         return JSON.stringify({
           created: {
             id: tc._id.toString(),
             title: tc.title,
             semanticModel: tc.semanticModel,
+            testAgent: testAgent ?? null,
             tags: tc.tags,
           },
         });
@@ -246,7 +364,8 @@ export function makeCreateTestCaseTool(projectId: string) {
         "Create a test case for the current project. The test case captures a natural-language " +
         "question and the expected factual assertions that a test agent's response must satisfy. " +
         "Use this after completing a semantic model to generate a starter test suite. " +
-        "The 'auto-generated' tag is added automatically.",
+        "The 'auto-generated' tag is added automatically. Optionally assign a test agent by ID " +
+        "(use list_test_agents first to find available agents).",
       schema: z.object({
         title: z.string().describe("Short description of what is being tested"),
         semanticModel: z.string().describe("Name of the semantic model the test targets"),
@@ -255,6 +374,10 @@ export function makeCreateTestCaseTool(projectId: string) {
           .array(z.string())
           .min(1)
           .describe("Factual assertions the agent's response must satisfy (min 1)"),
+        testAgentId: z
+          .string()
+          .optional()
+          .describe("ID of a test agent to assign (from list_test_agents). Omit to leave unassigned."),
       }),
     },
   );

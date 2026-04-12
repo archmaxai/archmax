@@ -1,4 +1,4 @@
-import { UnrecoverableError, type Job } from "bullmq";
+import type { Job } from "bullmq";
 import { connectDB } from "@archmax/core/infra/db";
 import { TestRun } from "@archmax/core/models/index";
 import type { TestRunJobData, TestRunJobResult } from "@archmax/core/queue/types";
@@ -13,15 +13,19 @@ export async function processTestRunJob(
   try {
     await processTestCase(testRunId, caseIndex, testAgentId, semanticModel, inputMessage, expectedFacts, maxToolCalls);
   } catch (err) {
-    throw new UnrecoverableError(err instanceof Error ? err.message : "Test case processing failed");
-  }
-
-  await connectDB();
-  const run = await TestRun.findById(testRunId).lean();
-  if (run) {
-    const allDone = run.cases.every((c) => c.status !== "pending" && c.status !== "running");
-    if (allDone) {
-      await TestRun.updateOne({ _id: testRunId }, { status: "completed", completedAt: new Date() });
+    console.error(`[test-processor] Case ${caseIndex} of run ${testRunId} failed:`, err);
+  } finally {
+    try {
+      await connectDB();
+      const run = await TestRun.findById(testRunId).lean();
+      if (run) {
+        const allDone = run.cases.every((c) => c.status !== "pending" && c.status !== "running");
+        if (allDone) {
+          await TestRun.updateOne({ _id: testRunId }, { status: "completed", completedAt: new Date() });
+        }
+      }
+    } catch (finalizeErr) {
+      console.error(`[test-processor] Failed to finalize run ${testRunId}:`, finalizeErr);
     }
   }
 

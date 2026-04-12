@@ -110,11 +110,11 @@ The MCP server SHALL expose the following tools for AI agent consumption. The MC
 
 ### Requirement: MCP Execute Query Tool
 
-The MCP server SHALL expose an `execute_query` tool that runs read-only SQL queries scoped to a single semantic model. The tool requires a `modelName` parameter (selecting which model's datasets become `_scope_<modelName>.*` VIEWs), a `sql` string with positional placeholders (`$1`, `$2`, ...), and an optional `params` array of values. Results SHALL be limited to 1000 rows with a 30-second timeout. All calls SHALL be logged via `McpCallLog` with the SQL query and row count. The tool description SHALL explain the `_scope_<modelName>."<datasetName>"` naming convention without enumerating all VIEWs (agents discover datasets via `get_semantic_model` / `get_dataset`).
+The MCP server SHALL expose an `execute_query` tool that runs read-only SQL queries scoped to a single semantic model. The tool requires a `modelName` parameter (selecting which model's datasets become available as tables), a `sql` string with positional placeholders (`$1`, `$2`, ...), and an optional `params` array of values. Agents SHALL use bare dataset names as table names (e.g., `FROM orders`) — the DuckDB `search_path` is set to the model's scoped schema so that unqualified names resolve to the correct VIEWs automatically. Results SHALL be limited to 1000 rows with a 30-second timeout. All calls SHALL be logged via `McpCallLog` with the SQL query and row count. The tool description SHALL instruct agents to use dataset names directly without schema prefixes.
 
 #### Scenario: Successful scoped query
-- **WHEN** `execute_query` is called with `modelName: "ecommerce"` and a valid SELECT query referencing scoped VIEW names (e.g., `SELECT * FROM _scope_ecommerce."orders" LIMIT 10`)
-- **THEN** VIEWs are available for the "ecommerce" model's datasets in the `_scope_ecommerce` schema
+- **WHEN** `execute_query` is called with `modelName: "ecommerce"` and a valid SELECT query using bare dataset names (e.g., `SELECT * FROM "orders" LIMIT 10`)
+- **THEN** the `search_path` is set to the model's scoped schema so `"orders"` resolves to the scoped VIEW
 - **AND** the query is executed against the project's DuckDB instance
 - **AND** results are returned as JSON with columns and rows
 - **AND** the call is logged to McpCallLog
@@ -128,7 +128,7 @@ The MCP server SHALL expose an `execute_query` tool that runs read-only SQL quer
 - **THEN** an error content response with `isError: true` is returned
 
 #### Scenario: Query with parameters
-- **WHEN** `execute_query` is called with `modelName: "ecommerce"`, `sql: "SELECT * FROM _scope_ecommerce.\"orders\" WHERE status = $1"`, and `params: ["shipped"]`
+- **WHEN** `execute_query` is called with `modelName: "ecommerce"`, `sql: "SELECT * FROM \"orders\" WHERE status = $1"`, and `params: ["shipped"]`
 - **THEN** the query is executed with parameterized binding
 - **AND** results are returned normally
 
@@ -143,11 +143,12 @@ The MCP server SHALL expose an `execute_query` tool that runs read-only SQL quer
 
 ### Requirement: Scoped DuckDB VIEWs
 
-The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named `_scope_<modelName>` (e.g., `_scope_ecommerce`). Each dataset becomes a VIEW named `_scope_<modelName>."<datasetName>"` that selects only the field expressions from the dataset's source table. VIEWs are created lazily on the first `execute_query` call for a model and cached using a content hash of the model's YAML file. Subsequent calls skip view creation if the hash matches. When the model changes (e.g., after a publish), the hash mismatch triggers view recreation. The `get_semantic_model` overview SHALL annotate each dataset with its corresponding `_scope_<modelName>."<datasetName>"` VIEW name.
+The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named `_scope_<modelName>` (e.g., `_scope_ecommerce`). Each dataset becomes a VIEW named `_scope_<modelName>."<datasetName>"` that selects only the field expressions from the dataset's source table. VIEWs are created lazily on the first `execute_query` call for a model and cached using a content hash of the model's YAML file. Subsequent calls skip view creation if the hash matches. When the model changes (e.g., after a publish), the hash mismatch triggers view recreation. The DuckDB `search_path` is set to the model's scoped schema before query execution, so agents use bare dataset names (e.g., `FROM "orders"`) and DuckDB resolves them to the scoped VIEWs. The `get_semantic_model` overview SHALL annotate each dataset with its bare table name (the dataset name) for use in queries.
 
 #### Scenario: VIEW created from semantic model dataset
 - **WHEN** `execute_query` is called with `modelName: "ecommerce"` and the model has dataset `orders` sourced from `shop.public.orders` with fields `order_id`, `total_amount`, `status`
 - **THEN** a VIEW `_scope_ecommerce."orders"` is created as `SELECT order_id, total_amount, status FROM shop.public.orders`
+- **AND** the `search_path` is set so `FROM "orders"` resolves to this VIEW
 - **AND** queries against the VIEW return only those three columns
 
 #### Scenario: VIEW reflects field expressions
@@ -165,42 +166,42 @@ The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named 
 
 #### Scenario: Concurrent queries for different models
 - **WHEN** two concurrent `execute_query` calls arrive for models "ecommerce" and "analytics" that both have a dataset named "orders"
-- **THEN** each call operates on its own schema (`_scope_ecommerce` and `_scope_analytics`)
+- **THEN** each call operates on its own schema (`_scope_ecommerce` and `_scope_analytics`) via per-connection `search_path`
 - **AND** neither call's VIEWs interfere with the other
 
-#### Scenario: VIEW names shown in model overview
+#### Scenario: Dataset names shown in model overview
 - **WHEN** `get_semantic_model` is called for model "ecommerce"
-- **THEN** each dataset row includes the corresponding `_scope_ecommerce."<datasetName>"` VIEW name
+- **THEN** each dataset row includes the bare dataset name as the table name for use in queries
 
 ### Requirement: MCP Query SQL Validation
 
-The `execute_query` tool SHALL validate all SQL queries before execution. Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements SHALL be allowed, and multi-statement queries SHALL be rejected. Queries SHALL be validated to ensure they do not reference raw attached catalog names directly — only `_scope_<modelName>.*` table references for the requested model are permitted. References to other models' scoped schemas (e.g., `_scope_analytics.*` when querying `modelName: "ecommerce"`) SHALL be rejected. The list of forbidden catalog names is derived from the project's active connection slugs.
+The `execute_query` tool SHALL validate all SQL queries before execution. Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements SHALL be allowed, and multi-statement queries SHALL be rejected. Queries SHALL be validated to ensure they do not reference raw attached catalog names directly — agents SHALL use bare dataset names which resolve via `search_path`. Explicit `_scope_` schema prefixes in queries SHALL be rejected with a message instructing the agent to use dataset names directly. The list of forbidden catalog names is derived from the project's active connection slugs.
 
 #### Scenario: Write query rejected
-- **WHEN** any token submits `INSERT INTO _scope_ecommerce."orders" VALUES (1, 100, 'new')`
+- **WHEN** any token submits `INSERT INTO "orders" VALUES (1, 100, 'new')`
 - **THEN** the query is rejected with an error before execution
 - **AND** no database modification occurs
 
 #### Scenario: Raw catalog reference rejected
 - **WHEN** any token submits `SELECT * FROM shopify.public.orders`
 - **THEN** the query is rejected with an error indicating that raw catalog references are not allowed
-- **AND** the error suggests using `_scope_<modelName>.*` VIEW names instead
+- **AND** the error suggests using dataset names directly
 
 #### Scenario: Multi-statement query rejected
-- **WHEN** any token submits `SELECT 1; DROP TABLE _scope_ecommerce."orders"`
+- **WHEN** any token submits `SELECT 1; DROP TABLE "orders"`
 - **THEN** the query is rejected before execution
 
-#### Scenario: Valid scoped query passes validation
-- **WHEN** a query references only `_scope_ecommerce.*` tables (e.g., `SELECT o.total_amount FROM _scope_ecommerce."orders" o`) and the `modelName` is "ecommerce"
+#### Scenario: Valid query using bare dataset names passes validation
+- **WHEN** a query uses bare dataset names (e.g., `SELECT o.total_amount FROM "orders" o`) and the `modelName` is "ecommerce"
 - **THEN** the query passes validation and is executed
 
-#### Scenario: Cross-model scope reference rejected
-- **WHEN** `execute_query` is called with `modelName: "ecommerce"` and the SQL references `_scope_analytics."revenue"`
-- **THEN** the query is rejected with an error indicating that only `_scope_ecommerce.*` VIEWs are accessible
+#### Scenario: Explicit _scope_ prefix rejected
+- **WHEN** `execute_query` is called with SQL referencing `_scope_ecommerce."orders"` or any `_scope_*` prefix
+- **THEN** the query is rejected with an error instructing the agent to use dataset names directly via `search_path`
 
 ### Requirement: MCP DuckDB Connection Hardening
 
-Each `execute_query` invocation SHALL open a DuckDB connection with security hardening applied before query execution. The hardening SHALL include: `SET enable_external_access = false` (prevents file reads, network access, COPY operations), resource limits (`SET threads = 2`, `SET memory_limit = '512MB'`), and `SET lock_configuration = true` (prevents any setting changes by injected SQL). These settings SHALL be applied per-connection so they do not affect other DuckDB consumers (data browser, semantic model agent). The semantic model agent's `executeQuery` tool SHALL also apply the same `hardenConnection()` settings before executing any query, ensuring parity with the MCP code path.
+Each `execute_query` invocation SHALL open a DuckDB connection with security hardening applied before query execution. The hardening SHALL include: `SET enable_external_access = false` (prevents file reads, network access, COPY operations), `SET search_path = '<scopeSchema>'` (resolves bare dataset names to the model's scoped VIEWs), resource limits (`SET threads = 2`, `SET memory_limit = '512MB'`), and `SET lock_configuration = true` (prevents any setting changes by injected SQL). The `search_path` MUST be set before `lock_configuration` so that the agent cannot override it. These settings SHALL be applied per-connection so they do not affect other DuckDB consumers (data browser, semantic model agent). The semantic model agent's `executeQuery` tool SHALL also apply the same `hardenConnection()` settings before executing any query, ensuring parity with the MCP code path.
 
 #### Scenario: External access disabled
 - **WHEN** an MCP query attempts `SELECT * FROM read_csv('/etc/passwd')`
@@ -210,6 +211,11 @@ Each `execute_query` invocation SHALL open a DuckDB connection with security har
 #### Scenario: Configuration locked
 - **WHEN** an MCP query attempts `SET enable_external_access = true`
 - **THEN** the SET statement fails because `lock_configuration` is true
+
+#### Scenario: search_path resolves dataset names
+- **WHEN** an MCP query uses `SELECT * FROM "orders"` for model "ecommerce"
+- **THEN** DuckDB resolves `"orders"` via the `search_path` set to `_scope_ecommerce`
+- **AND** the query executes against the scoped VIEW
 
 #### Scenario: Resource limits applied
 - **WHEN** an MCP query consumes excessive resources
@@ -266,4 +272,30 @@ When an MCP request includes an `mcp-session-id` header referencing an existing 
 - **WHEN** a session request includes a valid `mcp-session-id`
 - **AND** the associated token is still active and not expired
 - **THEN** the request is processed normally
+
+### Requirement: MCP E2E Test Coverage
+
+The project SHALL include a Playwright E2E test suite (`apps/e2e/tests/mcp.spec.ts`) that exercises the MCP server's full stack: bearer token authentication, tool invocation, scope enforcement, and token revocation. The test SHALL create a semantic model via the REST API referencing the e2e federated databases (Postgres, MySQL, MSSQL), publish it, and then interact with the MCP endpoint using JSON-RPC over HTTP. The test SHALL run in both CI and local Docker Compose environments using the same `docker-compose.ci.yml` stack.
+
+#### Scenario: MCP tools return correct data from federated databases
+
+- **WHEN** a semantic model `e2e_federation` is created with datasets sourced from Postgres (`e2e_products`), MySQL (`e2e_orders`), and MSSQL (`e2e_customers`)
+- **AND** the model is published
+- **AND** an MCP token scoped to `["e2e_federation"]` is created
+- **THEN** `list_semantic_models` returns `e2e_federation`
+- **AND** `get_semantic_model` returns the model overview with all three datasets
+- **AND** `get_datasets` returns field details for each dataset
+- **AND** `execute_query` with `SELECT * FROM "products" LIMIT 10` returns rows from the Postgres `e2e_products` table
+
+#### Scenario: MCP scope enforcement in E2E
+
+- **WHEN** an MCP token is scoped to `["other_model"]`
+- **AND** the token is used to call `get_semantic_model` with `modelName: "e2e_federation"`
+- **THEN** the response contains `isError: true` with an access denied message
+- **AND** `list_semantic_models` returns no models
+
+#### Scenario: MCP request improvement tool in E2E
+
+- **WHEN** `request_improvement` is called with a valid token, `modelName: "e2e_federation"`, a title, and a description
+- **THEN** the response indicates the improvement request was submitted successfully
 
