@@ -5,6 +5,12 @@ export ARCHMAX_DATA_DIR="${ARCHMAX_DATA_DIR:-/data}"
 export HOME="$ARCHMAX_DATA_DIR"
 mkdir -p "$ARCHMAX_DATA_DIR/projects"
 
+# Seed pre-installed DuckDB extensions into the runtime home so INSTALL is a no-op.
+if [ -d /duckdb-extensions ] && [ ! -d "$HOME/.duckdb/extensions" ]; then
+  mkdir -p "$HOME/.duckdb/extensions"
+  cp -r /duckdb-extensions/* "$HOME/.duckdb/extensions/"
+fi
+
 # When running as root (default), fix ownership on volume mounts and re-exec as archmax.
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$ARCHMAX_DATA_DIR/projects" "$ARCHMAX_DATA_DIR/mongodb" /tmp/redis
