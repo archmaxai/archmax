@@ -16,6 +16,7 @@ When you add a connection to a project and mark it as active, archmax attaches i
 | SQL Server | `mssql` | Community |
 | SQLite | `sqlite` | Core |
 | DuckDB | Native | - |
+| Iceberg REST Catalog | `iceberg` + `httpfs` | Core |
 
 Each connection's slug becomes the DuckDB schema alias. For example, a connection with slug `shopify` attached from a Postgres database makes its tables available as `shopify.<schema>.<table>`.
 
@@ -32,6 +33,28 @@ Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes
 When using **Connection URI**, you can pass any format the extension accepts (ADO.NET or URI) directly.
 
 The **Encrypt connection (TLS)** toggle controls the `Encrypt` parameter and defaults to on. Disable it only for local development servers that don't support TLS.
+
+### Iceberg REST Catalog Connections
+
+Iceberg connections let you query data in [Apache Iceberg](https://iceberg.apache.org/) tables exposed through an [Iceberg REST Catalog](https://duckdb.org/docs/current/core_extensions/iceberg/iceberg_rest_catalogs) (Lakekeeper, Polaris, Cloudflare R2, etc.).
+
+Unlike RDBMS connections, Iceberg uses a two-step attach: archmax creates a DuckDB secret with the bearer token, then attaches the catalog with the REST endpoint.
+
+**Required fields:**
+
+| Field | Description |
+|-------|-------------|
+| **Catalog Endpoint** | URL of the Iceberg REST Catalog (e.g. `https://catalog.example.com`) |
+| **Warehouse** | Warehouse identifier registered in the catalog |
+| **Bearer Token** | Authentication token for the catalog |
+
+Once attached, Iceberg namespaces and tables are available as `<slug>.<namespace>.<table>` and can be joined with any other connection type.
+
+**Limitations:**
+
+- Read-only access (no INSERT/UPDATE/DELETE)
+- Bearer token auth only (OAuth2 support planned)
+- Backed by S3 or GCS object storage (other backends not yet supported by DuckDB)
 
 ## Cross-Connection Queries
 

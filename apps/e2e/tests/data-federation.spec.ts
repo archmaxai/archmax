@@ -32,6 +32,11 @@ const CONNECTIONS = [
     type: "sqlite",
     config: { database: "/e2e-fixtures/e2e.db" },
   },
+  {
+    name: "E2E Iceberg",
+    type: "iceberg",
+    config: { endpoint: "http://lakekeeper:8181/catalog", warehouse: "e2e_warehouse", token: "e2e-iceberg-token" },
+  },
 ] as const;
 
 const AUTH_FILE = path.join(__dirname, ".auth-state.json");
@@ -88,7 +93,11 @@ async function createConnection(
   await typeSelect.click();
   await page.getByRole("option", { name: conn.type, exact: true }).click();
 
-  if (conn.type === "sqlite") {
+  if (conn.type === "iceberg") {
+    await page.locator("#conn-endpoint").fill(conn.config.endpoint);
+    await page.locator("#conn-warehouse").fill(conn.config.warehouse);
+    await page.locator("#conn-token").fill(conn.config.token);
+  } else if (conn.type === "sqlite") {
     await page.locator("#conn-db").fill(conn.config.database);
   } else {
     await page.locator("#conn-host").fill(conn.config.host);

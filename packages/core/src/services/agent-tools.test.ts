@@ -39,7 +39,7 @@ describe("makeExecuteQueryTool", () => {
     await tool.invoke({ sql: "SELECT 1", params: [] });
 
     expect(hardenConnection).toHaveBeenCalledTimes(1);
-    expect(hardenConnection).toHaveBeenCalledWith(mockDb);
+    expect(hardenConnection).toHaveBeenCalledWith(mockDb, undefined, { allowExternalAccess: false });
 
     const hardenOrder = (hardenConnection as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const prepareOrder = mockDb.prepare.mock.invocationCallOrder[0];

@@ -19,6 +19,13 @@ const connectionConfigSchema = z.object({
   password: z.string().optional(),
   uri: z.string().optional(),
   encrypt: z.boolean().optional(),
+  endpoint: z.url("Endpoint must be a valid URL").optional(),
+  warehouse: z.string().optional(),
+  token: z.string().optional(),
+  authorizationType: z.enum(["bearer", "oauth2"]).optional(),
+  clientId: z.string().optional(),
+  clientSecret: z.string().optional(),
+  oauth2ServerUri: z.string().optional(),
 }).strict();
 
 export const REDACTED_SENTINEL = "********";
@@ -31,6 +38,8 @@ export function redactConnectionConfig(config: Record<string, unknown>): Record<
   const decrypted = decryptConnectionCredentials(config, getEncryptionKey());
   const redacted = { ...decrypted };
   if (redacted.password) redacted.password = REDACTED_SENTINEL;
+  if (redacted.token) redacted.token = REDACTED_SENTINEL;
+  if (redacted.clientSecret) redacted.clientSecret = REDACTED_SENTINEL;
   if (typeof redacted.uri === "string") {
     try {
       const url = new URL(redacted.uri);
@@ -53,6 +62,24 @@ function uriContainsSentinel(uri: string): boolean {
   }
 }
 
+function preserveOrEncryptField(
+  merged: Record<string, unknown>,
+  stored: Record<string, unknown>,
+  field: string,
+  key: string | null,
+): void {
+  const val = merged[field] as string | undefined;
+  if (!val || val === REDACTED_SENTINEL) {
+    if (stored[field]) {
+      merged[field] = stored[field];
+    } else {
+      delete merged[field];
+    }
+  } else {
+    merged[field] = key ? encryptConnectionCredentials({ [field]: val }, key)[field] : val;
+  }
+}
+
 export function mergeConnectionConfig(
   incoming: Record<string, unknown>,
   stored: Record<string, unknown>,
@@ -60,16 +87,9 @@ export function mergeConnectionConfig(
   const merged = { ...incoming };
   const key = getEncryptionKey();
 
-  const pw = merged.password as string | undefined;
-  if (!pw || pw === REDACTED_SENTINEL) {
-    if (stored.password) {
-      merged.password = stored.password;
-    } else {
-      delete merged.password;
-    }
-  } else {
-    merged.password = key ? encryptConnectionCredentials({ password: pw }, key).password : pw;
-  }
+  preserveOrEncryptField(merged, stored, "password", key);
+  preserveOrEncryptField(merged, stored, "token", key);
+  preserveOrEncryptField(merged, stored, "clientSecret", key);
 
   if (typeof merged.uri === "string" && uriContainsSentinel(merged.uri)) {
     if (typeof stored.uri === "string") {

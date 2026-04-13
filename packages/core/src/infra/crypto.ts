@@ -51,17 +51,18 @@ function tryDecrypt(value: string, key: string): string {
  * Encrypt sensitive fields (password, uri) in a connection config object.
  * Returns a shallow copy with encrypted values. No-op when key is null.
  */
+const SENSITIVE_FIELDS = ["password", "uri", "token", "clientSecret"] as const;
+
 export function encryptConnectionCredentials(
   config: Record<string, unknown>,
   key: string | null,
 ): Record<string, unknown> {
   if (!key) return config;
   const result = { ...config };
-  if (typeof result.password === "string" && result.password) {
-    result.password = encrypt(result.password, key);
-  }
-  if (typeof result.uri === "string" && result.uri) {
-    result.uri = encrypt(result.uri, key);
+  for (const field of SENSITIVE_FIELDS) {
+    if (typeof result[field] === "string" && result[field]) {
+      result[field] = encrypt(result[field] as string, key);
+    }
   }
   return result;
 }
@@ -77,11 +78,10 @@ export function decryptConnectionCredentials(
 ): Record<string, unknown> {
   if (!key) return config;
   const result = { ...config };
-  if (typeof result.password === "string" && result.password) {
-    result.password = tryDecrypt(result.password, key);
-  }
-  if (typeof result.uri === "string" && result.uri) {
-    result.uri = tryDecrypt(result.uri, key);
+  for (const field of SENSITIVE_FIELDS) {
+    if (typeof result[field] === "string" && result[field]) {
+      result[field] = tryDecrypt(result[field] as string, key);
+    }
   }
   return result;
 }

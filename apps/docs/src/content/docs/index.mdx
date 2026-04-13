@@ -29,7 +29,7 @@ archmax helps you create semantic descriptions of your database schemas (tables,
     Expose your semantic layer to AI agents via MCP tools. Agents discover models, understand field meanings, and run scoped SQL queries.
   </Card>
   <Card title="Data Federation" icon="random">
-    Query across Postgres, MySQL, MSSQL, SQLite, and DuckDB databases from a single project using DuckDB's federation engine.
+    Query across Postgres, MySQL, MSSQL, SQLite, DuckDB, and Iceberg REST Catalog databases from a single project using DuckDB's federation engine.
   </Card>
   <Card title="Admin UI" icon="setting">
     Manage projects, connections, and semantic models through a modern web interface with a chat-based AI model builder.
@@ -81,7 +81,7 @@ Once deployed, the admin UI provides these main areas:
 |---------|-------------------|
 | **Projects** | Create and manage projects. Each project groups related database connections and semantic models. |
 | **Semantic Models** | Build and edit semantic models. Start a chat conversation describing what you want, and the AI agent assembles the model for you. You can also edit models manually. |
-| **Data Federation** | Add database connections (Postgres, MySQL, MSSQL, SQLite, DuckDB), test them, and manage which are active for querying. |
+| **Data Federation** | Add database connections (Postgres, MySQL, MSSQL, SQLite, DuckDB, Iceberg), test them, and manage which are active for querying. |
 | **Data Browser** | Explore the schemas, tables, and data from your active connections. |
 | **MCP Access** | Create and manage MCP tokens that external AI agents use to connect to your semantic layer. Configure scopes, permissions, and expiry. |
 | **Testing** | Define test cases (questions an AI agent should answer), create test agent configurations, and run tests individually or in batch to validate your semantic models. |

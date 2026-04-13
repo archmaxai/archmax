@@ -98,8 +98,13 @@ export async function getProjectInstance(
   }
 }
 
+const ICEBERG_EXTENSIONS = ["iceberg", "httpfs"] as const;
+
 function isReady(entry: ProjectDuckDB, connections: IConnectionDocument[]): boolean {
   return connections.every((conn) => {
+    if (conn.type === "iceberg") {
+      return ICEBERG_EXTENSIONS.every((e) => entry.loadedExtensions.has(e)) && entry.attachedSlugs.has(conn.slug);
+    }
     const ext = extensionForType(conn.type);
     return (!ext || entry.loadedExtensions.has(ext)) && entry.attachedSlugs.has(conn.slug);
   });
@@ -115,6 +120,9 @@ async function setupProjectInstance(
 
   if (entry) {
     const needsNewExtension = connections.some((conn) => {
+      if (conn.type === "iceberg") {
+        return ICEBERG_EXTENSIONS.some((e) => !entry!.loadedExtensions.has(e));
+      }
       const ext = extensionForType(conn.type);
       return ext && !entry!.loadedExtensions.has(ext);
     });
@@ -135,7 +143,10 @@ async function setupProjectInstance(
     await attachConnection(entry, conn);
   }
 
-  await disableExternalAccess(entry.instance);
+  const hasIceberg = connections.some((c) => c.type === "iceberg");
+  if (!hasIceberg) {
+    await disableExternalAccess(entry.instance);
+  }
 
   return entry.instance;
 }
@@ -155,6 +166,11 @@ async function installAndLoadExtension(
 }
 
 async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument): Promise<void> {
+  if (conn.type === "iceberg") {
+    await attachIcebergCatalog(entry, conn);
+    return;
+  }
+
   const ext = extensionForType(conn.type);
   if (!ext) return;
 
@@ -174,6 +190,54 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
   }
 }
 
+function icebergSecretName(slug: string): string {
+  return `${slug}_secret`;
+}
+
+function getDecryptedIcebergConfig(conn: IConnectionDocument) {
+  const key = getEnv().ENCRYPTION_KEY || null;
+  const raw = typeof (conn.connectionConfig as any).toObject === "function"
+    ? (conn.connectionConfig as any).toObject()
+    : conn.connectionConfig;
+  return decryptConnectionCredentials(raw as Record<string, unknown>, key);
+}
+
+async function attachIcebergCatalog(entry: ProjectDuckDB, conn: IConnectionDocument): Promise<void> {
+  for (const ext of ICEBERG_EXTENSIONS) {
+    if (!entry.loadedExtensions.has(ext)) {
+      await installAndLoadExtension(entry.instance, ext);
+      entry.loadedExtensions.add(ext);
+    }
+  }
+
+  const cfg = getDecryptedIcebergConfig(conn);
+  const secretName = icebergSecretName(conn.slug);
+  const token = (cfg.token as string).replace(/'/g, "''");
+  const warehouse = (cfg.warehouse as string).replace(/'/g, "''");
+  const endpoint = (cfg.endpoint as string).replace(/'/g, "''");
+
+  const db = await entry.instance.connect();
+  try {
+    await db.run(`CREATE SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
+    await db.run(
+      `ATTACH '${warehouse}' AS ${conn.slug} (TYPE iceberg, ENDPOINT '${endpoint}', SECRET '${secretName}')`,
+    );
+    entry.attachedSlugs.add(conn.slug);
+  } finally {
+    db.disconnectSync();
+  }
+}
+
+export async function detachIcebergCatalog(instance: DuckDBInstance, slug: string): Promise<void> {
+  const db = await instance.connect();
+  try {
+    await db.run(`DETACH ${slug}`);
+    await db.run(`DROP SECRET IF EXISTS ${icebergSecretName(slug)}`);
+  } finally {
+    db.disconnectSync();
+  }
+}
+
 async function disableExternalAccess(instance: DuckDBInstance): Promise<void> {
   const db = await instance.connect();
   try {
@@ -188,6 +252,10 @@ async function disableExternalAccess(instance: DuckDBInstance): Promise<void> {
  * Used for connectivity tests so results are not affected by cached state.
  */
 export async function testSingleConnection(conn: IConnectionDocument): Promise<DuckDBInstance> {
+  if (conn.type === "iceberg") {
+    return testIcebergConnection(conn);
+  }
+
   const ext = extensionForType(conn.type);
   if (!ext) throw new Error(`Unsupported connection type: ${conn.type}`);
 
@@ -198,6 +266,31 @@ export async function testSingleConnection(conn: IConnectionDocument): Promise<D
   try {
     const connStr = buildAttachString(conn).replace(/'/g, "''");
     await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}, READ_ONLY)`);
+  } finally {
+    db.disconnectSync();
+  }
+  return instance;
+}
+
+async function testIcebergConnection(conn: IConnectionDocument): Promise<DuckDBInstance> {
+  const instance = await DuckDBInstance.create();
+  for (const ext of ICEBERG_EXTENSIONS) {
+    await installAndLoadExtension(instance, ext);
+  }
+
+  const cfg = getDecryptedIcebergConfig(conn);
+  const secretName = icebergSecretName(conn.slug);
+  const token = (cfg.token as string).replace(/'/g, "''");
+  const warehouse = (cfg.warehouse as string).replace(/'/g, "''");
+  const endpoint = (cfg.endpoint as string).replace(/'/g, "''");
+
+  const db = await instance.connect();
+  try {
+    await db.run(`CREATE SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
+    await db.run(
+      `ATTACH '${warehouse}' AS ${conn.slug} (TYPE iceberg, ENDPOINT '${endpoint}', SECRET '${secretName}')`,
+    );
+    await db.run("SHOW ALL TABLES");
   } finally {
     db.disconnectSync();
   }
@@ -300,10 +393,10 @@ export function getAttachedCatalogSlugs(
   return connections.map((c) => c.slug);
 }
 
-export async function hardenConnection(db: DuckDBConnection, searchPath?: string): Promise<void> {
-  // enable_external_access is set in getProjectInstance after all extensions
-  // are loaded, so it's already disabled before callers reach this point.
-  try { await db.run("SET enable_external_access = false"); } catch { /* already set */ }
+export async function hardenConnection(db: DuckDBConnection, searchPath?: string, opts?: { allowExternalAccess?: boolean }): Promise<void> {
+  if (!opts?.allowExternalAccess) {
+    try { await db.run("SET enable_external_access = false"); } catch { /* already set */ }
+  }
   try { await db.run("SET threads = 2"); } catch { /* already set */ }
   try { await db.run("SET memory_limit = '512MB'"); } catch { /* already set */ }
   if (searchPath) await db.run(`SET search_path = '${searchPath}'`);

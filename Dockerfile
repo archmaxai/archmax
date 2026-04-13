@@ -110,6 +110,9 @@ RUN node -e " \
     await db.run('INSTALL mysql'); \
     await db.run('INSTALL sqlite'); \
     await db.run('INSTALL mssql FROM community'); \
+    await db.run('INSTALL iceberg'); \
+    await db.run('INSTALL httpfs'); \
+    await db.run('INSTALL avro'); \
     db.disconnectSync(); \
   })();" \
  && mkdir -p /duckdb-extensions \

@@ -7,6 +7,7 @@ export const CONNECTION_TYPES = [
   "mssql",
   "sqlite",
   "duckdb",
+  "iceberg",
 ] as const;
 
 export type ConnectionType = (typeof CONNECTION_TYPES)[number];
@@ -20,6 +21,13 @@ export interface IConnectionConfig {
   password?: string;
   uri?: string;
   encrypt?: boolean;
+  endpoint?: string;
+  warehouse?: string;
+  token?: string;
+  authorizationType?: "bearer" | "oauth2";
+  clientId?: string;
+  clientSecret?: string;
+  oauth2ServerUri?: string;
   [key: string]: unknown;
 }
 
@@ -60,6 +68,13 @@ const ConnectionConfigSchema = new Schema<IConnectionConfig>(
     password: { type: String },
     uri: { type: String },
     encrypt: { type: Boolean },
+    endpoint: { type: String },
+    warehouse: { type: String },
+    token: { type: String },
+    authorizationType: { type: String, enum: ["bearer", "oauth2"] },
+    clientId: { type: String },
+    clientSecret: { type: String },
+    oauth2ServerUri: { type: String },
   },
   { _id: false, strict: false },
 );

@@ -35,6 +35,11 @@ const CONNECTIONS = [
     type: "sqlite",
     config: { database: "/e2e-fixtures/e2e.db" },
   },
+  {
+    name: "E2E Iceberg",
+    type: "iceberg",
+    config: { endpoint: "http://lakekeeper:8181/catalog", warehouse: "e2e_warehouse", token: "e2e-iceberg-token" },
+  },
 ] as const;
 
 const AUTH_FILE = path.join(__dirname, ".mcp-auth-state.json");
@@ -94,7 +99,11 @@ async function createConnection(
   await typeSelect.click();
   await page.getByRole("option", { name: conn.type, exact: true }).click();
 
-  if (conn.type === "sqlite") {
+  if (conn.type === "iceberg") {
+    await page.locator("#conn-endpoint").fill(conn.config.endpoint);
+    await page.locator("#conn-warehouse").fill(conn.config.warehouse);
+    await page.locator("#conn-token").fill(conn.config.token);
+  } else if (conn.type === "sqlite") {
     await page.locator("#conn-db").fill(conn.config.database);
   } else {
     await page.locator("#conn-host").fill(conn.config.host);
@@ -148,10 +157,11 @@ function buildSemanticModel(connections: ConnectionInfo[]) {
   const pgSlug = connections.find((c) => c.type === "postgres")!.slug;
   const mySlug = connections.find((c) => c.type === "mysql")!.slug;
   const msSlug = connections.find((c) => c.type === "mssql")!.slug;
+  const iceSlug = connections.find((c) => c.type === "iceberg")!.slug;
 
   return {
     name: MODEL_NAME,
-    description: "E2E test model spanning Postgres, MySQL, and MSSQL",
+    description: "E2E test model spanning Postgres, MySQL, MSSQL, and Iceberg",
     datasets: [
       {
         name: "products",
@@ -181,6 +191,17 @@ function buildSemanticModel(connections: ConnectionInfo[]) {
           { name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } },
           { name: "name", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "name" }] } },
           { name: "email", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "email" }] } },
+        ],
+      },
+      {
+        name: "shipments",
+        source: `${iceSlug}.e2e_test.e2e_shipments`,
+        primary_key: ["id"],
+        fields: [
+          { name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } },
+          { name: "product_name", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "product_name" }] } },
+          { name: "shipped_date", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "shipped_date" }] } },
+          { name: "destination", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "destination" }] } },
         ],
       },
     ],
@@ -450,6 +471,7 @@ test.describe.serial("MCP Layer", () => {
     expect(text).toContain("products");
     expect(text).toContain("orders");
     expect(text).toContain("customers");
+    expect(text).toContain("shipments");
   });
 
   test("get_datasets returns field details", async ({ request }) => {
@@ -459,12 +481,14 @@ test.describe.serial("MCP Layer", () => {
         { name: "products", page: 1 },
         { name: "orders", page: 1 },
         { name: "customers", page: 1 },
+        { name: "shipments", page: 1 },
       ],
     });
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
     expect(text).toContain("price");
     expect(text).toContain("product_name");
     expect(text).toContain("email");
+    expect(text).toContain("destination");
   });
 
   test("execute_query returns data from Postgres", async ({ request }) => {
@@ -490,6 +514,33 @@ test.describe.serial("MCP Layer", () => {
     expect((body as any).result?.isError).toBeFalsy();
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
     expect(text).toContain("Widget A");
+  });
+
+  test("execute_query returns data from Iceberg", async ({ request }) => {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+      modelName: MODEL_NAME,
+      sql: `SELECT * FROM "shipments" ORDER BY id LIMIT 10`,
+    });
+    expect((body as any).result?.isError).toBeFalsy();
+    const text: string = (body as any).result?.content?.[0]?.text ?? "";
+    expect(text).toContain("Widget A");
+    expect(text).toContain("New York");
+  });
+
+  test("execute_query cross-catalog join (Postgres + Iceberg)", async ({ request }) => {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+      modelName: MODEL_NAME,
+      sql: [
+        `SELECT p.name AS product, s.destination`,
+        `FROM "products" p`,
+        `JOIN "shipments" s ON p.name = s.product_name`,
+        `ORDER BY p.name LIMIT 10`,
+      ].join(" "),
+    });
+    expect((body as any).result?.isError).toBeFalsy();
+    const text: string = (body as any).result?.content?.[0]?.text ?? "";
+    expect(text).toContain("Widget A");
+    expect(text).toContain("New York");
   });
 
   test("request_improvement succeeds", async ({ request }) => {
