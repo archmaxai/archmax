@@ -157,6 +157,8 @@ function withToolBudget(tools: StructuredTool[], maxCalls: number): StructuredTo
 
 export interface PlaygroundAgentOptions {
   maxToolCalls?: number;
+  /** When set, narrow tool scopes to this single model instead of all agent models. */
+  semanticModelScope?: string;
 }
 
 export async function createPlaygroundAgent(
@@ -178,7 +180,9 @@ export async function createPlaygroundAgent(
 
   const fileSvc = new SemanticModelFileService(env.projectsDir);
   const projectId = agent.project.toString();
-  const scopes = agent.semanticModels;
+  const scopes = options?.semanticModelScope
+    ? [options.semanticModelScope]
+    : agent.semanticModels;
 
   let tools: StructuredTool[] = [
     makeListModelsTool(fileSvc, projectId, scopes),

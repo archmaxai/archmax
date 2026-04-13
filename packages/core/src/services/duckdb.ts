@@ -7,12 +7,13 @@ import { getEnv } from "../config/env";
 
 interface ProjectDuckDB {
   instance: DuckDBInstance;
-  attachedConnections: Set<string>;
+  attachedSlugs: Set<string>;
   loadedExtensions: Set<string>;
   readOnly: boolean;
 }
 
 const projectInstances = new Map<string, ProjectDuckDB>();
+const setupLocks = new Map<string, Promise<void>>();
 
 export const COMMUNITY_EXTENSIONS = new Set(["mssql"]);
 
@@ -71,6 +72,44 @@ export async function getProjectInstance(
   connections: IConnectionDocument[],
   options?: { readOnly?: boolean },
 ): Promise<DuckDBInstance> {
+  const entry = projectInstances.get(projectId);
+  if (entry && isReady(entry, connections)) {
+    return entry.instance;
+  }
+
+  while (setupLocks.has(projectId)) {
+    await setupLocks.get(projectId);
+  }
+
+  const afterWait = projectInstances.get(projectId);
+  if (afterWait && isReady(afterWait, connections)) {
+    return afterWait.instance;
+  }
+
+  let resolve!: () => void;
+  const lock = new Promise<void>((r) => { resolve = r; });
+  setupLocks.set(projectId, lock);
+
+  try {
+    return await setupProjectInstance(projectId, connections, options);
+  } finally {
+    setupLocks.delete(projectId);
+    resolve();
+  }
+}
+
+function isReady(entry: ProjectDuckDB, connections: IConnectionDocument[]): boolean {
+  return connections.every((conn) => {
+    const ext = extensionForType(conn.type);
+    return (!ext || entry.loadedExtensions.has(ext)) && entry.attachedSlugs.has(conn.slug);
+  });
+}
+
+async function setupProjectInstance(
+  projectId: string,
+  connections: IConnectionDocument[],
+  options?: { readOnly?: boolean },
+): Promise<DuckDBInstance> {
   const readOnly = options?.readOnly ?? true;
   let entry = projectInstances.get(projectId);
 
@@ -87,13 +126,12 @@ export async function getProjectInstance(
 
   if (!entry) {
     const instance = await DuckDBInstance.create();
-    entry = { instance, attachedConnections: new Set(), loadedExtensions: new Set(), readOnly };
+    entry = { instance, attachedSlugs: new Set(), loadedExtensions: new Set(), readOnly };
     projectInstances.set(projectId, entry);
   }
 
   for (const conn of connections) {
-    const connId = conn._id.toString();
-    if (entry.attachedConnections.has(connId)) continue;
+    if (entry.attachedSlugs.has(conn.slug)) continue;
     await attachConnection(entry, conn);
   }
 
@@ -102,23 +140,35 @@ export async function getProjectInstance(
   return entry.instance;
 }
 
+async function installAndLoadExtension(
+  instance: DuckDBInstance,
+  ext: string,
+): Promise<void> {
+  const db = await instance.connect();
+  try {
+    const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
+    await db.run(`INSTALL ${ext}${installSuffix}`);
+    await db.run(`LOAD ${ext}`);
+  } finally {
+    db.disconnectSync();
+  }
+}
+
 async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument): Promise<void> {
   const ext = extensionForType(conn.type);
   if (!ext) return;
 
+  if (!entry.loadedExtensions.has(ext)) {
+    await installAndLoadExtension(entry.instance, ext);
+    entry.loadedExtensions.add(ext);
+  }
+
   const db = await entry.instance.connect();
   try {
-    if (!entry.loadedExtensions.has(ext)) {
-      const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
-      await db.run(`INSTALL ${ext}${installSuffix}`);
-      await db.run(`LOAD ${ext}`);
-      entry.loadedExtensions.add(ext);
-    }
-
     const connStr = buildAttachString(conn).replace(/'/g, "''");
     const readOnlyClause = entry.readOnly ? ", READ_ONLY" : "";
     await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}${readOnlyClause})`);
-    entry.attachedConnections.add(conn._id.toString());
+    entry.attachedSlugs.add(conn.slug);
   } finally {
     db.disconnectSync();
   }
@@ -142,12 +192,10 @@ export async function testSingleConnection(conn: IConnectionDocument): Promise<D
   if (!ext) throw new Error(`Unsupported connection type: ${conn.type}`);
 
   const instance = await DuckDBInstance.create();
+  await installAndLoadExtension(instance, ext);
+
   const db = await instance.connect();
   try {
-    const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
-    await db.run(`INSTALL ${ext}${installSuffix}`);
-    await db.run(`LOAD ${ext}`);
-
     const connStr = buildAttachString(conn).replace(/'/g, "''");
     await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}, READ_ONLY)`);
   } finally {

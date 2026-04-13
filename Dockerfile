@@ -98,6 +98,23 @@ RUN useradd -r -M -d /data -s /bin/false archmax \
  && corepack disable \
  && mkdir -p /data /tmp/redis \
  && chown -R archmax:archmax /data /tmp/redis /var/log
+
+# Pre-install DuckDB extensions so INSTALL is not needed at runtime (avoids
+# filesystem/network issues inside locked-down containers).
+RUN node -e " \
+  const { DuckDBInstance } = require('@duckdb/node-api'); \
+  (async () => { \
+    const inst = await DuckDBInstance.create(); \
+    const db = await inst.connect(); \
+    await db.run('INSTALL postgres'); \
+    await db.run('INSTALL mysql'); \
+    await db.run('INSTALL sqlite'); \
+    await db.run('INSTALL mssql FROM community'); \
+    db.disconnectSync(); \
+  })();" \
+ && mkdir -p /duckdb-extensions \
+ && cp -r /root/.duckdb/extensions/* /duckdb-extensions/ \
+ && chown -R archmax:archmax /duckdb-extensions
 ENV HOME=/data ARCHMAX_DATA_DIR=/data
 
 COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf

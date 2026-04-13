@@ -1,6 +1,6 @@
 import { connectDB } from "../infra/db";
 import { TestRun, TestAgent } from "../models/index";
-import { createPlaygroundAgent, getTestAgentRecursionLimit, decryptApiKey } from "./playground-agent";
+import { createPlaygroundAgent, getTestAgentRecursionLimit, decryptApiKey, type PlaygroundAgentOptions } from "./playground-agent";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage } from "@langchain/core/messages";
 import type { IToolCallRecord } from "../models/Conversation";
@@ -142,8 +142,9 @@ export async function processTestCase(
   );
 
   try {
-    const agentOpts: { maxToolCalls?: number } = {};
+    const agentOpts: PlaygroundAgentOptions = {};
     if (maxToolCalls) agentOpts.maxToolCalls = maxToolCalls;
+    if (semanticModel) agentOpts.semanticModelScope = semanticModel;
 
     const agent = await createPlaygroundAgent(testAgentId, agentOpts);
     const recursionLimit = getTestAgentRecursionLimit();

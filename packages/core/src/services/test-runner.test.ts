@@ -1,18 +1,34 @@
-import { describe, it, expect, vi } from "vitest";
-import { createMockLlm } from "../test-utils";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockLlm, createTestAgent } from "../test-utils";
+
+const { mockUpdateOne, mockFindByIdTestAgent, mockCreatePlaygroundAgent, mockLlmInvoke } = vi.hoisted(() => ({
+  mockUpdateOne: vi.fn(),
+  mockFindByIdTestAgent: vi.fn(),
+  mockCreatePlaygroundAgent: vi.fn(),
+  mockLlmInvoke: vi.fn(),
+}));
 
 vi.mock("../infra/db", () => ({ connectDB: vi.fn() }));
+
 vi.mock("../models/index", () => ({
-  TestRun: { updateOne: vi.fn(), findById: vi.fn() },
-  TestAgent: { findById: vi.fn() },
+  TestRun: { updateOne: mockUpdateOne },
+  TestAgent: { findById: mockFindByIdTestAgent },
 }));
+
 vi.mock("./playground-agent", () => ({
-  createPlaygroundAgent: vi.fn(),
+  createPlaygroundAgent: (...args: unknown[]) => mockCreatePlaygroundAgent(...args),
   getTestAgentRecursionLimit: vi.fn(() => 100),
   decryptApiKey: vi.fn((key: string) => key),
 }));
 
-import { truncate, evaluateFacts } from "./test-runner";
+vi.mock("@langchain/openai", () => ({
+  ChatOpenAI: class MockChatOpenAI {
+    constructor() {}
+    invoke = mockLlmInvoke;
+  },
+}));
+
+import { truncate, evaluateFacts, processTestCase } from "./test-runner";
 
 describe("truncate", () => {
   it("returns string unchanged when shorter than max", () => {
@@ -107,5 +123,85 @@ describe("evaluateFacts", () => {
     const result = await evaluateFacts("response", ["f1"], llm);
     expect(result).toHaveLength(1);
     expect(result[0].passed).toBe(false);
+  });
+});
+
+describe("processTestCase", () => {
+  const agentDoc = createTestAgent({
+    semanticModels: ["hr", "shopify"],
+    encryptedApiKey: "key",
+    llmModel: "gpt-4o",
+    llmBaseUrl: "https://api.openai.com/v1",
+  });
+
+  function makeMockAgent(response = "Total revenue is 100") {
+    return {
+      stream: vi.fn(async function* () {
+        yield {
+          messages: [
+            {
+              _getType: () => "ai",
+              content: response,
+              tool_calls: undefined,
+            },
+          ],
+        };
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    mockUpdateOne.mockReset().mockResolvedValue({});
+    mockFindByIdTestAgent.mockReset();
+    mockCreatePlaygroundAgent.mockReset();
+    mockLlmInvoke.mockReset().mockResolvedValue({
+      content: JSON.stringify([{ fact: "Revenue is 100", passed: true, reasoning: "Match" }]),
+    });
+  });
+
+  it("passes semanticModelScope to createPlaygroundAgent", async () => {
+    const mockAgent = makeMockAgent();
+    mockCreatePlaygroundAgent.mockResolvedValue(mockAgent);
+    mockFindByIdTestAgent.mockReturnValue({ lean: () => Promise.resolve(agentDoc) });
+
+    await processTestCase(
+      "run-1", 0, "agent-1", "shopify",
+      "What is the revenue?", ["Revenue is 100"],
+    );
+
+    expect(mockCreatePlaygroundAgent).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({ semanticModelScope: "shopify" }),
+    );
+  });
+
+  it("passes maxToolCalls alongside semanticModelScope", async () => {
+    const mockAgent = makeMockAgent();
+    mockCreatePlaygroundAgent.mockResolvedValue(mockAgent);
+    mockFindByIdTestAgent.mockReturnValue({ lean: () => Promise.resolve(agentDoc) });
+
+    await processTestCase(
+      "run-1", 0, "agent-1", "shopify",
+      "What is the revenue?", ["Revenue is 100"], 5,
+    );
+
+    expect(mockCreatePlaygroundAgent).toHaveBeenCalledWith(
+      "agent-1",
+      { semanticModelScope: "shopify", maxToolCalls: 5 },
+    );
+  });
+
+  it("does not set semanticModelScope when semanticModel is empty", async () => {
+    const mockAgent = makeMockAgent();
+    mockCreatePlaygroundAgent.mockResolvedValue(mockAgent);
+    mockFindByIdTestAgent.mockReturnValue({ lean: () => Promise.resolve(agentDoc) });
+
+    await processTestCase(
+      "run-1", 0, "agent-1", "",
+      "What is the revenue?", ["Revenue is 100"],
+    );
+
+    const opts = mockCreatePlaygroundAgent.mock.calls[0][1];
+    expect(opts.semanticModelScope).toBeUndefined();
   });
 });
