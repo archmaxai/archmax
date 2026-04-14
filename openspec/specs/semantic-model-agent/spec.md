@@ -391,13 +391,13 @@ When the AI agent modifies a semantic model that is currently being visualized, 
 
 ### Requirement: Validated Query Generation
 
-After writing datasets and model-level entities (relationships, metrics), the semantic model agent SHALL generate validated queries for both individual datasets and the model as a whole. The agent SHALL follow this process:
+After writing datasets and model-level entities (relationships, metrics), the semantic model agent SHALL generate validated queries for both individual datasets and the model as a whole. All validated queries MUST use the DuckDB SQL dialect exclusively — PostgreSQL, MySQL, SQL Server, and any other dialect-specific syntax SHALL NOT be used, even when the underlying source database uses one of those engines. The agent SHALL follow this process:
 
-1. For each dataset, compose 2–5 SQL queries that demonstrate common access patterns: simple lookups, filtered aggregations, and usage of enum/time-dimension columns.
-2. For the model root, compose 2–5 SQL queries that demonstrate cross-dataset joins using declared relationships and metric expressions.
+1. For each dataset, compose 2–5 DuckDB SQL queries that demonstrate common access patterns: simple lookups, filtered aggregations, and usage of enum/time-dimension columns.
+2. For the model root, compose 2–5 DuckDB SQL queries that demonstrate cross-dataset joins using declared relationships and metric expressions.
 3. Execute each query via `executeQuery` to confirm it returns results without error.
 4. Store only queries that execute successfully as `validated_queries` entries within the COMMON custom extension on the respective dataset or model root file.
-5. Each entry SHALL have a `description` (plain-language summary of what the query answers) and `query` (the exact DuckDB SQL that was executed).
+5. Each entry SHALL have a `description` (plain-language summary of what the query answers) and `query` (the exact DuckDB SQL that was executed). The `query` value MUST contain only DuckDB-compatible SQL syntax.
 
 The agent SHALL skip query generation if the user explicitly opts out or if no connections are active for the project.
 
@@ -420,6 +420,12 @@ The agent SHALL skip query generation if the user explicitly opts out or if no c
 - **WHEN** a proposed validated query fails execution (syntax error, missing table, etc.)
 - **THEN** the agent does NOT include the failing query in validated_queries
 - **AND** the agent may attempt to fix and re-run the query once before discarding it
+
+#### Scenario: Validated queries use DuckDB SQL dialect only
+
+- **WHEN** the agent generates validated queries for a dataset or model connected to a PostgreSQL, MySQL, or other non-DuckDB source
+- **THEN** all queries use DuckDB SQL syntax exclusively (e.g. `strftime` instead of `TO_CHAR`, `UNNEST(from_json(...))` instead of `json_array_elements`)
+- **AND** no PostgreSQL-only, MySQL-only, or other dialect-specific functions or syntax appear in the stored `query` values
 
 #### Scenario: User opts out of query generation
 
