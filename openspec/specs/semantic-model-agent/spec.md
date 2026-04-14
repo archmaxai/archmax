@@ -391,13 +391,14 @@ When the AI agent modifies a semantic model that is currently being visualized, 
 
 ### Requirement: Validated Query Generation
 
-After writing datasets and model-level entities (relationships, metrics), the semantic model agent SHALL generate validated queries for both individual datasets and the model as a whole. All validated queries MUST use the DuckDB SQL dialect exclusively — PostgreSQL, MySQL, SQL Server, and any other dialect-specific syntax SHALL NOT be used, even when the underlying source database uses one of those engines. The agent SHALL follow this process:
+After writing datasets and model-level entities (relationships, metrics), the semantic model agent SHALL generate validated queries for both individual datasets and the model as a whole. All validated queries MUST use the DuckDB SQL dialect exclusively — PostgreSQL, MySQL, SQL Server, and any other dialect-specific syntax SHALL NOT be used, even when the underlying source database uses one of those engines. All validated queries MUST reference datasets by their logical dataset name (e.g. `FROM orders`), NOT by their fully-qualified source table path (e.g. `FROM shop_db.public.orders`), because downstream consumers query through scoped views that resolve dataset names automatically. Column references MUST use the field names defined in the semantic model. The agent SHALL follow this process:
 
 1. For each dataset, compose 2–5 DuckDB SQL queries that demonstrate common access patterns: simple lookups, filtered aggregations, and usage of enum/time-dimension columns.
 2. For the model root, compose 2–5 DuckDB SQL queries that demonstrate cross-dataset joins using declared relationships and metric expressions.
-3. Execute each query via `executeQuery` to confirm it returns results without error.
-4. Store only queries that execute successfully as `validated_queries` entries within the COMMON custom extension on the respective dataset or model root file.
-5. Each entry SHALL have a `description` (plain-language summary of what the query answers) and `query` (the exact DuckDB SQL that was executed). The `query` value MUST contain only DuckDB-compatible SQL syntax.
+3. Execute each query via `executeQuery` (using fully-qualified source paths for validation) to confirm it returns results without error.
+4. Rewrite each successful query to replace source table paths with dataset names before storing.
+5. Store only rewritten, successful queries as `validated_queries` entries within the COMMON custom extension on the respective dataset or model root file.
+6. Each entry SHALL have a `description` (plain-language summary of what the query answers) and `query` (the DuckDB SQL rewritten to use dataset names). The `query` value MUST contain only DuckDB-compatible SQL syntax and MUST NOT contain catalog or schema prefixes.
 
 The agent SHALL skip query generation if the user explicitly opts out or if no connections are active for the project.
 
@@ -426,6 +427,13 @@ The agent SHALL skip query generation if the user explicitly opts out or if no c
 - **WHEN** the agent generates validated queries for a dataset or model connected to a PostgreSQL, MySQL, or other non-DuckDB source
 - **THEN** all queries use DuckDB SQL syntax exclusively (e.g. `strftime` instead of `TO_CHAR`, `UNNEST(from_json(...))` instead of `json_array_elements`)
 - **AND** no PostgreSQL-only, MySQL-only, or other dialect-specific functions or syntax appear in the stored `query` values
+
+#### Scenario: Validated queries use dataset names not source table paths
+
+- **WHEN** the agent stores a validated query for a dataset with source `shop_db.public.orders` and name `orders`
+- **THEN** the stored `query` value references `FROM orders`, NOT `FROM shop_db.public.orders`
+- **AND** column references use the semantic model field names, not raw source column names
+- **AND** no catalog or schema prefixes appear in the stored query
 
 #### Scenario: User opts out of query generation
 
