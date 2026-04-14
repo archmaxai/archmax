@@ -11,7 +11,7 @@ services:
     environment:
       MONGODB_URI: mongodb://mongo:27017/archmax
       REDIS_URL: redis://redis:6379
-      CORS_ORIGINS: http://localhost:8080
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       UI_USERNAME: ${UI_USERNAME:-admin}
       UI_PASSWORD: ${UI_PASSWORD}

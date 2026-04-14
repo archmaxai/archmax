@@ -5,7 +5,7 @@ Management of database connections within projects and DuckDB-based federation f
 ## Requirements
 ### Requirement: Connection Model
 
-The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
+The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, iceberg), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. For iceberg connections, `connectionConfig` SHALL additionally accept: `endpoint` (string, required for iceberg — the REST Catalog URL, validated as a URL), `warehouse` (string, required for iceberg — warehouse identifier), `token` (string, required for iceberg — bearer token, sensitive), `authorizationType` (enum: `bearer`, `oauth2`, default `bearer`), `clientId` (string, optional — OAuth2 client ID, reserved for future use), `clientSecret` (string, optional — OAuth2 client secret, sensitive, reserved for future use), and `oauth2ServerUri` (string, optional — OAuth2 token endpoint, reserved for future use). The `endpoint` field SHALL be validated as a URL (scheme + host at minimum). The `token` and `clientSecret` fields SHALL receive the same encryption-at-rest, redaction, and credential-preservation treatment as the `password` field.
 
 #### Scenario: Create a postgres connection
 
@@ -34,7 +34,7 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 
 #### Scenario: Connection types
 
-- **WHEN** a connection is created with any supported type (postgres, mysql, mssql, sqlite, duckdb)
+- **WHEN** a connection is created with any supported type (postgres, mysql, mssql, sqlite, duckdb, iceberg)
 - **THEN** the connection is accepted and stored
 
 #### Scenario: Unknown connection config fields rejected
@@ -45,6 +45,23 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 #### Scenario: Schema field validated as identifier
 
 - **WHEN** a connection is created or updated with `connectionConfig.schema` set to a value that does not match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` (e.g., `"public; DROP TABLE"`)
+- **THEN** a 400 validation error is returned
+
+#### Scenario: Create an iceberg connection with bearer token
+
+- **WHEN** a connection is created with `type: "iceberg"`, `connectionConfig.endpoint: "https://catalog.example.com"`, `connectionConfig.warehouse: "my_warehouse"`, and `connectionConfig.token: "eyJ..."`
+- **THEN** a new Connection document is persisted
+- **AND** the `token` field is encrypted at rest (when `ENCRYPTION_KEY` is set)
+- **AND** the API response redacts `token` with `••••••••`
+
+#### Scenario: Iceberg connection requires endpoint, warehouse, and token
+
+- **WHEN** a connection is created with `type: "iceberg"` but `connectionConfig.endpoint`, `connectionConfig.warehouse`, or `connectionConfig.token` is missing
+- **THEN** a 400 validation error is returned
+
+#### Scenario: Iceberg endpoint validated as URL
+
+- **WHEN** a connection is created with `type: "iceberg"` and `connectionConfig.endpoint` set to a non-URL value (e.g., `"not a url"`)
 - **THEN** a 400 validation error is returned
 
 ### Requirement: Connection CRUD API
@@ -79,7 +96,7 @@ The API SHALL expose CRUD endpoints for connections at `/api/projects/:projectId
 
 ### Requirement: DuckDB Federation
 
-The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB. The MSSQL extension SHALL be installed from the DuckDB community extension registry (`INSTALL mssql FROM community`). The MSSQL attach string SHALL use ADO.NET format (`Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes|no`) when structured connection parameters are provided, or pass through the raw URI/connection string when `connectionConfig.uri` is set.
+The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB. The MSSQL extension SHALL be installed from the DuckDB community extension registry (`INSTALL mssql FROM community`). The MSSQL attach string SHALL use ADO.NET format (`Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes|no`) when structured connection parameters are provided, or pass through the raw URI/connection string when `connectionConfig.uri` is set. For iceberg connections, the system SHALL use a two-step attach process: (1) create a DuckDB secret with `TYPE iceberg` containing the bearer token (or OAuth2 credentials in future), and (2) attach the catalog with `TYPE iceberg, ENDPOINT, SECRET` options. The `iceberg` and `httpfs` extensions SHALL be installed and loaded before attaching iceberg connections. The Docker image SHALL pre-install the `iceberg` and `httpfs` extensions alongside the existing pre-installed extensions.
 
 #### Scenario: Attach a postgres connection
 
@@ -102,16 +119,41 @@ The system SHALL maintain a DuckDB instance per project that attaches all active
 - **WHEN** an MSSQL connection with `slug: "erp"` and `connectionConfig.uri: "mssql://reader:secret@sql.corp.com:1433/ERP?encrypt=true"` is activated
 - **THEN** the URI is passed through as-is to the ATTACH command
 
+#### Scenario: Attach an iceberg REST catalog with bearer token
+
+- **WHEN** an iceberg connection with `slug: "lake"`, `endpoint: "https://catalog.example.com"`, `warehouse: "analytics"`, and `token: "eyJ..."` is activated within a project
+- **THEN** the `iceberg` and `httpfs` extensions are installed and loaded
+- **AND** a DuckDB secret named `lake_secret` is created with `TYPE iceberg, TOKEN '<decrypted_token>'`
+- **AND** the catalog is attached using `ATTACH 'analytics' AS lake (TYPE iceberg, ENDPOINT 'https://catalog.example.com', SECRET 'lake_secret')`
+
 #### Scenario: Remove connection from DuckDB
 
 - **WHEN** a connection is soft-deleted or deactivated
 - **THEN** the corresponding schema is detached from the project's DuckDB instance using the connection's slug
+
+#### Scenario: Remove iceberg connection from DuckDB
+
+- **WHEN** an iceberg connection with `slug: "lake"` is soft-deleted or deactivated
+- **THEN** the catalog is detached from the project's DuckDB instance
+- **AND** the DuckDB secret `lake_secret` is dropped
 
 #### Scenario: Lazy initialization
 
 - **WHEN** the first query is made against a project's DuckDB instance
 - **THEN** the DuckDB instance is created and all active connections are attached
 - **AND** subsequent queries reuse the existing instance
+
+#### Scenario: Test iceberg connection
+
+- **WHEN** the Test Connection action is invoked for an iceberg connection
+- **THEN** a temporary DuckDB instance is created, the iceberg catalog is attached, and `SHOW ALL TABLES` is executed to verify connectivity
+- **AND** the temporary instance is disposed after the test
+
+#### Scenario: Query iceberg tables in federation
+
+- **WHEN** an iceberg connection with slug `lake` and a postgres connection with slug `pg` are both attached to the same project
+- **AND** a semantic model maps `shipments` to `lake.e2e_test.e2e_shipments` and `products` to `pg.public.e2e_products`
+- **THEN** a cross-catalog join query `SELECT p.name, s.destination FROM "products" p JOIN "shipments" s ON p.name = s.product_name` returns matching rows
 
 ### Requirement: Connection Slug Migration
 

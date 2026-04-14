@@ -140,3 +140,18 @@ export function shouldSyncMessages(
   }
   return true;
 }
+
+/**
+ * Determines whether streaming state should be reset on a conversation change.
+ * Returns `true` when navigating between conversations (abort + reset needed),
+ * `false` for creation-navigation (null → new ID that matches `createdConvId`).
+ */
+export function shouldResetStreamingState(
+  prevConversationId: string | null,
+  conversationId: string | null,
+  createdConvId: string | null,
+): boolean {
+  if (prevConversationId === conversationId) return false;
+  if (conversationId !== null && createdConvId === conversationId) return false;
+  return true;
+}

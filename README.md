@@ -210,6 +210,8 @@ Key environment variables (see `.env.example` for the full list):
 |----------|-------------|
 | `BETTER_AUTH_SECRET` | Session encryption secret (min 32 chars). Save and reuse across restarts. |
 | `UI_USERNAME` / `UI_PASSWORD` | Initial admin credentials (default username: `admin`) |
+| `APP_BASE_URL` | Public URL of this instance (e.g. `https://archmax.example.com`). Set when behind a reverse proxy to auto-configure CORS and auth. |
+| `ENCRYPTION_KEY` | Optional. Encrypts database connection passwords and API keys at rest (AES-256-GCM). Generate with `openssl rand -base64 32`. |
 | `MONGODB_URI` | MongoDB connection string (optional in Docker; embedded when omitted) |
 | `AGENT_API_BASE_URL` | OpenAI-compatible API endpoint (default: OpenRouter) |
 | `AGENT_API_KEY` | API key for the AI agent (required for agent features) |

@@ -28,9 +28,14 @@ Save your `BETTER_AUTH_SECRET` somewhere safe. If you lose it or change it, all 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `APP_BASE_URL` | - | Public URL of this instance (e.g. `https://archmax.example.com`). **Set this when running behind a reverse proxy.** Automatically configures CORS allowed origins and auth callback URL. |
 | `PORT` | `3000` | API server port |
-| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins |
-| `AUTH_BASE_URL` | `http://localhost:PORT` | Public URL for auth callbacks (set in production) |
+| `CORS_ORIGINS` | _(derived)_ | Comma-separated allowed origins. Defaults to `APP_BASE_URL` when set, otherwise `http://localhost:5173`. Override to allow additional origins. |
+| `AUTH_BASE_URL` | _(derived)_ | Public URL for auth callbacks. Defaults to `APP_BASE_URL` when set, otherwise `http://localhost:PORT`. |
+
+<Aside type="tip">
+For most deployments behind a reverse proxy or on a cloud host, setting `APP_BASE_URL` is all you need. It derives both `CORS_ORIGINS` and `AUTH_BASE_URL` automatically. You only need to set those individually for advanced configurations (e.g. allowing multiple origins or using an internal auth URL).
+</Aside>
 
 ## Admin Credentials
 
@@ -40,6 +45,16 @@ Save your `BETTER_AUTH_SECRET` somewhere safe. If you lose it or change it, all 
 | `UI_PASSWORD` | - | Initial admin password |
 
 Log in at `http://your-server:8080` with these credentials after deployment.
+
+## Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENCRYPTION_KEY` | - | Encrypts database connection passwords and API keys at rest using AES-256-GCM. Generate with `openssl rand -base64 32`. Without this, credentials are stored in plaintext. |
+
+<Aside type="caution">
+Save your `ENCRYPTION_KEY` and keep it consistent across restarts and upgrades. If you change or lose it, stored credentials become unreadable and you will need to re-enter all connection passwords and test agent API keys.
+</Aside>
 
 ## Data Directory
 
