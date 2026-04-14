@@ -600,11 +600,11 @@ test.describe.serial("MCP Layer", () => {
 
     const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
       storedQueryId,
-      params: ["Gadget B"],
+      params: ["Widget B"],
     });
     expect((rerunBody as any).result?.isError).toBeFalsy();
     const rerunText: string = (rerunBody as any).result?.content?.[0]?.text ?? "";
-    expect(rerunText).toContain("Gadget B");
+    expect(rerunText).toContain("Widget B");
     expect(rerunText).not.toContain("Widget A");
   });
 
