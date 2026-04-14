@@ -66,20 +66,6 @@ async function collectRows(instance: ProjectInstance, sql: string): Promise<{ co
   }
 }
 
-async function collectScalar(instance: ProjectInstance, sql: string): Promise<unknown> {
-  const db = await instance.connect();
-  try {
-    const result = await db.run(sql);
-    for await (const chunk of result) {
-      const rows = chunk.getRows();
-      if (rows.length > 0) return rows[0][0];
-    }
-    return undefined;
-  } finally {
-    db.disconnectSync();
-  }
-}
-
 async function getValidDatabases(instance: ProjectInstance): Promise<string[]> {
   const { rows } = await collectRows(instance, "SHOW DATABASES");
   return rows
@@ -145,25 +131,28 @@ const app = new Hono()
     const { page, pageSize } = c.req.valid("query");
 
     const instance = await getProjectDuckDB(projectId);
-    const validDatabases = await getValidDatabases(instance);
-    if (!validDatabases.includes(database)) {
-      throw AppError.notFound("Database not found");
-    }
-
-    const exists = await collectScalar(
-      instance,
-      `SELECT 1 FROM information_schema.tables WHERE table_catalog = '${database}' AND table_schema = '${schema}' AND table_name = '${table}' LIMIT 1`,
-    );
-    if (exists === undefined) {
-      throw AppError.notFound("Table not found");
-    }
 
     const fqTable = `${database}.${schema}.${table}`;
-    const total = Number(await collectScalar(instance, `SELECT COUNT(*) FROM ${fqTable}`) ?? 0);
-
     const offset = (page - 1) * pageSize;
+
     const db = await instance.connect();
     try {
+      const existsResult = await db.run(
+        `SELECT 1 FROM information_schema.tables WHERE table_catalog = '${database}' AND table_schema = '${schema}' AND table_name = '${table}' LIMIT 1`,
+      );
+      let exists = false;
+      for await (const chunk of existsResult) {
+        if (chunk.getRows().length > 0) exists = true;
+      }
+      if (!exists) throw AppError.notFound("Table not found");
+
+      const countResult = await db.run(`SELECT COUNT(*) FROM ${fqTable}`);
+      let total = 0;
+      for await (const chunk of countResult) {
+        const rows = chunk.getRows();
+        if (rows.length > 0) total = Number(rows[0][0] ?? 0);
+      }
+
       const dataResult = await db.run(`SELECT * FROM ${fqTable} LIMIT ${pageSize} OFFSET ${offset}`);
       const columnNames = dataResult.columnNames();
       const columnTypes = dataResult.columnTypes().map((t) => t.toString());

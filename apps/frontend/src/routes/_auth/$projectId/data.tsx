@@ -76,6 +76,7 @@ function DataBrowserPage() {
       if (!res.ok) throw new Error("Failed to fetch databases");
       return res.json() as Promise<DatabaseEntry[]>;
     },
+    staleTime: 0,
   });
 
   function handleSelectTable(database: string, schema: string, table: string) {
@@ -175,6 +176,7 @@ function DatabaseNode({
       return res.json() as Promise<TableEntry[]>;
     },
     enabled: open,
+    staleTime: 0,
   });
 
   return (
@@ -270,6 +272,7 @@ function TableDataView({
       if (!res.ok) throw new Error("Failed to fetch table data");
       return res.json() as Promise<TableDataResponse>;
     },
+    staleTime: 0,
   });
 
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
@@ -285,7 +288,7 @@ function TableDataView({
           <div className="flex items-center justify-center py-16">
             <p className="text-destructive text-sm">Failed to load table data</p>
           </div>
-        ) : data && data.rows.length === 0 ? (
+        ) : data && data.rows.length === 0 && data.total === 0 ? (
           <div className="flex items-center justify-center py-16">
             <p className="text-subtle text-sm">Table is empty</p>
           </div>
