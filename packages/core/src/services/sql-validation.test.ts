@@ -65,6 +65,38 @@ describe("validateReadOnlySQL", () => {
   it("allows leading whitespace", () => {
     expect(validateReadOnlySQL("  SELECT 1")).toBeNull();
   });
+
+  it("allows single-line comment before SELECT", () => {
+    expect(
+      validateReadOnlySQL("-- this is a comment\nSELECT * FROM t"),
+    ).toBeNull();
+  });
+
+  it("allows multiple single-line comments before SELECT", () => {
+    expect(
+      validateReadOnlySQL(
+        "-- comment 1\n-- comment 2\nSELECT * FROM t",
+      ),
+    ).toBeNull();
+  });
+
+  it("allows block comment before SELECT", () => {
+    expect(
+      validateReadOnlySQL("/* block comment */ SELECT * FROM t"),
+    ).toBeNull();
+  });
+
+  it("allows multi-line block comment before SELECT", () => {
+    expect(
+      validateReadOnlySQL("/* line1\n   line2 */\nSELECT * FROM t"),
+    ).toBeNull();
+  });
+
+  it("rejects write query hidden behind a comment", () => {
+    expect(
+      validateReadOnlySQL("-- harmless\nDROP TABLE t"),
+    ).not.toBeNull();
+  });
 });
 
 describe("validateScopedSQL", () => {
