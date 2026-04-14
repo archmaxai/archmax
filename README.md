@@ -10,10 +10,6 @@ A semantic layer for your data: archmax describes it, you sharpen it, AI agents 
 
 > **Heads up: archmax is experimental.** The core ideas are stable, but APIs, file formats, and configuration may change between releases. We try to avoid breaking changes, but can't guarantee stability yet. Pin your version and check the changelog before upgrading.
 
-Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax uses OSI YAML as its internal storage format for semantic model definitions — every dataset, field, relationship, and metric is persisted as spec-compliant YAML files on disk.
-
-Because the OSI YAML format is verbose and token-intensive, archmax **does not serve raw YAML to AI agents**. Instead, when an agent requests model information through MCP tools, the OSI model is converted on-the-fly into a **compressed markdown digest** that preserves all semantically relevant information (field types, descriptions, enums, relationships, examples) while using **3–5× fewer tokens** than the equivalent YAML. This makes agent interactions significantly cheaper and faster without sacrificing context quality.
-
 <table>
 <tr>
 <td width="33%"><img src="docs/images/screenshot-graph-view.png" alt="Semantic model graph view" /></td>
@@ -53,17 +49,21 @@ Instead of raw database access, agents get:
 
 - **Business context**: field descriptions, synonyms, examples, and enum values so the agent knows `amt_01` is "gross revenue in EUR"
 - **Guardrails**: read-only queries scoped to sandboxed VIEWs, not raw tables; token-based access with model-level permissions
-- **Federation**: a single query interface across Postgres, MySQL, MSSQL, SQLite, and DuckDB, powered by DuckDB's in-process engine
+- **Federation**: a single query interface across Postgres, MySQL, MSSQL, SQLite, DuckDB, and Iceberg REST Catalogs, powered by DuckDB's in-process engine
 - **Structure**: typed datasets, explicit relationships, and reusable metric definitions stored as [OSI](https://github.com/open-semantic-interchange/OSI) YAML
 - **Token efficiency**: OSI models are converted to compressed markdown digests before being sent to agents, reducing token usage by 3–5× compared to raw YAML
 
-The result: AI agents that query your data reliably, safely, and with understanding, not guesswork.
+The result: AI agents that query your data reliably, safely, and with understanding, not guesswork. The approach is conceptually similar to [Snowflake Semantic Views](https://docs.snowflake.com/en/user-guide/views-semantic/overview): Both layer business meaning (metrics, dimensions, relationships) over physical tables so consumers get consistent definitions instead of raw column names. The key difference is that archmax is database-agnostic (federating across Postgres, MySQL, MSSQL, SQLite, DuckDB, and Iceberg REST Catalogs).
+
+Built on the **[Open Semantic Interchange (OSI)](https://github.com/open-semantic-interchange/OSI)** spec, an open standard for describing datasets, relationships, and metrics in a vendor-neutral way. archmax uses OSI YAML as its internal storage format for semantic model definitions — every dataset, field, relationship, and metric is persisted as spec-compliant YAML files on disk.
+
+Because the OSI YAML format is verbose and token-intensive, archmax **does not serve raw YAML to AI agents**. Instead, when an agent requests model information through MCP tools, the OSI model is converted on-the-fly into a **compressed markdown digest** that preserves all semantically relevant information (field types, descriptions, enums, relationships, examples) while using **3–5× fewer tokens** than the equivalent YAML. This makes agent interactions significantly cheaper and faster without sacrificing context quality.
 
 ## Features
 
 - **Semantic Models**: describe tables as datasets with typed fields, relationships, and metrics in YAML
 - **MCP Server**: expose your semantic layer to any MCP-compatible AI agent (Claude, Cursor, custom agents)
-- **Data Federation**: query across Postgres, MySQL, MSSQL, SQLite, and DuckDB from a single project
+- **Data Federation**: query across Postgres, MySQL, MSSQL, SQLite, DuckDB, and Iceberg REST Catalogs from a single project
 - **AI-Assisted Model Builder**: a chat-based agent discovers schemas, maps fields, detects enums, and infers relationships
 - **Scoped Query Execution**: agents run read-only SQL against sandboxed VIEWs, never raw tables
 - **Token-Based Access Control**: MCP tokens with configurable model scopes and expiry
@@ -160,6 +160,7 @@ pnpm dev
 archmax/
 ├── apps/
 │   ├── api/          # Hono API server
+│   ├── e2e/          # Playwright end-to-end tests
 │   ├── frontend/     # Vite + React SPA (TanStack Router)
 │   ├── worker/       # BullMQ worker for agent jobs
 │   └── docs/         # Documentation site (Astro Starlight)
@@ -169,7 +170,7 @@ archmax/
 └── openspec/         # Specifications and change proposals
 ```
 
-**Tech stack:** TypeScript, Hono, React 19, Vite 6, MongoDB, DuckDB, Tailwind CSS 4, Turborepo
+**Tech stack:** TypeScript, Hono, React 19, Vite 6, MongoDB, DuckDB, Tailwind CSS 4, Turborepo, Playwright
 
 ## MCP Tools
 

@@ -36,7 +36,8 @@ export function makeExecuteQueryTool(projectId: string) {
       const db = await instance.connect();
 
       try {
-        await hardenConnection(db);
+        const hasIceberg = connections.some((c) => c.type === "iceberg");
+        await hardenConnection(db, undefined, { allowExternalAccess: hasIceberg });
         const prepared = await db.prepare(sql);
         if (params.length > 0) {
           for (let i = 0; i < params.length; i++) {

@@ -195,7 +195,8 @@ export async function executeScopedQuery(
 
   const db = await instance.connect();
   try {
-    await hardenConnection(db, scopeSchemaName(modelName));
+    const hasIceberg = connections.some((c) => c.type === "iceberg");
+    await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
 
     const prepared = await db.prepare(sql);
     if (params.length > 0) {

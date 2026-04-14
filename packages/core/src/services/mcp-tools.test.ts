@@ -229,7 +229,7 @@ describe("executeScopedQuery", () => {
 
     await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", "SELECT * FROM orders");
 
-    expect(mockHardenConnection).toHaveBeenCalledWith(mockDb, "_scope_ecommerce");
+    expect(mockHardenConnection).toHaveBeenCalledWith(mockDb, "_scope_ecommerce", { allowExternalAccess: false });
   });
 
   it("returns binder error with bare dataset name hints", async () => {
