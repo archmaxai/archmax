@@ -8,8 +8,12 @@ import {
   getSemanticModelOverview,
   getDatasetFields,
   executeScopedQuery,
+  storeQuery,
+  executeStoredQuery,
   EXECUTE_QUERY_DESCRIPTION,
+  EXECUTE_STORED_QUERY_DESCRIPTION,
   type ToolResult,
+  type ExecuteQueryResult,
 } from "@archmax/core/services/mcp-tools";
 
 export interface McpAuthContext {
@@ -37,6 +41,22 @@ type McpResult = { content: { type: "text"; text: string }[]; isError?: true };
 
 function toMcpResult(r: ToolResult): McpResult {
   return r.isError ? errorResult(r.text) : textResult(r.text);
+}
+
+function logAndReturnQueryResult(
+  ctx: McpToolContext,
+  toolName: string,
+  args: Record<string, unknown>,
+  r: ExecuteQueryResult,
+  start: number,
+): McpResult {
+  if (r.rowCount !== undefined) args.rowCount = r.rowCount;
+  const result = r.isError ? errorResult(r.text) : textResult(r.text);
+  const logResult = r.isError
+    ? result
+    : textResult(`${r.rowCount ?? 0} rows, ${r.columns?.length ?? 0} columns`);
+  logCall(ctx, toolName, args, logResult, Date.now() - start);
+  return result;
 }
 
 function logCall(
@@ -130,21 +150,43 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       sql: z.string().describe("DuckDB SQL query using dataset names as table names, with $1, $2, ... placeholders"),
       params: z.array(z.string()).optional().default([])
         .describe("Parameter values for positional placeholders"),
+      store: z.boolean().optional().default(true)
+        .describe("When true (default), the query is stored and a storedQueryId is returned for later re-execution via execute_stored_query"),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ modelName, sql, params }) => {
+  }, async ({ modelName, sql, params, store }) => {
     const start = Date.now();
-    const args: Record<string, unknown> = { modelName, sql, rowCount: 0 };
+    const args: Record<string, unknown> = { modelName, sql };
     const r = await executeScopedQuery(fileSvc, projectId, scopes, modelName, sql, params);
-    if (r.rowCount !== undefined) args.rowCount = r.rowCount;
-    const result = r.isError
-      ? errorResult(r.text)
-      : textResult(r.text);
-    const logResult = r.isError
-      ? result
-      : textResult(`${r.rowCount ?? 0} rows, ${r.columns?.length ?? 0} columns`);
-    logCall(ctx, "execute_query", args, logResult, Date.now() - start);
-    return result;
+
+    if (!r.isError && store) {
+      try {
+        const storedQueryId = await storeQuery(projectId, ctx.tokenId, modelName, sql, params);
+        const parsed = JSON.parse(r.text);
+        parsed.storedQueryId = storedQueryId;
+        r.text = JSON.stringify(parsed);
+        r.storedQueryId = storedQueryId;
+      } catch (err) {
+        console.error("[MCP] Failed to store query:", err);
+      }
+    }
+
+    return logAndReturnQueryResult(ctx, "execute_query", args, r, start);
+  });
+
+  server.registerTool("execute_stored_query", {
+    description: EXECUTE_STORED_QUERY_DESCRIPTION,
+    inputSchema: z.object({
+      storedQueryId: z.string().describe("The stored query ID returned by a previous execute_query call"),
+      params: z.array(z.string()).optional()
+        .describe("Override parameter values; if omitted, the original stored params are used"),
+    }),
+    annotations: { readOnlyHint: true },
+  }, async ({ storedQueryId, params }) => {
+    const start = Date.now();
+    const args: Record<string, unknown> = { storedQueryId };
+    const r = await executeStoredQuery(fileSvc, projectId, scopes, storedQueryId, params);
+    return logAndReturnQueryResult(ctx, "execute_stored_query", args, r, start);
   });
 
   server.registerTool("request_improvement", {

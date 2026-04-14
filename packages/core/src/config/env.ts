@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 
 const envSchema = z.object({
   NODE_ENV: z.string().optional(),
+  APP_VERSION: z.string().optional().default("dev"),
 
   MONGODB_URI: z.string().optional(),
 

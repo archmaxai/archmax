@@ -7,6 +7,9 @@ export default defineConfig({
   integrations: [
     starlight({
       plugins: [starlightImageZoom()],
+      components: {
+        SiteTitle: "./src/components/SiteTitle.astro",
+      },
       title: "archmax",
       logo: {
         light: "./src/assets/logo-light.svg",

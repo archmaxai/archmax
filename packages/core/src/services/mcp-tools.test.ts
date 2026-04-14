@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../infra/db", () => ({ connectDB: vi.fn() }));
+
+const mockStoredQueryCreate = vi.fn();
+const mockStoredQueryFindOne = vi.fn();
 vi.mock("../models/index", () => ({
   Connection: { find: vi.fn(() => ({ lean: vi.fn(() => []) })) },
+  StoredQuery: {
+    create: (...args: unknown[]) => mockStoredQueryCreate(...args),
+    findOne: (...args: unknown[]) => mockStoredQueryFindOne(...args),
+  },
 }));
 
 const mockHardenConnection = vi.fn();
@@ -29,7 +36,10 @@ import {
   getSemanticModelOverview,
   getDatasetFields,
   executeScopedQuery,
+  storeQuery,
+  executeStoredQuery,
   EXECUTE_QUERY_DESCRIPTION,
+  EXECUTE_STORED_QUERY_DESCRIPTION,
 } from "./mcp-tools";
 import type { SemanticModelFileService } from "./semantic-model-files";
 import type { SemanticModel } from "./semantic-model-schema";
@@ -188,6 +198,18 @@ describe("EXECUTE_QUERY_DESCRIPTION", () => {
     expect(EXECUTE_QUERY_DESCRIPTION).toContain("json_array_elements");
     expect(EXECUTE_QUERY_DESCRIPTION).toContain("PostgreSQL-only");
   });
+
+  it("mentions storedQueryId and execute_stored_query", () => {
+    expect(EXECUTE_QUERY_DESCRIPTION).toContain("storedQueryId");
+    expect(EXECUTE_QUERY_DESCRIPTION).toContain("execute_stored_query");
+  });
+});
+
+describe("EXECUTE_STORED_QUERY_DESCRIPTION", () => {
+  it("explains that storedQueryId comes from execute_query", () => {
+    expect(EXECUTE_STORED_QUERY_DESCRIPTION).toContain("execute_query");
+    expect(EXECUTE_STORED_QUERY_DESCRIPTION).toContain("storedQueryId");
+  });
 });
 
 describe("executeScopedQuery", () => {
@@ -278,5 +300,149 @@ describe("executeScopedQuery", () => {
     expect(result.isError).toBe(true);
     expect(result.text).toContain("HINT");
     expect(result.text).toContain("orders: id");
+  });
+});
+
+describe("storeQuery", () => {
+  beforeEach(() => {
+    mockStoredQueryCreate.mockReset();
+  });
+
+  it("persists query and returns the document ID", async () => {
+    mockStoredQueryCreate.mockResolvedValue({ _id: { toString: () => "abc123" } });
+
+    const id = await storeQuery("proj1", "token1", "ecommerce", "SELECT 1", ["a"]);
+
+    expect(id).toBe("abc123");
+    expect(mockStoredQueryCreate).toHaveBeenCalledWith({
+      project: "proj1",
+      tokenId: "token1",
+      modelName: "ecommerce",
+      sql: "SELECT 1",
+      params: ["a"],
+    });
+  });
+
+  it("accepts null tokenId", async () => {
+    mockStoredQueryCreate.mockResolvedValue({ _id: { toString: () => "def456" } });
+
+    const id = await storeQuery("proj1", null, "model", "SELECT 2", []);
+
+    expect(id).toBe("def456");
+    expect(mockStoredQueryCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenId: null }),
+    );
+  });
+});
+
+describe("executeStoredQuery", () => {
+  beforeEach(() => {
+    mockStoredQueryFindOne.mockReset();
+    mockHardenConnection.mockReset();
+    mockGetProjectInstance.mockReset();
+    mockCreateScopedViews.mockReset();
+  });
+
+  it("returns not found when stored query does not exist", async () => {
+    mockStoredQueryFindOne.mockReturnValue({ lean: () => Promise.resolve(null) });
+    const fileSvc = createMockFileSvc([]);
+
+    const result = await executeStoredQuery(fileSvc, "proj1", ["ecommerce"], "nonexistent");
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Stored query not found");
+    expect(result.text).toContain("execute_query");
+  });
+
+  it("returns not found for malformed storedQueryId (CastError)", async () => {
+    mockStoredQueryFindOne.mockReturnValue({
+      lean: () => Promise.reject(new Error("Cast to ObjectId failed")),
+    });
+    const fileSvc = createMockFileSvc([]);
+
+    const result = await executeStoredQuery(fileSvc, "proj1", ["ecommerce"], "not-an-objectid");
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Stored query not found");
+    expect(result.text).toContain("execute_query");
+    expect(result.text).not.toContain("Cast");
+  });
+
+  it("returns not found when stored query belongs to a different project", async () => {
+    mockStoredQueryFindOne.mockReturnValue({ lean: () => Promise.resolve(null) });
+    const fileSvc = createMockFileSvc([]);
+
+    const result = await executeStoredQuery(fileSvc, "proj2", ["ecommerce"], "some-id");
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Stored query not found");
+    expect(result.text).toContain("execute_query");
+    expect(mockStoredQueryFindOne).toHaveBeenCalledWith({ _id: "some-id", project: "proj2" });
+  });
+
+  it("returns access denied when model is out of scope", async () => {
+    mockStoredQueryFindOne.mockReturnValue({
+      lean: () => Promise.resolve({ modelName: "secret", sql: "SELECT 1", params: [] }),
+    });
+    const fileSvc = createMockFileSvc([]);
+
+    const result = await executeStoredQuery(fileSvc, "proj1", ["ecommerce"], "sq-id");
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Access denied");
+  });
+
+  it("delegates to executeScopedQuery with stored SQL and params", async () => {
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id", "total"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    mockStoredQueryFindOne.mockReturnValue({
+      lean: () => Promise.resolve({ modelName: "ecommerce", sql: "SELECT * FROM orders WHERE id = $1", params: ["42"] }),
+    });
+
+    const mockBindVarchar = vi.fn();
+    const mockDb = {
+      prepare: vi.fn().mockResolvedValue({
+        bindVarchar: mockBindVarchar,
+        run: vi.fn().mockResolvedValue({
+          columnNames: () => ["id", "total"],
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
+        }),
+      }),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    const result = await executeStoredQuery(fileSvc, "proj1", ["ecommerce"], "sq-id");
+
+    expect(result.isError).toBeUndefined();
+    expect(mockDb.prepare).toHaveBeenCalledWith("SELECT * FROM orders WHERE id = $1");
+    expect(mockBindVarchar).toHaveBeenCalledWith(1, "42");
+  });
+
+  it("uses overridden params when provided", async () => {
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id", "status"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    mockStoredQueryFindOne.mockReturnValue({
+      lean: () => Promise.resolve({ modelName: "ecommerce", sql: "SELECT * FROM orders WHERE status = $1", params: ["old"] }),
+    });
+
+    const mockBindVarchar = vi.fn();
+    const mockDb = {
+      prepare: vi.fn().mockResolvedValue({
+        bindVarchar: mockBindVarchar,
+        run: vi.fn().mockResolvedValue({
+          columnNames: () => ["id", "status"],
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
+        }),
+      }),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    await executeStoredQuery(fileSvc, "proj1", ["ecommerce"], "sq-id", ["new-value"]);
+
+    expect(mockBindVarchar).toHaveBeenCalledWith(1, "new-value");
   });
 });

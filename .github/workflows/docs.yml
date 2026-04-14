@@ -19,6 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest version tag
+        id: version
+        run: |
+          TAG=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v4
 
@@ -31,6 +39,8 @@ jobs:
 
       - name: Build docs
         run: pnpm --filter @archmax/docs build
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
 
       - uses: actions/upload-pages-artifact@v4
         with:

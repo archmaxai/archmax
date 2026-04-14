@@ -95,5 +95,6 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}
+          build-args: APP_VERSION=${{ needs.release.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -33,6 +33,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/${{ github.repository }}:pr-${{ github.event.pull_request.number }}
+          build-args: APP_VERSION=pr-${{ github.event.pull_request.number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
