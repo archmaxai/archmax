@@ -15,9 +15,10 @@ import {
   ChevronDown,
   ChevronUp,
   FlaskConical,
-  MessageCircle,
   Wand2,
   Square,
+  Wrench,
+  Timer,
 } from "lucide-react";
 import {
   Badge,
@@ -84,40 +85,6 @@ interface TestRunDetail {
 }
 
 const PAGE_SIZE = 25;
-
-function buildFixPrompt(tc: CaseResult): string {
-  const failedFacts = tc.factResults
-    .filter((fr) => !fr.passed)
-    .map((fr) => `- "${fr.fact}" — ${fr.reasoning}`)
-    .join("\n");
-
-  const passedFacts = tc.factResults
-    .filter((fr) => fr.passed)
-    .map((fr) => `- "${fr.fact}"`)
-    .join("\n");
-
-  let prompt = `A test case against the semantic model "${tc.semanticModel}" failed.\n\n`;
-  prompt += `**Question asked:** ${tc.inputMessage}\n\n`;
-
-  if (failedFacts) {
-    prompt += `**Failed expected facts:**\n${failedFacts}\n\n`;
-  }
-  if (passedFacts) {
-    prompt += `**Passed expected facts:**\n${passedFacts}\n\n`;
-  }
-  if (tc.errorMessage) {
-    prompt += `**Error:** ${tc.errorMessage}\n\n`;
-  }
-  if (tc.agentResponse) {
-    const truncated = tc.agentResponse.length > 500
-      ? tc.agentResponse.slice(0, 500) + "..."
-      : tc.agentResponse;
-    prompt += `**Agent response:** ${truncated}\n\n`;
-  }
-
-  prompt += "Please investigate the semantic model and fix it so this test case passes.";
-  return prompt;
-}
 
 function buildRefinePrompt(tc: CaseResult): string {
   let prompt = `A test case against the semantic model "${tc.semanticModel}" had execution issues.\n\n`;
@@ -342,9 +309,16 @@ function TestRunDetailPage() {
                       </div>
                       <p className="text-sm text-muted-foreground mt-0.5 truncate">{tc.inputMessage}</p>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                      {tc.toolCalls.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground tabular-nums">
+                          <Wrench className="h-3 w-3" />
+                          {tc.toolCalls.length}
+                        </span>
+                      )}
                       {tc.durationMs > 0 && (
-                        <span className="text-xs text-muted-foreground tabular-nums">
+                        <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground tabular-nums">
+                          <Timer className="h-3 w-3" />
                           {(tc.durationMs / 1000).toFixed(1)}s
                         </span>
                       )}
@@ -472,24 +446,6 @@ function TestRunDetailPage() {
                             <Wand2 className="h-3.5 w-3.5" />
                             Refine
                           </Button>
-                          {(tc.status === "failed" || tc.status === "error") && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="gap-1.5"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigate({
-                                  to: "/$projectId/models/chat/$conversationId",
-                                  params: { projectId: project._id, conversationId: "new" },
-                                  search: { prefill: buildFixPrompt(tc) },
-                                });
-                              }}
-                            >
-                              <MessageCircle className="h-3.5 w-3.5" />
-                              Fix in Chat
-                            </Button>
-                          )}
                         </div>
                       )}
                     </div>

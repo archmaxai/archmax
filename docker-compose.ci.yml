@@ -11,8 +11,7 @@ services:
     environment:
       MONGODB_URI: mongodb://mongo:27017/archmax-e2e
       REDIS_URL: redis://redis:6379
-      CORS_ORIGINS: http://localhost:8080
-      AUTH_BASE_URL: http://localhost:8080
+      APP_BASE_URL: http://localhost:8080
       BETTER_AUTH_SECRET: e2e-test-secret-32chars-xxxxxxxxx
       ENCRYPTION_KEY: e2e-test-encrypt-key-32chars-xxxx
       UI_USERNAME: ${UI_USERNAME:-admin}

@@ -40,6 +40,10 @@ docker compose up -d
 
 Open `http://localhost:8080` and log in with the username and password you configured (`UI_USERNAME` / `UI_PASSWORD`). The default username is `admin`.
 
+<Aside type="note">
+If you're deploying behind a reverse proxy or on a cloud host with a custom domain, add `APP_BASE_URL=https://your-domain.com` to your `.env` file. Without it, authentication will fail with an "invalid origin" error. See the [Configuration](/reference/configuration/) reference for details.
+</Aside>
+
 <Aside type="tip">
 The Compose stack runs MongoDB and Redis as separate containers alongside archmax. Two Docker volumes persist data across restarts:
 

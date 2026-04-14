@@ -391,13 +391,14 @@ When the AI agent modifies a semantic model that is currently being visualized, 
 
 ### Requirement: Validated Query Generation
 
-After writing datasets and model-level entities (relationships, metrics), the semantic model agent SHALL generate validated queries for both individual datasets and the model as a whole. The agent SHALL follow this process:
+After writing datasets and model-level entities (relationships, metrics), the semantic model agent SHALL generate validated queries for both individual datasets and the model as a whole. All validated queries MUST use the DuckDB SQL dialect exclusively — PostgreSQL, MySQL, SQL Server, and any other dialect-specific syntax SHALL NOT be used, even when the underlying source database uses one of those engines. All validated queries MUST reference datasets by their logical dataset name (e.g. `FROM orders`), NOT by their fully-qualified source table path (e.g. `FROM shop_db.public.orders`), because downstream consumers query through scoped views that resolve dataset names automatically. Column references MUST use the field names defined in the semantic model. The agent SHALL follow this process:
 
-1. For each dataset, compose 2–5 SQL queries that demonstrate common access patterns: simple lookups, filtered aggregations, and usage of enum/time-dimension columns.
-2. For the model root, compose 2–5 SQL queries that demonstrate cross-dataset joins using declared relationships and metric expressions.
-3. Execute each query via `executeQuery` to confirm it returns results without error.
-4. Store only queries that execute successfully as `validated_queries` entries within the COMMON custom extension on the respective dataset or model root file.
-5. Each entry SHALL have a `description` (plain-language summary of what the query answers) and `query` (the exact DuckDB SQL that was executed).
+1. For each dataset, compose 2–5 DuckDB SQL queries that demonstrate common access patterns: simple lookups, filtered aggregations, and usage of enum/time-dimension columns.
+2. For the model root, compose 2–5 DuckDB SQL queries that demonstrate cross-dataset joins using declared relationships and metric expressions.
+3. Execute each query via `executeQuery` (using fully-qualified source paths for validation) to confirm it returns results without error.
+4. Rewrite each successful query to replace source table paths with dataset names before storing.
+5. Store only rewritten, successful queries as `validated_queries` entries within the COMMON custom extension on the respective dataset or model root file.
+6. Each entry SHALL have a `description` (plain-language summary of what the query answers) and `query` (the DuckDB SQL rewritten to use dataset names). The `query` value MUST contain only DuckDB-compatible SQL syntax and MUST NOT contain catalog or schema prefixes.
 
 The agent SHALL skip query generation if the user explicitly opts out or if no connections are active for the project.
 
@@ -420,6 +421,19 @@ The agent SHALL skip query generation if the user explicitly opts out or if no c
 - **WHEN** a proposed validated query fails execution (syntax error, missing table, etc.)
 - **THEN** the agent does NOT include the failing query in validated_queries
 - **AND** the agent may attempt to fix and re-run the query once before discarding it
+
+#### Scenario: Validated queries use DuckDB SQL dialect only
+
+- **WHEN** the agent generates validated queries for a dataset or model connected to a PostgreSQL, MySQL, or other non-DuckDB source
+- **THEN** all queries use DuckDB SQL syntax exclusively (e.g. `strftime` instead of `TO_CHAR`, `UNNEST(from_json(...))` instead of `json_array_elements`)
+- **AND** no PostgreSQL-only, MySQL-only, or other dialect-specific functions or syntax appear in the stored `query` values
+
+#### Scenario: Validated queries use dataset names not source table paths
+
+- **WHEN** the agent stores a validated query for a dataset with source `shop_db.public.orders` and name `orders`
+- **THEN** the stored `query` value references `FROM orders`, NOT `FROM shop_db.public.orders`
+- **AND** column references use the semantic model field names, not raw source column names
+- **AND** no catalog or schema prefixes appear in the stored query
 
 #### Scenario: User opts out of query generation
 
@@ -622,4 +636,40 @@ The deep agent SHALL have access to a `delete_test_case` tool that soft-deletes 
 - **WHEN** the agent invokes `delete_test_case` with a `testCaseId` that does not exist or belongs to a different project
 - **THEN** the tool returns an error indicating the test case was not found
 - **AND** no test case is deleted
+
+### Requirement: Conversation-Scoped Streaming State
+
+The chat interface SHALL scope all streaming state (input disabled, stop button, abort controller) to the active conversation. When the user navigates to a different conversation or creates a new chat while a stream is in progress, the new conversation's input SHALL be immediately usable — enabled with the send button visible — regardless of whether the previous conversation's stream is still running in the background. The system SHALL abort any client-side SSE subscription for the previous conversation on navigation and clean up the associated `AbortController`.
+
+#### Scenario: Navigate to new chat while streaming
+
+- **WHEN** the user is viewing a conversation that is actively streaming
+- **AND** the user navigates to a new chat (conversation ID "new")
+- **THEN** the new chat's text input is enabled and accepts user input
+- **AND** the send button is visible (not the stop button)
+- **AND** the client-side SSE subscription for the previous conversation is aborted
+
+#### Scenario: Switch between existing conversations while streaming
+
+- **WHEN** the user is viewing a conversation that is actively streaming
+- **AND** the user clicks a different conversation in the sidebar
+- **THEN** the selected conversation loads with its persisted messages
+- **AND** the text input reflects the new conversation's streaming state (enabled if not streaming, disabled with stop button if that conversation is also streaming)
+- **AND** the client-side SSE subscription for the previous conversation is aborted
+
+#### Scenario: Return to a still-streaming conversation
+
+- **WHEN** the user navigated away from a streaming conversation
+- **AND** the backend agent is still processing (conversation `isStreaming` is true server-side)
+- **AND** the user navigates back to that conversation
+- **THEN** the chat re-subscribes to the SSE stream for that conversation
+- **AND** the input is disabled with the stop button visible
+- **AND** new tokens are appended to the assistant message
+
+#### Scenario: Multiple conversations streaming concurrently
+
+- **WHEN** the user starts a stream in conversation A, navigates to conversation B, and sends a message there
+- **THEN** both conversations process independently on the backend
+- **AND** the UI shows streaming state only for the currently viewed conversation
+- **AND** the sidebar shows animated streaming indicators for both conversations
 

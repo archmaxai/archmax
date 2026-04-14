@@ -8,7 +8,9 @@ const envSchema = z.object({
 
   PORT: z.string().optional().default("3000"),
 
-  CORS_ORIGINS: z.string().optional().default("http://localhost:5173"),
+  APP_BASE_URL: z.string().optional(),
+
+  CORS_ORIGINS: z.string().optional(),
 
   ARCHMAX_DATA_DIR: z.string().optional().default("data"),
 
@@ -46,6 +48,8 @@ const ENV_HINTS: Record<string, string> = {
     "Required (min 32 chars). Generate with: openssl rand -base64 32",
   UI_PASSWORD:
     "Required (min 8 chars). The password used to log in to the admin UI.",
+  APP_BASE_URL:
+    "Public URL of this instance (e.g. https://archmax.example.com). Set this when running behind a reverse proxy to avoid CORS/auth origin errors.",
 };
 
 function formatEnvErrors(error: z.core.$ZodError): string[] {
@@ -101,13 +105,37 @@ function sleepForever(): Promise<never> {
 }
 
 function buildParsedEnv(raw: RawEnv): ParsedEnv {
+  const corsValue =
+    raw.CORS_ORIGINS || raw.APP_BASE_URL || "http://localhost:5173";
+
   return {
     ...raw,
-    corsOrigins: raw.CORS_ORIGINS.split(",")
+    AUTH_BASE_URL: raw.AUTH_BASE_URL || raw.APP_BASE_URL,
+    corsOrigins: corsValue
+      .split(",")
       .map((o) => o.trim())
       .filter(Boolean),
     projectsDir: join(raw.ARCHMAX_DATA_DIR, "projects"),
   };
+}
+
+function warnMissingBaseUrl(parsed: ParsedEnv): void {
+  if (parsed.NODE_ENV === "production" && !parsed.APP_BASE_URL) {
+    const yellow = "\x1b[33m";
+    const bold = "\x1b[1m";
+    const dim = "\x1b[2m";
+    const reset = "\x1b[0m";
+    console.error(
+      `${yellow}${bold}  WARNING:${reset}${yellow} APP_BASE_URL is not set.${reset}`,
+    );
+    console.error(
+      `${dim}  Set APP_BASE_URL to the public URL of this instance (e.g. https://archmax.example.com)${reset}`,
+    );
+    console.error(
+      `${dim}  to avoid authentication and CORS errors behind a reverse proxy.${reset}`,
+    );
+    console.error("");
+  }
 }
 
 export async function validateEnvOrSleep(): Promise<ParsedEnv> {
@@ -117,6 +145,7 @@ export async function validateEnvOrSleep(): Promise<ParsedEnv> {
     return sleepForever();
   }
   _env = buildParsedEnv(result.data);
+  warnMissingBaseUrl(_env);
   return _env;
 }
 

@@ -1,11 +1,16 @@
 const ALLOWED_FIRST_KEYWORD = /^\s*(SELECT|WITH|EXPLAIN|DESCRIBE|SHOW|PRAGMA)\b/i;
 const SEMICOLON_FOLLOWED_BY_STATEMENT = /;\s*\S/;
 
+/** Strip leading single-line (`--`) and block SQL comments. */
+function stripLeadingComments(sql: string): string {
+  return sql.replace(/^(\s*(--[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*/, "");
+}
+
 export function validateReadOnlySQL(sql: string): string | null {
   if (SEMICOLON_FOLLOWED_BY_STATEMENT.test(sql)) {
     return "Multiple statements are not allowed.";
   }
-  if (!ALLOWED_FIRST_KEYWORD.test(sql)) {
+  if (!ALLOWED_FIRST_KEYWORD.test(stripLeadingComments(sql))) {
     return "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed.";
   }
   return null;

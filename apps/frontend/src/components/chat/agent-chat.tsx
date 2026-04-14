@@ -13,6 +13,7 @@ import {
   updateToolCall,
   normalizeMessage,
   shouldSyncMessages,
+  shouldResetStreamingState,
   type ChatMessage,
   type ContentSegment,
   type ToolCallInfo,
@@ -129,6 +130,7 @@ export function AgentChat({
   const prevConvIdRef = useRef(conversationId);
   const isStreamingRef = useRef(false);
   const activeConvIdRef = useRef(conversationId);
+  const createdConvIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     isStreamingRef.current = isStreaming;
@@ -141,6 +143,19 @@ export function AgentChat({
   useEffect(() => {
     const prev = prevConvIdRef.current;
     prevConvIdRef.current = conversationId;
+
+    if (prev !== conversationId) {
+      if (shouldResetStreamingState(prev, conversationId, createdConvIdRef.current)) {
+        abortRef.current?.abort();
+        abortRef.current = null;
+        setIsStreaming(false);
+        isStreamingRef.current = false;
+        setUploadedFiles([]);
+        setInput("");
+      } else {
+        createdConvIdRef.current = null;
+      }
+    }
 
     if (shouldSyncMessages(prev, conversationId, isStreamingRef.current)) {
       setMessages(initialMessages.map(normalizeMessage));
@@ -365,6 +380,7 @@ export function AgentChat({
   ) {
     if (event === "conversation" && parsed.conversationId) {
       activeConvIdRef.current = parsed.conversationId as string;
+      createdConvIdRef.current = parsed.conversationId as string;
       onConversationCreated(parsed.conversationId as string);
     } else if (event === "token" && typeof parsed.content === "string") {
       updateLastAssistant((m) => ({

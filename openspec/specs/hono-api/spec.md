@@ -63,11 +63,18 @@ Each individual probe SHALL time out within 2 seconds. All probes SHALL run conc
 
 ### Requirement: CORS Configuration
 
-The API SHALL apply CORS middleware to all `/api/*` routes, allowing origins defined in the `CORS_ORIGINS` environment variable.
+The API SHALL apply CORS middleware to all `/api/*` routes, allowing origins defined in the `CORS_ORIGINS` environment variable. When `CORS_ORIGINS` is not explicitly set but `APP_BASE_URL` is, the CORS allowed origins SHALL default to the `APP_BASE_URL` value.
 
 #### Scenario: CORS allows configured origin
 
 - **WHEN** a request arrives from an origin listed in `CORS_ORIGINS`
+- **THEN** appropriate CORS headers are returned
+
+#### Scenario: CORS derives from APP_BASE_URL
+
+- **WHEN** `CORS_ORIGINS` is not explicitly set
+- **AND** `APP_BASE_URL` is set to `https://archmax.example.com`
+- **AND** a request arrives from `https://archmax.example.com`
 - **THEN** appropriate CORS headers are returned
 
 ### Requirement: Cache Control
@@ -151,6 +158,8 @@ The error output SHALL use ANSI color formatting (red, bold, dim) for terminal r
 
 The sleep behavior ensures Docker containers do not crash-loop, giving operators time to inspect logs and correct the configuration.
 
+When `NODE_ENV` is `production` and `APP_BASE_URL` is not set, the process SHALL print a warning (not an error) to stderr advising the operator to set `APP_BASE_URL` to avoid authentication and CORS issues behind reverse proxies. This warning SHALL NOT prevent startup.
+
 #### Scenario: API server started without BETTER_AUTH_SECRET
 
 - **WHEN** the API server starts without `BETTER_AUTH_SECRET` set
@@ -180,4 +189,10 @@ The sleep behavior ensures Docker containers do not crash-loop, giving operators
 
 - **WHEN** all required environment variables pass Zod validation
 - **THEN** the server starts normally and prints the startup banner
+
+#### Scenario: Production without APP_BASE_URL
+
+- **WHEN** the API server starts with `NODE_ENV=production` and no `APP_BASE_URL`
+- **THEN** a warning is printed to stderr advising the operator to set `APP_BASE_URL`
+- **AND** the server starts normally
 

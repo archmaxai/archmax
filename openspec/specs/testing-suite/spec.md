@@ -466,15 +466,7 @@ A "Cancel Run" button SHALL be displayed in the page header next to the status b
 
 The `cancelled` run status SHALL be rendered as a grey/neutral badge with text "Cancelled". Individual cases with `cancelled` status SHALL display a ban/slash icon in neutral grey.
 
-When a test case has `failed` or `error` status, the expanded detail view SHALL display a "Fix in Chat" button. Clicking the button SHALL navigate the user to `/$projectId/models/chat/new` with a `prefill` search parameter containing a structured correction prompt. The prompt SHALL include:
-- The semantic model name the test targeted
-- The original input message (the question that was asked)
-- The expected facts, indicating which passed and which failed along with the judge's reasoning
-- A summary of the agent's actual response
-
-The button SHALL use a secondary/outline visual style with a message-circle icon to indicate it opens a chat session. The button SHALL appear within the expanded case card, below the tabs section.
-
-Additionally, a "Refine" button SHALL appear for all completed test cases (passed, failed, or error). The "Refine" button SHALL navigate to the same chat route with a different prefill prompt focused on model efficiency: improving ai_context descriptions, simplifying naming, adding missing relationships, or reorganizing structure so the agent can answer with fewer tool calls. The "Refine" button SHALL use a wand icon.
+A "Refine" button SHALL appear for all completed test cases (passed, failed, or error). The "Refine" button SHALL navigate to `/$projectId/models/chat/new` with a `prefill` search parameter containing a prompt focused on model efficiency: improving ai_context descriptions, simplifying naming, adding missing relationships, or reorganizing structure so the agent can answer with fewer tool calls. The "Refine" button SHALL use a wand icon and an outline visual style. The button SHALL appear within the expanded case card, below the tabs section.
 
 #### Scenario: View completed run detail
 
@@ -521,14 +513,6 @@ Additionally, a "Refine" button SHALL appear for all completed test cases (passe
 - **WHEN** the user clicks the back link on the detail page
 - **THEN** the browser navigates to `/$projectId/testing/runs`
 
-#### Scenario: Fix failing test case via chat
-
-- **WHEN** a test case has status `failed` or `error`
-- **AND** the user expands the case result card
-- **THEN** a "Fix in Chat" button is displayed below the tabs section
-- **AND** clicking the button navigates to `/$projectId/models/chat/new?prefill=<prompt>`
-- **AND** the prefill prompt includes the semantic model name, input message, failed expected facts with reasoning, and the agent's response summary
-
 #### Scenario: Refine model via chat for any completed case
 
 - **WHEN** a test case has status `passed`, `failed`, or `error`
@@ -537,13 +521,8 @@ Additionally, a "Refine" button SHALL appear for all completed test cases (passe
 - **AND** clicking the button navigates to `/$projectId/models/chat/new?prefill=<prompt>`
 - **AND** the prefill prompt focuses on improving the semantic model's navigability: ai_context, naming, relationships, and structure to reduce tool calls
 
-#### Scenario: Fix button only shown for failing test cases
-
-- **WHEN** a test case has status `failed` or `error`
-- **THEN** a "Fix in Chat" button is displayed alongside the "Refine" button
-
 #### Scenario: No action buttons for pending, running, or cancelled cases
 
 - **WHEN** a test case has status `pending`, `running`, or `cancelled`
-- **THEN** no "Fix in Chat" or "Refine" buttons are displayed in the expanded detail view
+- **THEN** no "Refine" button is displayed in the expanded detail view
 

@@ -52,9 +52,14 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `APP_BASE_URL` | - | Public URL of this instance (e.g. `https://archmax.example.com`). **Set this when running behind a reverse proxy or on a cloud host.** Automatically configures CORS and auth origins. |
 | `PORT` | `3000` | Internal API server port. Normally not changed; nginx proxies port 8080 to this. |
-| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins. In Docker, the SPA is served by nginx on the same origin, so this is typically not needed. |
-| `AUTH_BASE_URL` | `http://localhost:3000` | Public URL for auth callbacks. Set to your external URL in production (e.g. `https://archmax.example.com`). |
+| `CORS_ORIGINS` | _(derived)_ | Comma-separated allowed origins. Defaults to `APP_BASE_URL` when set. Override only if you need additional origins. |
+| `AUTH_BASE_URL` | _(derived)_ | Auth callback URL. Defaults to `APP_BASE_URL` when set, otherwise `http://localhost:PORT`. |
+
+<Aside type="caution">
+If you access archmax through a reverse proxy, load balancer, or custom domain, you **must** set `APP_BASE_URL` to the public URL (e.g. `https://archmax.example.com`). Without it, authentication will fail with an "invalid origin" error because the server defaults to localhost origins.
+</Aside>
 
 ### Admin Credentials
 
@@ -102,13 +107,18 @@ Supported providers: [OpenRouter](https://openrouter.ai) (default), OpenAI, Azur
 |----------|---------|-------------|
 | `TEST_AGENT_MAX_ITERATIONS` | `100` | Max tool call iterations for playground and batch test agents. |
 
+### Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENCRYPTION_KEY` | - | Encrypts database connection passwords and API keys at rest (AES-256-GCM). Generate with `openssl rand -base64 32`. |
+
 ### GitHub Integration (Optional)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GITHUB_CLIENT_ID` | - | GitHub OAuth app client ID. |
 | `GITHUB_CLIENT_SECRET` | - | GitHub OAuth app client secret. |
-| `ENCRYPTION_KEY` | - | Encryption key for OAuth token storage. |
 
 ## Volumes
 
@@ -233,6 +243,23 @@ docker run -d \
   --name archmax \
   -p 8080:8080 \
   -e MONGODB_URI=mongodb://mongo.example.com:27017/archmax \
+  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e UI_USERNAME=admin \
+  -e UI_PASSWORD=changeme \
+  -e AGENT_API_KEY=your-api-key \
+  -v ~/.archmax:/data \
+  ghcr.io/archmaxai/archmax:latest
+```
+
+### Behind a Reverse Proxy
+
+When archmax is accessible through a custom domain or reverse proxy, set `APP_BASE_URL` to the public URL:
+
+```bash
+docker run -d \
+  --name archmax \
+  -p 8080:8080 \
+  -e APP_BASE_URL=https://archmax.example.com \
   -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
   -e UI_USERNAME=admin \
   -e UI_PASSWORD=changeme \

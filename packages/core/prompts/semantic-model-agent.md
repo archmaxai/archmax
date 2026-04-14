@@ -349,6 +349,18 @@ A dataset may belong to at most one group. Datasets not in any group are rendere
 
 After writing the YAML files, generate **validated queries** — pre-tested SQL queries that demonstrate how to use the model. These are stored in the COMMON custom extension under `validated_queries` and serve as a cookbook for downstream AI agents.
 
+**All validated queries MUST use DuckDB SQL dialect exclusively.** Do NOT use PostgreSQL, MySQL, SQL Server, or any other dialect — even if the underlying source database uses one of those. The queries are executed by DuckDB, so they must use DuckDB-native syntax. Common mistakes to avoid:
+- `json_array_elements()` → use `UNNEST(from_json(col, '["JSON"]'))` instead (DuckDB)
+- `NOW()` → use `current_timestamp` or `now()` (DuckDB supports both)
+- `::type` casting → use `CAST(x AS type)` or DuckDB's `::` (both work in DuckDB, but avoid PostgreSQL-only types like `SERIAL`)
+- `ILIKE` → supported in DuckDB, safe to use
+- `STRING_AGG()` → use `string_agg()` or `list()` / `list_agg()` (DuckDB)
+- `EXTRACT(EPOCH FROM ...)` → use `epoch(...)` (DuckDB)
+- `INTERVAL '1 day'` → DuckDB supports this, safe to use
+- `DATE_TRUNC('month', col)` → supported in DuckDB, safe to use
+- `TO_CHAR()` → use `strftime()` instead (DuckDB)
+- `ARRAY_AGG()` → use `list()` (DuckDB)
+
 **For each dataset** (2–5 queries):
 - Simple lookups or counts (e.g. row count, count by status)
 - Filtered aggregations using enum or time-dimension columns
@@ -360,7 +372,7 @@ After writing the YAML files, generate **validated queries** — pre-tested SQL 
 - Use the fully-qualified source paths for all tables
 
 **Process:**
-1. Compose the query
+1. Compose the query using DuckDB SQL syntax only
 2. Run it via `executeQuery` to confirm it executes without error
 3. If a query fails, fix and retry once — discard it if it still fails
 4. Write only successful queries into the COMMON extension
@@ -495,7 +507,7 @@ Store these inside `custom_extensions` with `vendor_name: COMMON` as a JSON stri
 | `data_type` | DuckDB type: VARCHAR, INTEGER, BIGINT, DOUBLE, DECIMAL(p,s), BOOLEAN, DATE, TIMESTAMP, TIMESTAMP WITH TIME ZONE, etc. |
 | `example_data` | 1–3 representative sample values cast to strings |
 | `distinct_values` | Complete list of distinct values for enum/status/categorical columns (<=25 distinct) |
-| `validated_queries` | (Datasets & models only) Array of `{ description, query }` objects — pre-tested DuckDB SQL with a natural-language description of what the query answers |
+| `validated_queries` | (Datasets & models only) Array of `{ description, query }` objects — pre-tested **DuckDB SQL** (never PostgreSQL/MySQL syntax) with a natural-language description of what the query answers |
 | `graph_x` | (Dataset-level only) Integer x-coordinate for the dataset node in the visual graph editor |
 | `graph_y` | (Dataset-level only) Integer y-coordinate for the dataset node in the visual graph editor |
 
@@ -688,7 +700,7 @@ dataset:
 
 ## Important Rules
 
-1. **Always use DuckDB SQL syntax** — expressions are executed by DuckDB, not the source database.
+1. **Always use DuckDB SQL syntax** — all expressions and validated queries are executed by DuckDB, not the source database. Never use PostgreSQL-only functions (e.g. `json_array_elements`, `TO_CHAR`, `ARRAY_AGG`) or MySQL-only functions. Use DuckDB equivalents instead.
 2. **Always qualify table references in metrics** — use `dataset_name.column_name`, not bare column names.
 3. **Always populate `data_type`** — query `information_schema.columns` for every field, store in COMMON extension.
 4. **Always populate `example_data`** — sample real values so consumers understand the data format, store in COMMON extension. Anonymize any PII before writing.
@@ -698,7 +710,7 @@ dataset:
 8. **Sort everything by importance** — within each array (fields, metrics, relationships, datasets), place the most important items first. This ordering is the primary signal downstream consumers use to prioritize what to show or query.
 9. **Use OSI Expression format** — all expressions must be `{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`.
 10. **Mark temporal fields** — all DATE/TIMESTAMP fields must have `dimension: { is_time: true }`.
-11. **Generate validated queries** — after writing YAML, compose 2–5 queries per dataset and per model, execute each via `executeQuery`, and store only successful ones in the COMMON extension under `validated_queries`.
+11. **Generate validated queries in DuckDB SQL only** — after writing YAML, compose 2–5 DuckDB SQL queries per dataset and per model, execute each via `executeQuery`, and store only successful ones in the COMMON extension under `validated_queries`. Never use PostgreSQL, MySQL, or other dialect syntax.
 12. **Always set graph positions** — every dataset must have `graph_x` and `graph_y` in a dataset-level COMMON extension. Cluster connected datasets together and lay them out to minimize edge crossings.
 13. **Always create dataset groups for models with 4+ datasets** — write a `dataset_groups` array into the model root's COMMON extension. Group by star-schema topology, naming prefix, or business domain. Assign distinct colors from the palette.
 14. **Field expressions must be scalar** — every field `expression` must be a **scalar expression over the source table's own columns**. The expression is placed into a simple `SELECT <expr> FROM <source>` view — there is no `UNNEST`, `LATERAL`, CTE, or subquery context available. Referencing aliases that don't exist as columns in the source table (e.g. `elem` from an unnest) will cause a "column not found" error at runtime. If a column contains a JSON array that needs unnesting, expose the raw column as-is and add `ai_context.instructions` explaining the structure so querying agents can unnest it at query time. You may use scalar JSON functions on the column itself (e.g. `json_array_length(col)`, `json_extract_string(col, '$[0].field')`) but never assume an unnested element alias.

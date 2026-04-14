@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseSSEChunk } from "../../lib/sse";
 import {
   shouldSyncMessages,
+  shouldResetStreamingState,
   appendToken,
   appendToolCallStart,
   updateToolCall,
@@ -135,6 +136,87 @@ describe("shouldSyncMessages", () => {
 
   it("syncs when going to new while streaming (stop + new chat)", () => {
     expect(shouldSyncMessages("abc", null, true)).toBe(true);
+  });
+});
+
+describe("shouldResetStreamingState", () => {
+  it("resets when navigating from streaming conv to new chat", () => {
+    expect(shouldResetStreamingState("abc", null, null)).toBe(true);
+  });
+
+  it("resets when switching between existing conversations", () => {
+    expect(shouldResetStreamingState("abc", "def", null)).toBe(true);
+  });
+
+  it("resets when navigating from new chat to existing conv (user click)", () => {
+    expect(shouldResetStreamingState(null, "abc", null)).toBe(true);
+  });
+
+  it("does not reset during creation-navigation (null → id matching createdConvId)", () => {
+    expect(shouldResetStreamingState(null, "abc", "abc")).toBe(false);
+  });
+
+  it("resets when navigating to a different conv than the created one", () => {
+    expect(shouldResetStreamingState(null, "def", "abc")).toBe(true);
+  });
+
+  it("does not reset when conversationId has not changed", () => {
+    expect(shouldResetStreamingState("abc", "abc", null)).toBe(false);
+  });
+
+  it("does not reset when both are null (no change)", () => {
+    expect(shouldResetStreamingState(null, null, null)).toBe(false);
+  });
+});
+
+describe("conversation switch streaming isolation (combined helpers)", () => {
+  it("streaming conv → new chat: resets streaming, syncs messages", () => {
+    const prev = "abc";
+    const next = null;
+    const createdConvId = null;
+    const isStreaming = true;
+
+    const shouldReset = shouldResetStreamingState(prev, next, createdConvId);
+    expect(shouldReset).toBe(true);
+
+    const streamingAfterReset = false;
+    expect(shouldSyncMessages(prev, next, streamingAfterReset)).toBe(true);
+  });
+
+  it("streaming conv → other existing conv: resets streaming, syncs messages", () => {
+    const prev = "abc";
+    const next = "def";
+    const createdConvId = null;
+
+    expect(shouldResetStreamingState(prev, next, createdConvId)).toBe(true);
+    expect(shouldSyncMessages(prev, next, false)).toBe(true);
+  });
+
+  it("new chat (streaming) → existing conv via sidebar: resets streaming, syncs messages", () => {
+    const prev = null;
+    const next = "def";
+    const createdConvId = null;
+
+    expect(shouldResetStreamingState(prev, next, createdConvId)).toBe(true);
+    expect(shouldSyncMessages(prev, next, false)).toBe(true);
+  });
+
+  it("creation-navigation: keeps streaming, skips message sync", () => {
+    const prev = null;
+    const next = "new-conv-id";
+    const createdConvId = "new-conv-id";
+
+    expect(shouldResetStreamingState(prev, next, createdConvId)).toBe(false);
+    expect(shouldSyncMessages(prev, next, true)).toBe(false);
+  });
+
+  it("return to still-streaming conv: syncs messages (subscribe effect handles reconnect)", () => {
+    const prev = "other";
+    const next = "still-streaming";
+    const createdConvId = null;
+
+    expect(shouldResetStreamingState(prev, next, createdConvId)).toBe(true);
+    expect(shouldSyncMessages(prev, next, false)).toBe(true);
   });
 });
 
