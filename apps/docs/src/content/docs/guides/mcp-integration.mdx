@@ -41,7 +41,8 @@ Tokens are created in the admin UI under **MCP Access**. Each token has:
 | `list_semantic_models` | List semantic models the token has access to |
 | `get_semantic_model` | Get an overview of a model with datasets, relationships, and metrics |
 | `get_datasets` | Get fields for one or more datasets with types, examples, enums, and instructions |
-| `execute_query` | Run a read-only SQL query scoped to a semantic model's VIEWs |
+| `execute_query` | Run a read-only SQL query scoped to a semantic model's VIEWs. Returns a `storedQueryId` by default. |
+| `execute_stored_query` | Re-execute a previously stored query by ID, optionally with different parameters |
 | `request_improvement` | Submit an improvement request for a semantic model |
 
 ## Query Execution

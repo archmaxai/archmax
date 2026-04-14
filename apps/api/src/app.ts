@@ -71,6 +71,9 @@ const app = new Hono()
     if (!session) return c.json({ error: "Unauthorized" }, 401);
     await next();
   })
+  .get("/api/version", (c) => {
+    return c.json({ version: getEnv().APP_VERSION });
+  })
   .route("/api/projects", projects)
   .route("/api/projects/:projectId/connections", connections)
   .route("/api/projects/:projectId/conversations", conversations)

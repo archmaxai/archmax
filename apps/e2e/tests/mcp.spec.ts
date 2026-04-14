@@ -543,6 +543,81 @@ test.describe.serial("MCP Layer", () => {
     expect(text).toContain("New York");
   });
 
+  test("execute_query returns storedQueryId when store is true", async ({ request }) => {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+      modelName: MODEL_NAME,
+      sql: `SELECT * FROM "products" WHERE name = $1 ORDER BY id LIMIT 5`,
+      params: ["Widget A"],
+      store: true,
+    });
+    expect((body as any).result?.isError).toBeFalsy();
+    const text: string = (body as any).result?.content?.[0]?.text ?? "";
+    const parsed = JSON.parse(text);
+    expect(parsed.storedQueryId).toBeTruthy();
+    expect(typeof parsed.storedQueryId).toBe("string");
+  });
+
+  test("execute_query omits storedQueryId when store is false", async ({ request }) => {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+      modelName: MODEL_NAME,
+      sql: `SELECT * FROM "products" ORDER BY id LIMIT 1`,
+      store: false,
+    });
+    expect((body as any).result?.isError).toBeFalsy();
+    const text: string = (body as any).result?.content?.[0]?.text ?? "";
+    const parsed = JSON.parse(text);
+    expect(parsed.storedQueryId).toBeUndefined();
+  });
+
+  test("execute_stored_query re-runs a stored query", async ({ request }) => {
+    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+      modelName: MODEL_NAME,
+      sql: `SELECT * FROM "products" WHERE name = $1 ORDER BY id LIMIT 5`,
+      params: ["Widget A"],
+      store: true,
+    });
+    const storeText: string = (storeBody as any).result?.content?.[0]?.text ?? "";
+    const { storedQueryId } = JSON.parse(storeText);
+    expect(storedQueryId).toBeTruthy();
+
+    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+      storedQueryId,
+    });
+    expect((rerunBody as any).result?.isError).toBeFalsy();
+    const rerunText: string = (rerunBody as any).result?.content?.[0]?.text ?? "";
+    expect(rerunText).toContain("Widget A");
+  });
+
+  test("execute_stored_query with overridden params", async ({ request }) => {
+    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+      modelName: MODEL_NAME,
+      sql: `SELECT name FROM "products" WHERE name = $1 LIMIT 5`,
+      params: ["Widget A"],
+      store: true,
+    });
+    const storeText: string = (storeBody as any).result?.content?.[0]?.text ?? "";
+    const { storedQueryId } = JSON.parse(storeText);
+
+    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+      storedQueryId,
+      params: ["Widget B"],
+    });
+    expect((rerunBody as any).result?.isError).toBeFalsy();
+    const rerunText: string = (rerunBody as any).result?.content?.[0]?.text ?? "";
+    expect(rerunText).toContain("Widget B");
+    expect(rerunText).not.toContain("Widget A");
+  });
+
+  test("execute_stored_query with invalid ID returns error", async ({ request }) => {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+      storedQueryId: "000000000000000000000000",
+    });
+    const result = (body as any).result;
+    expect(result?.isError).toBe(true);
+    const text: string = result?.content?.[0]?.text ?? "";
+    expect(text).toContain("Stored query not found");
+  });
+
   test("request_improvement succeeds", async ({ request }) => {
     const body = await mcpToolCall(request, projectSlug, mcpSessionId, "request_improvement", {
       modelName: MODEL_NAME,

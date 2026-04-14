@@ -59,8 +59,9 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 | `modelName` | string | Yes | The semantic model to query against |
 | `sql` | string | Yes | DuckDB SQL using bare dataset names (e.g. `FROM "orders"`), with `$1`, `$2`, ... placeholders |
 | `params` | string[] | No | Parameter values for positional placeholders (defaults to `[]`) |
+| `store` | boolean | No | When `true` (default), the query is stored and a `storedQueryId` is included in the response for later re-execution via `execute_stored_query` |
 
-**Returns:** JSON with `columns` and `rows`. Results capped at 1,000 rows (includes `truncated: true` flag when exceeded). 30-second timeout.
+**Returns:** JSON with `columns`, `rows`, and optionally `storedQueryId` (when `store` is `true`). Results capped at 1,000 rows (includes `truncated: true` flag when exceeded). 30-second timeout.
 
 ### Validation Rules
 
@@ -76,6 +77,21 @@ Each query runs in a DuckDB connection with:
 - `enable_external_access = false`: no file reads, network access, or COPY operations
 - `threads = 2`, `memory_limit = '512MB'`: resource limits
 - `search_path` set to the model's scoped schema so bare dataset names resolve to the correct VIEWs
+
+---
+
+## execute_stored_query
+
+Re-execute a previously stored query by its ID. The `storedQueryId` is returned by `execute_query` when `store` is `true` (the default). Optionally override the original parameter values.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `storedQueryId` | string | Yes | The stored query ID returned by a previous `execute_query` call |
+| `params` | string[] | No | Override parameter values; if omitted, the original stored params are used |
+
+**Returns:** JSON with `columns` and `rows` in the same format as `execute_query`. Same result limits (1,000 rows) and timeout (30s) apply.
 
 ---
 

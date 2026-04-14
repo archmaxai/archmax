@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   Database,
   Sparkles,
@@ -68,6 +69,15 @@ export function AppSidebar({
   onToggle: () => void;
 }) {
   const { pathname } = useLocation();
+  const { data: versionData } = useQuery({
+    queryKey: ["app-version"],
+    queryFn: async () => {
+      const res = await fetch("/api/version");
+      if (!res.ok) return { version: null };
+      return res.json() as Promise<{ version: string }>;
+    },
+    staleTime: Infinity,
+  });
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     () => new Set(["Data Federation"]),
   );
@@ -104,9 +114,16 @@ export function AppSidebar({
       >
         <div className="flex h-14 items-center justify-between px-3">
           {!collapsed && (
-            <span className="text-lg font-semibold tracking-tight pl-1">
-              archmax
-            </span>
+            <div className="flex items-center gap-1.5 pl-1">
+              <span className="text-lg font-semibold tracking-tight">
+                archmax
+              </span>
+              {versionData?.version && (
+                <span className="text-[10px] leading-none rounded-full px-1.5 py-0.5 bg-foreground/[0.08] text-sidebar-foreground/50 font-medium">
+                  v{versionData.version}
+                </span>
+              )}
+            </div>
           )}
           <button
             onClick={onToggle}

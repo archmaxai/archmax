@@ -91,6 +91,16 @@
 .title-wrapper {
   margin-inline-start: -0.5rem !important;
 }
+.version-badge {
+  font-size: 0.625rem;
+  line-height: 1;
+  font-weight: 500;
+  padding: 0.15rem 0.4rem;
+  border-radius: 9999px;
+  background-color: var(--sl-color-gray-5);
+  color: var(--sl-color-gray-2);
+  letter-spacing: 0;
+}
 
 /* ─── Search Input ─── */
 

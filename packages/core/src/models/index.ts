@@ -8,3 +8,4 @@ export * from "./TestAgent";
 export * from "./TestCase";
 export * from "./TestRun";
 export * from "./Improvement";
+export * from "./StoredQuery";

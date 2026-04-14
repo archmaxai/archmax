@@ -66,8 +66,10 @@ RUN pnpm --filter @archmax/frontend exec vite build
 
 # ---------- production ----------
 FROM base AS production
+ARG APP_VERSION=dev
 WORKDIR /app
 ENV NODE_ENV=production
+ENV APP_VERSION=$APP_VERSION
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends nginx redis-server gosu gnupg curl ca-certificates \

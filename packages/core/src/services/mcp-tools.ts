@@ -1,5 +1,5 @@
 import { connectDB } from "../infra/db";
-import { Connection, type IConnectionDocument } from "../models/index";
+import { Connection, StoredQuery, type IConnectionDocument } from "../models/index";
 import { SemanticModelFileService } from "./semantic-model-files";
 import { SemanticModelDigest, buildSourceMap, type OverviewScope } from "./semantic-model-digest";
 import type { Dataset } from "./semantic-model-schema";
@@ -36,12 +36,23 @@ export const EXECUTE_QUERY_DESCRIPTION = [
   "Use $1, $2, ... placeholders and provide values in the params array.",
   `Results are limited to ${MAX_ROWS} rows with a ${QUERY_TIMEOUT_MS / 1000}-second timeout.`,
   "",
+  "When store is true (the default), the response includes a storedQueryId.",
+  "Pass this ID to execute_stored_query to re-run the same query later, optionally with different params.",
+  "",
   "DuckDB JSON cheat-sheet (PostgreSQL equivalents DO NOT exist here):",
   "- Unnest a JSON array column: UNNEST(from_json(col, '[\"JSON\"]')) AS t(elem)",
   "- Extract a string from JSON: json_extract_string(obj, '$.key')",
   "- Extract nested value: json_extract(obj, '$.path.to.value')",
   "- Array length: json_array_length(col)",
   "- DO NOT use: json_array_elements, jsonb_each, jsonb_array_elements, row_to_json, array_agg(DISTINCT ...) — these are PostgreSQL-only.",
+].join("\n");
+
+export const EXECUTE_STORED_QUERY_DESCRIPTION = [
+  "Re-execute a previously stored query by its ID.",
+  "The storedQueryId is returned by execute_query when store is true (the default).",
+  "Optionally override the original parameter values by providing a new params array.",
+  "If params is omitted, the stored parameters are used.",
+  `Results follow the same format, limits (${MAX_ROWS} rows), and timeout (${QUERY_TIMEOUT_MS / 1000}s) as execute_query.`,
 ].join("\n");
 
 export async function listSemanticModels(
@@ -154,6 +165,52 @@ export interface ExecuteQueryResult extends ToolResult {
   rows?: Record<string, unknown>[];
   rowCount?: number;
   truncated?: boolean;
+  storedQueryId?: string;
+}
+
+export async function storeQuery(
+  projectId: string,
+  tokenId: string | null,
+  modelName: string,
+  sql: string,
+  params: string[],
+): Promise<string> {
+  await connectDB();
+  const doc = await StoredQuery.create({
+    project: projectId,
+    tokenId,
+    modelName,
+    sql,
+    params,
+  });
+  return doc._id.toString();
+}
+
+export async function executeStoredQuery(
+  fileSvc: SemanticModelFileService,
+  projectId: string,
+  scopes: string[],
+  storedQueryId: string,
+  paramsOverride?: string[],
+): Promise<ExecuteQueryResult> {
+  await connectDB();
+  const STORED_QUERY_NOT_FOUND =
+    "Stored query not found. The ID may be invalid or from an older session. " +
+    "Re-run the query with execute_query to get a new storedQueryId.";
+  let stored;
+  try {
+    stored = await StoredQuery.findOne({ _id: storedQueryId, project: projectId }).lean();
+  } catch {
+    return { text: STORED_QUERY_NOT_FOUND, isError: true };
+  }
+  if (!stored) {
+    return { text: STORED_QUERY_NOT_FOUND, isError: true };
+  }
+  if (!scopes.includes(stored.modelName)) {
+    return { text: `Access denied: token does not have access to model "${stored.modelName}"`, isError: true };
+  }
+  const params = paramsOverride ?? stored.params;
+  return executeScopedQuery(fileSvc, projectId, scopes, stored.modelName, stored.sql, params);
 }
 
 export async function executeScopedQuery(
