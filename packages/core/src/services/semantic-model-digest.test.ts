@@ -3,6 +3,8 @@ import {
   SemanticModelDigest,
   DEFAULT_ITEMS_PER_PAGE,
   buildSourceMap,
+  buildColumnMap,
+  rewriteQueryColumns,
   formatField,
   oneLine,
   normalizeAiContext,
@@ -491,6 +493,34 @@ describe("SemanticModelDigest.dataset", () => {
     expect(content).not.toContain("shop.public.orders");
   });
 
+  it("rewrites physical column names to logical field names in validated queries", () => {
+    const ds = makeDataset({
+      name: "staff",
+      source: "hr.public.staff",
+      fields: [
+        makeField({
+          name: "person_id",
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: "personid" }] },
+        }),
+        makeField({ name: "status" }),
+      ],
+      custom_extensions: [
+        {
+          vendor_name: "COMMON",
+          data: JSON.stringify({
+            validated_queries: [
+              { description: "Count by status", query: "SELECT personid, status FROM hr.public.staff" },
+            ],
+          }),
+        },
+      ],
+    });
+    const srcMap = buildSourceMap([ds]);
+    const { content } = SemanticModelDigest.dataset(ds, 1, 50, srcMap);
+    expect(content).toContain("person_id");
+    expect(content).not.toContain("personid");
+  });
+
   it("omits validated queries section when absent", () => {
     const ds = makeDataset({ name: "orders", source: "shop.public.orders" });
     const { content } = SemanticModelDigest.dataset(ds);
@@ -637,6 +667,44 @@ describe("SemanticModelDigest.overview validated queries", () => {
     const { content } = SemanticModelDigest.overview(model);
     expect(content).not.toContain("Validated Queries");
   });
+
+  it("rewrites physical column names to logical field names in model-level queries", () => {
+    const model = makeModel({
+      name: "hr",
+      datasets: [
+        makeDataset({
+          name: "staff",
+          source: "hr.public.staff",
+          fields: [
+            makeField({
+              name: "person_id",
+              expression: { dialects: [{ dialect: "ANSI_SQL", expression: "personid" }] },
+            }),
+            makeField({
+              name: "first_name",
+              expression: { dialects: [{ dialect: "ANSI_SQL", expression: "firstname" }] },
+            }),
+          ],
+        }),
+      ],
+      custom_extensions: [
+        {
+          vendor_name: "COMMON",
+          data: JSON.stringify({
+            validated_queries: [
+              { description: "List staff", query: "SELECT personid, firstname FROM hr.public.staff" },
+            ],
+          }),
+        },
+      ],
+    });
+    const { content } = SemanticModelDigest.overview(model);
+    expect(content).toContain("person_id");
+    expect(content).toContain("first_name");
+    expect(content).not.toContain("personid");
+    expect(content).not.toContain("firstname");
+    expect(content).not.toContain("hr.public.staff");
+  });
 });
 
 describe("SemanticModelDigest custom itemsPerPage", () => {
@@ -700,5 +768,84 @@ describe("SemanticModelDigest custom itemsPerPage", () => {
     expect(page3.content).toContain("**f_30**");
     expect(page3.content).toContain("**f_34**");
     expect(page3.content).not.toContain("more fields");
+  });
+});
+
+describe("buildColumnMap", () => {
+  it("maps physical expression to logical name for simple identifiers", () => {
+    const ds = makeDataset({
+      name: "staff",
+      source: "hr.public.staff",
+      fields: [
+        makeField({
+          name: "person_id",
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: "personid" }] },
+        }),
+        makeField({ name: "name" }),
+      ],
+    });
+    const map = buildColumnMap([ds]);
+    expect(map.get("personid")).toBe("person_id");
+    expect(map.has("name")).toBe(false);
+  });
+
+  it("skips computed expressions", () => {
+    const ds = makeDataset({
+      name: "orders",
+      source: "s.p.orders",
+      fields: [
+        makeField({
+          name: "total",
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: "amount * 1.1" }] },
+        }),
+      ],
+    });
+    const map = buildColumnMap([ds]);
+    expect(map.size).toBe(0);
+  });
+
+  it("skips fields where expression equals name", () => {
+    const ds = makeDataset({
+      name: "orders",
+      source: "s.p.orders",
+      fields: [makeField({ name: "id" })],
+    });
+    const map = buildColumnMap([ds]);
+    expect(map.size).toBe(0);
+  });
+});
+
+describe("rewriteQueryColumns", () => {
+  it("replaces physical column names with logical names", () => {
+    const map = new Map([["personid", "person_id"]]);
+    expect(rewriteQueryColumns("SELECT personid FROM staff", map))
+      .toBe("SELECT person_id FROM staff");
+  });
+
+  it("replaces multiple occurrences", () => {
+    const map = new Map([["personid", "person_id"]]);
+    expect(rewriteQueryColumns("SELECT personid, COUNT(personid) FROM staff GROUP BY personid", map))
+      .toBe("SELECT person_id, COUNT(person_id) FROM staff GROUP BY person_id");
+  });
+
+  it("does not replace partial matches", () => {
+    const map = new Map([["id", "identifier"]]);
+    expect(rewriteQueryColumns("SELECT valid FROM t", map))
+      .toBe("SELECT valid FROM t");
+  });
+
+  it("handles multiple column mappings", () => {
+    const map = new Map([
+      ["personid", "person_id"],
+      ["firstname", "first_name"],
+    ]);
+    expect(rewriteQueryColumns("SELECT personid, firstname FROM staff", map))
+      .toBe("SELECT person_id, first_name FROM staff");
+  });
+
+  it("returns query unchanged when map is empty", () => {
+    const map = new Map<string, string>();
+    expect(rewriteQueryColumns("SELECT id FROM orders", map))
+      .toBe("SELECT id FROM orders");
   });
 });

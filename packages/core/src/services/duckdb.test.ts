@@ -5,7 +5,7 @@ vi.mock("../config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
 }));
 
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, COMMUNITY_EXTENSIONS } from "./duckdb";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, buildColumnSelect, COMMUNITY_EXTENSIONS } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
@@ -205,6 +205,78 @@ describe("createScopedViews", () => {
     }
   });
 
+  it("aliases renamed fields so they are queryable by logical name", async () => {
+    const db = await instance.connect();
+    try {
+      await db.run("CREATE TABLE staff (personnelnumber VARCHAR, personid VARCHAR, firstname VARCHAR)");
+      await db.run("INSERT INTO staff VALUES ('E001', 'P100', 'Alice')");
+    } finally {
+      db.disconnectSync();
+    }
+
+    const model = makeModel("hr", [
+      makeDataset("stammdaten", "staff", [
+        { name: "personnelnumber" },
+        { name: "person_id", expression: "personid" },
+        { name: "first_name", expression: "firstname" },
+      ]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+
+    const conn = await instance.connect();
+    try {
+      const result = await conn.run('SELECT person_id, first_name FROM _scope_hr."stammdaten"');
+      const columns = result.columnNames();
+      expect(columns).toEqual(["person_id", "first_name"]);
+
+      const rows: unknown[][] = [];
+      for await (const chunk of result) {
+        rows.push(...chunk.getRows());
+      }
+      expect(rows[0][0]).toBe("P100");
+      expect(rows[0][1]).toBe("Alice");
+    } finally {
+      conn.disconnectSync();
+    }
+  });
+
+  it("exposes aliased fields via search_path", async () => {
+    const db = await instance.connect();
+    try {
+      await db.run("CREATE TABLE staff2 (personid VARCHAR, name VARCHAR)");
+      await db.run("INSERT INTO staff2 VALUES ('P1', 'Bob')");
+    } finally {
+      db.disconnectSync();
+    }
+
+    const model = makeModel("mymodel", [
+      makeDataset("employees", "staff2", [
+        { name: "person_id", expression: "personid" },
+        { name: "employee_name", expression: "name" },
+      ]),
+    ]);
+
+    await createScopedViews(instance, projectId, model);
+
+    const conn = await instance.connect();
+    try {
+      await conn.run("SET search_path = '_scope_mymodel'");
+      const result = await conn.run('SELECT person_id, employee_name FROM "employees"');
+      const columns = result.columnNames();
+      expect(columns).toEqual(["person_id", "employee_name"]);
+
+      const rows: unknown[][] = [];
+      for await (const chunk of result) {
+        rows.push(...chunk.getRows());
+      }
+      expect(rows[0][0]).toBe("P1");
+      expect(rows[0][1]).toBe("Bob");
+    } finally {
+      conn.disconnectSync();
+    }
+  });
+
   it("skips invalid field expressions and keeps valid ones", async () => {
     const model = makeModel("shop", [
       makeDataset("orders", "test_source", [
@@ -269,6 +341,28 @@ describe("createScopedViews", () => {
   });
 });
 
+describe("buildColumnSelect", () => {
+  it("quotes passthrough columns", () => {
+    expect(buildColumnSelect("id", "id")).toBe('"id"');
+  });
+
+  it("quotes simple identifier expressions with alias", () => {
+    expect(buildColumnSelect("personid", "person_id")).toBe('"personid" AS "person_id"');
+  });
+
+  it("leaves computed expressions unquoted", () => {
+    expect(buildColumnSelect("amount * 1.1", "total")).toBe('amount * 1.1 AS "total"');
+  });
+
+  it("leaves expressions with function calls unquoted", () => {
+    expect(buildColumnSelect("UPPER(name)", "upper_name")).toBe('UPPER(name) AS "upper_name"');
+  });
+
+  it("leaves concatenation expressions unquoted", () => {
+    expect(buildColumnSelect("a || ' ' || b", "full_name")).toBe('a || \' \' || b AS "full_name"');
+  });
+});
+
 describe("computeModelHash", () => {
   it("returns same hash for identical models", () => {
     const model = makeModel("shop", [
@@ -283,6 +377,16 @@ describe("computeModelHash", () => {
     ]);
     const b = makeModel("shop", [
       makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
+    ]);
+    expect(computeModelHash(a)).not.toBe(computeModelHash(b));
+  });
+
+  it("returns different hash when expression differs from name", () => {
+    const a = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "person_id" }]),
+    ]);
+    const b = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "person_id", expression: "personid" }]),
     ]);
     expect(computeModelHash(a)).not.toBe(computeModelHash(b));
   });

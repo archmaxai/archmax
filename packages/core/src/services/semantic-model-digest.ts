@@ -4,6 +4,8 @@ export const DEFAULT_ITEMS_PER_PAGE = 50;
 
 export type SourceMap = Map<string, string>;
 
+export type ColumnMap = Map<string, string>;
+
 export function buildSourceMap(datasets: Dataset[]): SourceMap {
   const map = new Map<string, string>();
   for (const ds of datasets) {
@@ -12,10 +14,34 @@ export function buildSourceMap(datasets: Dataset[]): SourceMap {
   return map;
 }
 
+const SIMPLE_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+export function buildColumnMap(datasets: Dataset[]): ColumnMap {
+  const map = new Map<string, string>();
+  for (const ds of datasets) {
+    for (const f of ds.fields) {
+      const expr = f.expression.dialects[0]?.expression;
+      if (expr && expr !== f.name && SIMPLE_IDENT_RE.test(expr)) {
+        map.set(expr, f.name);
+      }
+    }
+  }
+  return map;
+}
+
 function rewriteQuerySources(query: string, sourceMap: SourceMap): string {
   let result = query;
   for (const [raw, view] of sourceMap) {
     result = result.replaceAll(raw, view);
+  }
+  return result;
+}
+
+export function rewriteQueryColumns(query: string, columnMap: ColumnMap): string {
+  let result = query;
+  for (const [physical, logical] of columnMap) {
+    const re = new RegExp(`\\b${physical}\\b`, "g");
+    result = result.replace(re, logical);
   }
   return result;
 }
@@ -167,9 +193,11 @@ export class SemanticModelDigest {
       const modelQueries = parseValidatedQueries(model.custom_extensions);
       if (modelQueries.length > 0) {
         const srcMap = buildSourceMap(model.datasets);
+        const colMap = buildColumnMap(model.datasets);
         lines.push("", `## Validated Queries (${modelQueries.length})`);
         modelQueries.forEach((q, i) => {
-          lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${rewriteQuerySources(q.query, srcMap)}\``);
+          const sql = rewriteQueryColumns(rewriteQuerySources(q.query, srcMap), colMap);
+          lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${sql}\``);
         });
       }
 
@@ -247,9 +275,11 @@ export class SemanticModelDigest {
 
     const dsQueries = parseValidatedQueries(dataset.custom_extensions);
     if (dsQueries.length > 0) {
+      const colMap = buildColumnMap([dataset]);
       lines.push("", `## Validated Queries (${dsQueries.length})`);
       dsQueries.forEach((q, i) => {
-        const sql = sourceMap ? rewriteQuerySources(q.query, sourceMap) : q.query;
+        let sql = sourceMap ? rewriteQuerySources(q.query, sourceMap) : q.query;
+        sql = rewriteQueryColumns(sql, colMap);
         lines.push(`${i + 1}. **${oneLine(q.description)}** — \`${sql}\``);
       });
     }

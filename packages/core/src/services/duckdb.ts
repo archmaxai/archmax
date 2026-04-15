@@ -300,6 +300,20 @@ async function testIcebergConnection(conn: IConnectionDocument): Promise<DuckDBI
 
 // ── Scoped VIEWs for MCP ──────────────────────────────────────────────
 
+const SIMPLE_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/**
+ * Build the SELECT column fragment for a field.
+ * Simple identifiers are always quoted for safety with foreign data scanners
+ * (e.g., Postgres scanner where unquoted identifiers undergo case folding).
+ * Computed expressions (containing operators, parens, spaces) are left as-is.
+ */
+export function buildColumnSelect(expr: string, name: string): string {
+  if (expr === name) return `"${name}"`;
+  if (SIMPLE_IDENT_RE.test(expr)) return `"${expr}" AS "${name}"`;
+  return `${expr} AS "${name}"`;
+}
+
 const scopeViewCache = new Map<string, { hash: string }>();
 
 export function scopeSchemaName(modelName: string): string {
@@ -344,7 +358,7 @@ export async function createScopedViews(
       const validColumns: string[] = [];
       for (const f of ds.fields) {
         const expr = f.expression.dialects[0]?.expression ?? f.name;
-        const col = expr === f.name ? `"${f.name}"` : `${expr} AS "${f.name}"`;
+        const col = buildColumnSelect(expr, f.name);
         try {
           await db.run(`SELECT ${col} FROM ${ds.source} LIMIT 0`);
           validColumns.push(col);

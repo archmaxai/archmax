@@ -178,13 +178,25 @@ Instead:
 - **Expose the raw column** with `expression: "agreements"` and add `ai_context.instructions` describing the JSON structure, e.g. *"JSON array of objects with keys: happened_at, type, document_url. Unnest at query time with `UNNEST(from_json(agreements, '[\\"JSON\\"]')) AS t(elem)`."*
 - **Optionally add scalar helper fields** that extract from a fixed position or compute an aggregate, e.g. `json_array_length(agreements)` as `agreement_count`, or `json_extract_string(agreements, '$[0].type')` as `first_agreement_type`.
 
-#### 4e. Write the Dataset YAML
+#### 4e. Validate Field Expressions
+
+Before writing the YAML, validate every field expression against the physical source table by running:
+
+```sql
+SELECT <expression> FROM <catalog>.<schema>.<table> LIMIT 0;
+```
+
+If a field expression fails, attempt to fix it (adjust quoting, correct the column name based on the error message) and retry once. If the retry also fails, drop the field and warn the user.
+
+This step catches typos, case-sensitivity issues with foreign data scanners, and stale column references before they silently break at query time.
+
+#### 4f. Write the Dataset YAML
 
 **Immediately** write the dataset file for this table before moving on. Follow the conventions in "YAML Conventions" below. Validated queries are added later in step 10.
 
-#### 4f. Move to the Next Dataset
+#### 4g. Move to the Next Dataset
 
-Repeat 4a–4e for the next table in scope.
+Repeat 4a–4f for the next table in scope.
 
 ### 8. Discover & Write Relationships (Iteratively)
 
@@ -247,12 +259,12 @@ For scopes of 10 or fewer relationships, process all of them without interruptio
 ### 9. Define Metrics
 
 After relationships are complete, propose useful aggregate metrics based on the data. Common patterns:
-- **Count**: `COUNT(*)`, `COUNT(DISTINCT dataset.column)`
-- **Sum**: `SUM(dataset.amount)`
-- **Average**: `AVG(dataset.value)`
+- **Count**: `COUNT(*)`, `COUNT(DISTINCT dataset.field_name)`
+- **Sum**: `SUM(dataset.revenue)`
+- **Average**: `AVG(dataset.order_value)`
 - **Ratio**: `SUM(CASE WHEN dataset.status = 'completed' THEN 1 ELSE 0 END)::DOUBLE / NULLIF(COUNT(*), 0)`
 
-Always qualify column references: `dataset_name.column_name`.
+Always qualify column references as `dataset_name.field_name`, where `field_name` is the **logical `name`** from the field definition — not the physical column name. Metric expressions are shown verbatim to downstream MCP consumer agents, so they must not contain physical column names or source table paths.
 
 Write the metrics to the model root file.
 
@@ -268,6 +280,20 @@ Follow these conventions strictly when writing YAML files:
 - Write clear `description` values in business terms
 - Add `ai_context.instructions` for anything non-obvious
 - Add `ai_context.synonyms` when business users use different names
+
+#### Field Names vs Physical Columns
+
+A field's `name` is the **logical identity** that downstream agents query by. The `expression` is the physical SQL that resolves against the source table. The downstream VIEW layer creates `SELECT <expression> AS "<name>" FROM <source>`, so the two can differ.
+
+**Renaming is the point of a semantic layer.** If a physical column is `personid`, you MAY set `name: "person_id"` and `expression: "personid"` to provide a cleaner name. The expression provides the mapping to the physical column.
+
+When `name` differs from `expression`, add the physical name as an `ai_context.synonyms` entry if it's commonly used.
+
+#### Logical Names in Relationships and Metrics
+
+- **Relationships**: `from_columns` and `to_columns` MUST reference the **logical field `name`** from the respective datasets, not physical column names. If `stammdaten` has a field with `name: "person_id"` mapped to physical `personid`, the relationship uses `to_columns: ["person_id"]`.
+- **Metrics**: expressions MUST use `dataset_name.field_name` where `field_name` is the logical `name`. Example: `SUM(orders.revenue)`, not `SUM(orders.total_amt)`.
+- **Primary keys**: `primary_key` entries MUST use logical field names.
 
 #### Importance Ordering
 
@@ -372,10 +398,13 @@ After writing the YAML files, generate **validated queries** — pre-tested SQL 
 - Use the fully-qualified source paths for all tables
 
 **Process:**
-1. Compose the query using DuckDB SQL syntax only
+1. Compose the query using DuckDB SQL syntax with fully-qualified source paths and physical column names for validation
 2. Run it via `executeQuery` to confirm it executes without error
 3. If a query fails, fix and retry once — discard it if it still fails
-4. Write only successful queries into the COMMON extension
+4. **Rewrite** each successful query: replace source table paths with logical dataset names AND physical column names with logical field names
+5. Write only rewritten, successful queries into the COMMON extension
+
+The stored `query` value MUST use logical dataset names (e.g. `FROM orders`, not `FROM shop_db.public.orders`) and logical field names (e.g. `person_id`, not `personid`). Downstream MCP consumer agents see these queries verbatim — physical names would confuse them.
 
 If no connections are active or the user explicitly opts out ("skip queries", "don't generate queries"), skip this step.
 
@@ -490,8 +519,8 @@ dataset:
 
 | Property | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | yes | Logical name for the field (snake_case) |
-| `expression` | Expression | yes | OSI Expression object: `{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }` |
+| `name` | string | yes | Logical name for the field (snake_case). This is what downstream agents query by. May differ from the physical column. |
+| `expression` | Expression | yes | OSI Expression object mapping to the physical column: `{ dialects: [{ dialect: ANSI_SQL, expression: "<physical_column_or_sql>" }] }` |
 | `dimension` | object | when applicable | `{ is_time: true }` for date/timestamp columns |
 | `label` | string | no | Human-friendly display name |
 | `description` | string | recommended | What the field represents in business terms |
@@ -701,7 +730,7 @@ dataset:
 ## Important Rules
 
 1. **Always use DuckDB SQL syntax** — all expressions and validated queries are executed by DuckDB, not the source database. Never use PostgreSQL-only functions (e.g. `json_array_elements`, `TO_CHAR`, `ARRAY_AGG`) or MySQL-only functions. Use DuckDB equivalents instead.
-2. **Always qualify table references in metrics** — use `dataset_name.column_name`, not bare column names.
+2. **Always use logical field names** — metric expressions, relationship `from_columns`/`to_columns`, `primary_key`, and validated queries must reference the logical `name` from the field definition, not the physical column name. Example: `SUM(orders.revenue)`, not `SUM(orders.total_amt)`.
 3. **Always populate `data_type`** — query `information_schema.columns` for every field, store in COMMON extension.
 4. **Always populate `example_data`** — sample real values so consumers understand the data format, store in COMMON extension. Anonymize any PII before writing.
 5. **Always check for enum columns** — any `VARCHAR` or small-`INTEGER` column with ≤ 25 distinct values should have `distinct_values` in the COMMON extension.
