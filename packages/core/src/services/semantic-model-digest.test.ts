@@ -257,6 +257,21 @@ describe("SemanticModelDigest.overview", () => {
     expect(content).not.toContain("Table Name");
   });
 
+  it("includes get_datasets instruction after datasets table", () => {
+    const model = makeModel({
+      name: "test",
+      datasets: [
+        makeDataset({
+          name: "orders",
+          source: "shop.public.orders",
+          fields: [makeField({ name: "id" })],
+        }),
+      ],
+    });
+    const { content } = SemanticModelDigest.overview(model);
+    expect(content).toContain("Call `get_datasets` with the dataset name to see its fields before writing queries.");
+  });
+
   it("renders relationships as join paths", () => {
     const model = makeModel({
       name: "test",
