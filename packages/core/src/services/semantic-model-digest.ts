@@ -125,6 +125,7 @@ function appendDatasetsSection(
       );
     }
   }
+  lines.push("", "*Call `get_datasets` with the dataset name to see its fields before writing queries.*");
   appendPaginationHint(lines, result.remaining, result.page, "datasets", scopeHint);
   return result;
 }

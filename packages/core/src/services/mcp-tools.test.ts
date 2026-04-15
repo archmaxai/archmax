@@ -281,6 +281,32 @@ describe("executeScopedQuery", () => {
     expect(result.text).not.toContain("_scope_");
   });
 
+  it("returns column-not-found hint for aliased table error format", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders", ["order_id", "total"]),
+      makeDataset("customers", ["id", "email"]),
+    ]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const mockDb = {
+      prepare: vi.fn().mockRejectedValue(
+        new Error('Binder Error: Values list "o" does not have a column named "nonexistent"'),
+      ),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await executeScopedQuery(fileSvc, "proj1", ["shop"], "shop", "SELECT o.nonexistent FROM orders o");
+    errSpy.mockRestore();
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Binder Error");
+    expect(result.text).toContain("HINT");
+    expect(result.text).toContain("orders: order_id, total");
+    expect(result.text).toContain("customers: id, email");
+  });
+
   it("returns table-not-found error with bare dataset name hints", async () => {
     const model = makeModel("shop", [makeDataset("orders", ["id"])]);
     const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);

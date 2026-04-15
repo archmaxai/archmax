@@ -142,12 +142,15 @@ export async function getDatasetFields(
   return { text: content };
 }
 
-const BINDER_COL_RE = /Referenced column "([^"]+)" not found/i;
+const BINDER_COL_PATTERNS = [
+  /Referenced column "([^"]+)" not found/i,
+  /does not have a column named "([^"]+)"/i,
+];
 const BINDER_TABLE_RE = /Table with name (\S+) does not exist/i;
 
 function buildColumnHint(errorMsg: string, datasets: Dataset[]): string | null {
-  const colMatch = errorMsg.match(BINDER_COL_RE);
-  const tableMatch = errorMsg.match(BINDER_TABLE_RE);
+  const colMatch = BINDER_COL_PATTERNS.some((re) => re.test(errorMsg));
+  const tableMatch = BINDER_TABLE_RE.test(errorMsg);
   if (!colMatch && !tableMatch) return null;
 
   const lines: string[] = [
