@@ -58,49 +58,56 @@ function ImprovementRoute() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b px-6 py-4">
-        <div className="flex items-center gap-3">
-          <Lightbulb className="h-5 w-5 text-amber-500" />
-          <h1 className="text-lg font-semibold">{improvement.title}</h1>
+      <header className="px-8 py-6">
+        <div className="flex items-start justify-between">
+          <div className="content-tight">
+            <h1 className="text-heading text-2xl">{improvement.title}</h1>
+            <p className="text-subtle text-sm">
+              Improvement request for {improvement.modelName}
+            </p>
+          </div>
+          {isImplemented ? (
+            <Badge variant="secondary" className="gap-1.5">
+              <Check className="h-3 w-3" />
+              Implemented {improvement.implementedAt
+                ? new Date(improvement.implementedAt).toLocaleDateString()
+                : ""}
+            </Badge>
+          ) : (
+            <Button size="sm" onClick={handleImplement} className="gap-1.5">
+              Implement
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
-        {isImplemented ? (
-          <Badge variant="secondary" className="gap-1.5">
-            <Check className="h-3 w-3" />
-            Implemented {improvement.implementedAt
-              ? new Date(improvement.implementedAt).toLocaleDateString()
-              : ""}
-          </Badge>
-        ) : (
-          <Button size="sm" onClick={handleImplement} className="gap-1.5">
-            Implement
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Button>
-        )}
       </header>
 
-      <div className="flex-1 overflow-auto p-6">
-        <Card className="p-6">
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Lightbulb className="h-3 w-3" />
-                Model: <strong className="text-foreground">{improvement.modelName}</strong>
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Calendar className="h-3 w-3" />
-                {new Date(improvement.createdAt).toLocaleDateString()}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Bot className="h-3 w-3" />
-                via <strong className="text-foreground">{improvement.createdVia}</strong>
-              </span>
-            </div>
+      <div className="divider-subtle mx-8" />
 
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <p className="whitespace-pre-wrap">{improvement.description}</p>
+      <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex max-w-xl flex-col gap-4">
+          <Card className="p-6">
+            <div className="flex gap-3">
+              <Lightbulb className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+              <div className="flex flex-1 flex-col gap-4">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    {new Date(improvement.createdAt).toLocaleDateString()}
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <Bot className="h-3 w-3" />
+                    via <strong className="text-foreground">{improvement.createdVia}</strong>
+                  </span>
+                </div>
+
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <p className="whitespace-pre-wrap">{improvement.description}</p>
+                </div>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
       </div>
     </div>
   );

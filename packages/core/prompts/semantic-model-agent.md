@@ -278,8 +278,53 @@ Follow these conventions strictly when writing YAML files:
 - Low-cardinality categorical columns need `distinct_values` in the same COMMON extension
 - Timestamp/date fields need `dimension: { is_time: true }`
 - Write clear `description` values in business terms
-- Add `ai_context.instructions` for anything non-obvious
+- Add `ai_context.instructions` for anything non-obvious — use **structured markdown** (see below)
 - Add `ai_context.synonyms` when business users use different names
+
+#### Formatting `ai_context.instructions`
+
+Write `ai_context.instructions` as **well-structured markdown**, not as dense walls of text. Downstream MCP consumer agents receive this content verbatim, so clear structure helps them follow the guidance accurately.
+
+**Rules:**
+- Use `## Heading` sections to separate distinct topics (e.g. `## Revenue Questions`, `## Counting Sold Units`)
+- Use bullet lists (`-`) for individual rules or constraints within a section
+- Use fenced code blocks (` ``` `) for SQL patterns or query templates
+- Keep each bullet concise — one rule per bullet
+- Do NOT use ASCII art separators like `──` or `===`; use markdown headings instead
+
+**Example — model-level instructions:**
+
+```yaml
+ai_context:
+  instructions: |
+    ## Revenue Questions
+    Always use the `order_agreements` dataset. Do NOT use `orders.total_price` or the `transactions` dataset.
+
+    - Revenue amounts are nested inside the `agreements` JSON array
+    - You MUST use the double-unnest pattern shown below
+
+    ```sql
+    SELECT SUM(json_extract_string(sale, '$.total_amount')::DOUBLE) AS revenue
+    FROM order_agreements oa,
+         unnest(json_extract(oa.agreements, '$[*]')) AS t(elem),
+         unnest(json_extract(elem, '$.sales[*]')) AS s(sale)
+    ```
+
+    ## Order Counts and Product Sales
+    Use `orders` as the central fact table. Always apply these filters:
+
+    - `WHERE cancelled_at IS NULL` — exclude cancelled orders
+    - `AND test IS NOT TRUE` — exclude Shopify test orders
+```
+
+**Example — field-level instructions** (keep short, one or two sentences):
+
+```yaml
+ai_context:
+  instructions: "JSON array of agreement objects. Unnest at query time with UNNEST(from_json(agreements, '[\"JSON\"]')) AS t(elem)."
+```
+
+Field-level instructions are rendered inline in the digest, so they should stay brief. Model-level and dataset-level instructions are rendered as full blockquotes and benefit from richer structure.
 
 #### Field Names vs Physical Columns
 
@@ -742,7 +787,8 @@ dataset:
 11. **Generate validated queries in DuckDB SQL only** — after writing YAML, compose 2–5 DuckDB SQL queries per dataset and per model, execute each via `executeQuery`, and store only successful ones in the COMMON extension under `validated_queries`. Never use PostgreSQL, MySQL, or other dialect syntax.
 12. **Always set graph positions** — every dataset must have `graph_x` and `graph_y` in a dataset-level COMMON extension. Cluster connected datasets together and lay them out to minimize edge crossings.
 13. **Always create dataset groups for models with 4+ datasets** — write a `dataset_groups` array into the model root's COMMON extension. Group by star-schema topology, naming prefix, or business domain. Assign distinct colors from the palette.
-14. **Field expressions must be scalar** — every field `expression` must be a **scalar expression over the source table's own columns**. The expression is placed into a simple `SELECT <expr> FROM <source>` view — there is no `UNNEST`, `LATERAL`, CTE, or subquery context available. Referencing aliases that don't exist as columns in the source table (e.g. `elem` from an unnest) will cause a "column not found" error at runtime. If a column contains a JSON array that needs unnesting, expose the raw column as-is and add `ai_context.instructions` explaining the structure so querying agents can unnest it at query time. You may use scalar JSON functions on the column itself (e.g. `json_array_length(col)`, `json_extract_string(col, '$[0].field')`) but never assume an unnested element alias.
+14. **No ground-truth numbers in the model** — do not embed actual business data or ground-truth figures anywhere in the semantic model (descriptions, `ai_context`, `example_data`, validated queries result comments, etc.) beyond the small illustrative samples required by the schema (e.g. `example_data` and `distinct_values`). For instance, never write "the revenue for March 2026 was 124,124.12 EUR" into a field description or AI context. The model describes *structure and meaning*, not concrete data points — those belong in the source database and in test cases authored by the user.
+15. **Field expressions must be scalar** — every field `expression` must be a **scalar expression over the source table's own columns**. The expression is placed into a simple `SELECT <expr> FROM <source>` view — there is no `UNNEST`, `LATERAL`, CTE, or subquery context available. Referencing aliases that don't exist as columns in the source table (e.g. `elem` from an unnest) will cause a "column not found" error at runtime. If a column contains a JSON array that needs unnesting, expose the raw column as-is and add `ai_context.instructions` explaining the structure so querying agents can unnest it at query time. You may use scalar JSON functions on the column itself (e.g. `json_array_length(col)`, `json_extract_string(col, '$[0].field')`) but never assume an unnested element alias.
 
 ## Quality Standards
 

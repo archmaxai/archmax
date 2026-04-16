@@ -116,4 +116,63 @@ describe("SemanticModelFileService.updateModelExtensions", () => {
     expect(parsed.relationships).toEqual([]);
     expect(parsed.metrics).toEqual([]);
   });
+
+  it("rejects invalid JSON in extension data before writing", async () => {
+    const extensions = [{ vendor_name: "COMMON", data: "{broken" }];
+    await expect(svc.updateModelExtensions(projectId, "test-model", extensions)).rejects.toThrow(
+      /Invalid JSON.*vendor "COMMON"/,
+    );
+
+    const raw = await readFile(join(tmpDir, projectId, "src", "test-model.yaml"), "utf-8");
+    const parsed = yaml.load(raw) as Record<string, unknown>;
+    expect(parsed.custom_extensions).toBeUndefined();
+  });
+});
+
+describe("SemanticModelFileService.updateDatasetExtensions", () => {
+  let tmpDir: string;
+  let svc: SemanticModelFileService;
+  const projectId = "proj1";
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "smfs-ds-test-"));
+    svc = new SemanticModelFileService(tmpDir);
+    const dsDir = join(tmpDir, projectId, "src", "test-model");
+    await mkdir(dsDir, { recursive: true });
+    const dsYaml = yaml.dump({
+      dataset: {
+        name: "orders",
+        source: "shop.public.orders",
+        fields: [],
+      },
+    });
+    await writeFile(join(dsDir, "orders.yaml"), dsYaml, "utf-8");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects invalid JSON in extension data before writing", async () => {
+    const extensions = [{ vendor_name: "COMMON", data: "not-json" }];
+    await expect(
+      svc.updateDatasetExtensions(projectId, "test-model", "orders", extensions),
+    ).rejects.toThrow(/Invalid JSON.*vendor "COMMON"/);
+
+    const raw = await readFile(join(tmpDir, projectId, "src", "test-model", "orders.yaml"), "utf-8");
+    const parsed = yaml.load(raw) as Record<string, unknown>;
+    const ds = parsed.dataset as Record<string, unknown>;
+    expect(ds.custom_extensions).toBeUndefined();
+  });
+
+  it("accepts valid JSON in extension data", async () => {
+    const extensions = [{ vendor_name: "COMMON", data: '{"graph_x":100}' }];
+    const ok = await svc.updateDatasetExtensions(projectId, "test-model", "orders", extensions);
+    expect(ok).toBe(true);
+
+    const raw = await readFile(join(tmpDir, projectId, "src", "test-model", "orders.yaml"), "utf-8");
+    const parsed = yaml.load(raw) as Record<string, unknown>;
+    const ds = parsed.dataset as Record<string, unknown>;
+    expect(ds.custom_extensions).toEqual(extensions);
+  });
 });

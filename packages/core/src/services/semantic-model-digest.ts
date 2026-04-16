@@ -178,7 +178,7 @@ export class SemanticModelDigest {
     if (model.description) lines.push(oneLine(model.description));
 
     const ctx = normalizeAiContext(model.ai_context);
-    if (ctx?.instructions) lines.push("", `> ${oneLine(ctx.instructions)}`);
+    if (ctx?.instructions) lines.push("", blockQuote(ctx.instructions));
 
     if (!scope) {
       appendDatasetsSection(lines, model.datasets, 1, perPage, "datasets", showTableNames);
@@ -261,7 +261,7 @@ export class SemanticModelDigest {
     if (dsCtx?.synonyms?.length) meta.push(`Aliases: ${dsCtx.synonyms.join(", ")}`);
     if (meta.length) lines.push(meta.join(" | "));
 
-    if (dsCtx?.instructions) lines.push("", `> ${oneLine(dsCtx.instructions)}`);
+    if (dsCtx?.instructions) lines.push("", blockQuote(dsCtx.instructions));
 
     lines.push("", `## Fields (${dataset.fields.length})`);
     lines.push("");
@@ -317,6 +317,13 @@ export function formatField(f: Field): string {
 
 export function oneLine(s?: string): string {
   return (s ?? "").replace(/\s+/g, " ").trim();
+}
+
+export function blockQuote(s: string): string {
+  return s
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
 }
 
 export function normalizeAiContext(

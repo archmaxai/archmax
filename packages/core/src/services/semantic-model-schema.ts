@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import yaml from "js-yaml";
 
 const dialectEnum = z.enum(["ANSI_SQL", "SNOWFLAKE", "MDX", "TABLEAU", "DATABRICKS"]);
 
@@ -11,21 +12,43 @@ export const expressionSchema = z.object({
   dialects: z.array(dialectExpressionSchema).min(1),
 });
 
+export const jsonStringSchema = z.string().refine(
+  (val) => {
+    try {
+      JSON.parse(val);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: "Must be a valid JSON string" },
+);
+
 export const customExtensionSchema = z.object({
   vendor_name: z.string().min(1),
-  data: z.string(),
+  data: jsonStringSchema,
 });
 
 export const dimensionSchema = z.object({
   is_time: z.boolean(),
 });
 
+/**
+ * Coerce a value that YAML misinterpreted as an object back to a string.
+ * e.g. `- filter: vendor LIKE ...` becomes { filter: "vendor LIKE ..." }
+ * instead of the intended plain string. We recover by re-serialising to YAML.
+ */
+const yamlCoercedString = z.preprocess(
+  (v) => (typeof v === "object" && v !== null && !Array.isArray(v) ? yaml.dump(v).trim() : v),
+  z.string(),
+);
+
 export const aiContextSchema = z.union([
   z.string(),
   z.object({
     instructions: z.string().optional(),
-    synonyms: z.array(z.string()).optional(),
-    examples: z.array(z.string()).optional(),
+    synonyms: z.array(yamlCoercedString).optional(),
+    examples: z.array(yamlCoercedString).optional(),
   }),
 ]).optional();
 

@@ -8,6 +8,7 @@ import {
   datasetFileSchema,
   type SemanticModel,
   type Dataset,
+  type CustomExtension,
 } from "./semantic-model-schema";
 
 const YAML_OPTS = { lineWidth: 120, noRefs: true };
@@ -37,6 +38,18 @@ const SAFE_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 export function assertSafeSegment(value: string, label: string): void {
   if (!value || !SAFE_SEGMENT.test(value)) {
     throw new Error(`Invalid ${label}: must be alphanumeric (with ._-), got "${value}"`);
+  }
+}
+
+function assertValidExtensionJson(extensions: CustomExtension[]): void {
+  for (const ext of extensions) {
+    try {
+      JSON.parse(ext.data);
+    } catch {
+      throw new Error(
+        `Invalid JSON in custom_extensions data for vendor "${ext.vendor_name}": ${ext.data}`,
+      );
+    }
   }
 }
 
@@ -273,6 +286,7 @@ export class SemanticModelFileService {
     extensions: Array<{ vendor_name: string; data: string }>,
   ): Promise<boolean> {
     assertSafeSegment(modelName, "model name");
+    assertValidExtensionJson(extensions);
     const dir = await this.resolveWorkDir(projectId);
     const filePath = join(dir, `${modelName}.yaml`);
     let rawContent: string;
@@ -297,6 +311,7 @@ export class SemanticModelFileService {
   ): Promise<boolean> {
     assertSafeSegment(modelName, "model name");
     assertSafeSegment(datasetName, "dataset name");
+    assertValidExtensionJson(extensions);
     const dir = await this.resolveWorkDir(projectId);
     const filePath = join(dir, modelName, `${datasetName}.yaml`);
     let rawContent: string;
