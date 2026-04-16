@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createFileRoute, Outlet, Link, useMatch, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -96,7 +97,14 @@ function ModelsLayout() {
 
   const pendingCount = improvements.filter((i) => i.status === "pending").length;
 
-  async function handleDelete(id: string) {
+  const INITIAL_IMPROVEMENTS_COUNT = 5;
+  const [showAllImprovements, setShowAllImprovements] = useState(false);
+  const visibleImprovements = showAllImprovements
+    ? improvements
+    : improvements.slice(0, INITIAL_IMPROVEMENTS_COUNT);
+  const hasMoreImprovements = improvements.length > INITIAL_IMPROVEMENTS_COUNT;
+
+  async function handleDeleteConversation(id: string) {
     await api.api.projects[":projectId"].conversations[":id"].$delete({
       param: { projectId: project._id, id },
     });
@@ -108,6 +116,18 @@ function ModelsLayout() {
         to: "/$projectId/models/chat/$conversationId",
         params: { projectId: project._id, conversationId: "new" },
       });
+    }
+  }
+
+  async function handleDeleteImprovement(id: string) {
+    await api.api.projects[":projectId"].improvements[":id"].$delete({
+      param: { projectId: project._id, id },
+    });
+    queryClient.invalidateQueries({
+      queryKey: ["improvements", project._id],
+    });
+    if (activeImprovementId === id) {
+      navigate({ to: "/$projectId/models", params: { projectId: project._id } });
     }
   }
 
@@ -183,7 +203,7 @@ function ModelsLayout() {
                       className="opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDelete(c._id);
+                        handleDeleteConversation(c._id);
                       }}
                     >
                       <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
@@ -222,29 +242,54 @@ function ModelsLayout() {
                   Array.from({ length: 2 }).map((_, i) => (
                     <Skeleton key={i} className="h-8 w-full rounded-lg" />
                   ))}
-                {improvements.map((imp) => (
-                  <Link
+                {visibleImprovements.map((imp) => (
+                  <div
                     key={imp._id}
-                    to="/$projectId/models/improvement/$improvementId"
-                    params={{ projectId: project._id, improvementId: imp._id }}
                     className={cn(
-                      "flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors",
+                      "group flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors cursor-pointer",
                       activeImprovementId === imp._id
                         ? "bg-foreground/[0.08] text-foreground font-medium"
                         : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
                     )}
                   >
-                    <span className="relative shrink-0">
-                      <Lightbulb className="h-3.5 w-3.5" />
-                      {imp.status === "implemented" && (
-                        <Check className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-green-600 dark:text-green-400" />
-                      )}
-                    </span>
-                    <span className="flex-1 truncate">
-                      {imp.title.length > 25 ? imp.title.slice(0, 25) + "…" : imp.title}
-                    </span>
-                  </Link>
+                    <Link
+                      to="/$projectId/models/improvement/$improvementId"
+                      params={{ projectId: project._id, improvementId: imp._id }}
+                      className="flex items-center gap-2 flex-1 min-w-0"
+                    >
+                      <span className="relative shrink-0">
+                        <Lightbulb className="h-3.5 w-3.5" />
+                        {imp.status === "implemented" && (
+                          <Check className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-green-600 dark:text-green-400" />
+                        )}
+                      </span>
+                      <span className="flex-1 truncate">
+                        {imp.title.length > 25 ? imp.title.slice(0, 25) + "…" : imp.title}
+                      </span>
+                    </Link>
+                    <button
+                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteImprovement(imp._id);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                    </button>
+                  </div>
                 ))}
+                {hasMoreImprovements && (
+                  <button
+                    onClick={() => setShowAllImprovements((prev) => !prev)}
+                    className="flex w-full items-center justify-center py-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                  >
+                    {showAllImprovements ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
                 {!improvementsLoading && !improvements.length && (
                   <p className="px-3 py-3 text-[11px] text-muted-foreground/50 text-center">
                     Improvement requests are submitted by MCP clients

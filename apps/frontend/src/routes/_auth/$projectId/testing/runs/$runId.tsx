@@ -115,6 +115,17 @@ function buildRefinePrompt(tc: CaseResult): string {
     prompt += `**Agent response:** ${truncated}\n\n`;
   }
 
+  if (tc.factResults.length > 0) {
+    prompt += `**Fact check results (${tc.factResults.filter((f) => f.passed).length}/${tc.factResults.length} passed):**\n`;
+    for (const fr of tc.factResults) {
+      const icon = fr.passed ? "✅" : "❌";
+      prompt += `${icon} ${fr.fact}`;
+      if (fr.reasoning) prompt += ` — ${fr.reasoning}`;
+      prompt += "\n";
+    }
+    prompt += "\n";
+  }
+
   prompt += "The agent struggled with this query. Please review the semantic model and refine it to be easier to navigate: improve ai_context descriptions, simplify dataset/field naming, add missing relationships, or reorganize the structure so the agent can answer more efficiently with fewer tool calls.";
   return prompt;
 }

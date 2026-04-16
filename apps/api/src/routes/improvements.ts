@@ -35,6 +35,16 @@ const app = new Hono()
     ).lean();
     if (!item) throw AppError.notFound("Improvement not found");
     return c.json(item);
+  })
+  .delete("/:id", async (c) => {
+    await connectDB();
+    const item = await Improvement.findOne({
+      _id: c.req.param("id"),
+      project: c.req.param("projectId")!,
+    });
+    if (!item) throw AppError.notFound("Improvement not found");
+    await item.softDelete();
+    return c.json({ ok: true });
   });
 
 export default app;

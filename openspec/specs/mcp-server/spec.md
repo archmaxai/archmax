@@ -110,14 +110,20 @@ The MCP server SHALL expose the following tools for AI agent consumption. The MC
 
 ### Requirement: MCP Execute Query Tool
 
-The MCP server SHALL expose an `execute_query` tool that runs read-only SQL queries scoped to a single semantic model. The tool requires a `modelName` parameter (selecting which model's datasets become available as tables), a `sql` string with positional placeholders (`$1`, `$2`, ...), and an optional `params` array of values. Agents SHALL use bare dataset names as table names (e.g., `FROM orders`) — the DuckDB `search_path` is set to the model's scoped schema so that unqualified names resolve to the correct VIEWs automatically. Results SHALL be limited to 1000 rows with a 30-second timeout. All calls SHALL be logged via `McpCallLog` with the SQL query and row count. The tool description SHALL instruct agents to use dataset names directly without schema prefixes.
+The MCP server SHALL expose an `execute_query` tool that runs read-only SQL queries scoped to a single semantic model. The tool requires a `modelName` parameter (selecting which model's datasets become available as tables), a `sql` string with positional placeholders (`$1`, `$2`, ...), and an optional `params` array of values. The tool SHALL also accept an optional `store` boolean parameter (default `true`). When `store` is `true`, the query (SQL text, params, and model name) SHALL be persisted as a `StoredQuery` document and the response SHALL include a `storedQueryId` field containing the stored query's ID. The tool description SHALL instruct agents that the returned `storedQueryId` can be passed to `execute_stored_query` to re-run the same query later, optionally with different parameters. Agents SHALL use bare dataset names as table names (e.g., `FROM orders`) — the DuckDB `search_path` is set to the model's scoped schema so that unqualified names resolve to the correct VIEWs automatically. Results SHALL be limited to 1000 rows with a 30-second timeout. All calls SHALL be logged via `McpCallLog` with the SQL query and row count. The tool description SHALL instruct agents to use dataset names directly without schema prefixes.
 
-#### Scenario: Successful scoped query
-- **WHEN** `execute_query` is called with `modelName: "ecommerce"` and a valid SELECT query using bare dataset names (e.g., `SELECT * FROM "orders" LIMIT 10`)
-- **THEN** the `search_path` is set to the model's scoped schema so `"orders"` resolves to the scoped VIEW
-- **AND** the query is executed against the project's DuckDB instance
-- **AND** results are returned as JSON with columns and rows
+#### Scenario: Successful scoped query with store enabled
+- **WHEN** `execute_query` is called with `modelName: "ecommerce"`, a valid SELECT query, and `store: true` (or `store` omitted, defaulting to true)
+- **THEN** the query is executed and results are returned as JSON with columns, rows, rowCount, and truncated fields
+- **AND** the response JSON includes a `storedQueryId` string identifying the stored query
+- **AND** a `StoredQuery` document is persisted with the SQL, params, modelName, project, and token association
 - **AND** the call is logged to McpCallLog
+
+#### Scenario: Successful scoped query with store disabled
+- **WHEN** `execute_query` is called with `store: false`
+- **THEN** the query is executed and results are returned normally
+- **AND** no `storedQueryId` is included in the response
+- **AND** no `StoredQuery` document is created
 
 #### Scenario: Access denied for out-of-scope model in execute_query
 - **WHEN** `execute_query` is called with a `modelName` not in the token's scopes
@@ -143,7 +149,7 @@ The MCP server SHALL expose an `execute_query` tool that runs read-only SQL quer
 
 ### Requirement: Scoped DuckDB VIEWs
 
-The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named `_scope_<modelName>` (e.g., `_scope_ecommerce`). Each dataset becomes a VIEW named `_scope_<modelName>."<datasetName>"` that selects only the field expressions from the dataset's source table. VIEWs are created lazily on the first `execute_query` call for a model and cached using a content hash of the model's YAML file. Subsequent calls skip view creation if the hash matches. When the model changes (e.g., after a publish), the hash mismatch triggers view recreation. The DuckDB `search_path` is set to the model's scoped schema before query execution, so agents use bare dataset names (e.g., `FROM "orders"`) and DuckDB resolves them to the scoped VIEWs. The `get_semantic_model` overview SHALL annotate each dataset with its bare table name (the dataset name) for use in queries.
+The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named `_scope_<modelName>` (e.g., `_scope_ecommerce`). Each dataset becomes a VIEW named `_scope_<modelName>."<datasetName>"` that selects only the field expressions from the dataset's source table. When a field's logical `name` differs from its physical `expression`, the VIEW SHALL alias the expression to the logical name (e.g., `SELECT personid AS "person_id" FROM source`). Aliased columns MUST be queryable through the VIEW using the logical field name. VIEWs are created lazily on the first `execute_query` call for a model and cached using a content hash of the model's YAML file. Subsequent calls skip view creation if the hash matches. When the model changes (e.g., after a publish), the hash mismatch triggers view recreation. The DuckDB `search_path` is set to the model's scoped schema before query execution, so agents use bare dataset names (e.g., `FROM "orders"`) and DuckDB resolves them to the scoped VIEWs. The `get_semantic_model` overview SHALL annotate each dataset with its bare table name (the dataset name) for use in queries. When a field expression cannot be resolved against the source table, the field SHALL be excluded from the VIEW and a warning SHALL be logged. The warning MUST include the dataset name, field name, and the error message from DuckDB.
 
 #### Scenario: VIEW created from semantic model dataset
 - **WHEN** `execute_query` is called with `modelName: "ecommerce"` and the model has dataset `orders` sourced from `shop.public.orders` with fields `order_id`, `total_amount`, `status`
@@ -154,6 +160,12 @@ The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named 
 #### Scenario: VIEW reflects field expressions
 - **WHEN** a dataset field has a computed expression (e.g., `c_first_name || ' ' || c_last_name`)
 - **THEN** the VIEW includes the expression as a column with the field's name as alias
+
+#### Scenario: VIEW correctly aliases renamed fields
+- **WHEN** a dataset field has `name: "person_id"` and `expression: "personid"` (physical column is `personid`, logical name is `person_id`)
+- **THEN** the VIEW includes `personid AS "person_id"` in its SELECT list
+- **AND** querying `SELECT person_id FROM "dataset_name"` through the VIEW returns the correct data
+- **AND** the column appears as `person_id` in query result metadata
 
 #### Scenario: VIEWs cached between calls
 - **WHEN** `execute_query` is called twice with the same `modelName` and the model has not changed
@@ -172,6 +184,12 @@ The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named 
 #### Scenario: Dataset names shown in model overview
 - **WHEN** `get_semantic_model` is called for model "ecommerce"
 - **THEN** each dataset row includes the bare dataset name as the table name for use in queries
+
+#### Scenario: Invalid field expression excluded from VIEW
+- **WHEN** a dataset field has an expression that cannot be resolved against the source table (e.g., the physical column was renamed or dropped)
+- **THEN** the field is excluded from the VIEW
+- **AND** a warning is logged with the dataset name, field name, and the DuckDB error message
+- **AND** the remaining valid fields are still included in the VIEW
 
 ### Requirement: MCP Query SQL Validation
 
@@ -303,4 +321,42 @@ The project SHALL include a Playwright E2E test suite (`apps/e2e/tests/mcp.spec.
 
 - **WHEN** `request_improvement` is called with a valid token, `modelName: "e2e_federation"`, a title, and a description
 - **THEN** the response indicates the improvement request was submitted successfully
+
+### Requirement: StoredQuery Persistence
+
+The system SHALL persist stored queries as `StoredQuery` documents in MongoDB. Each document SHALL contain: `project` (ObjectId reference to Project), `tokenId` (ObjectId reference to McpToken, nullable), `modelName` (string), `sql` (string), and `params` (string array, default empty). Documents SHALL be timestamped with `createdAt` and indexed by `(project, createdAt)`. Stored queries do not expire automatically. The model SHALL follow the project's standard Mongoose pattern (interface, schema, hot-reload-safe export).
+
+#### Scenario: StoredQuery created on execute_query
+- **WHEN** `execute_query` is called with `store: true` and the query executes successfully
+- **THEN** a `StoredQuery` document is created with the project ID, token ID, model name, SQL text, and params
+
+#### Scenario: StoredQuery not created on error
+- **WHEN** `execute_query` is called with `store: true` but the query fails (validation error, execution error, timeout)
+- **THEN** no `StoredQuery` document is created
+
+### Requirement: MCP Execute Stored Query Tool
+
+The MCP server SHALL expose an `execute_stored_query` tool that re-executes a previously stored query by its ID. The tool SHALL accept a required `storedQueryId` string parameter and an optional `params` array of string values. When `params` is provided, it overrides the stored query's original parameters; when omitted, the stored parameters are used. The tool SHALL validate that the stored query belongs to the same project as the current request and that the model referenced by the stored query is within the token's scopes. The tool SHALL delegate query execution to the same `executeScopedQuery` logic used by `execute_query`, ensuring identical validation, scoping, hardening, and result formatting. All calls SHALL be logged via `McpCallLog`. The tool description SHALL explain that `storedQueryId` values are obtained from `execute_query` responses.
+
+#### Scenario: Re-execute stored query with original params
+- **WHEN** `execute_stored_query` is called with a valid `storedQueryId` and no `params`
+- **THEN** the stored query's SQL and original params are used for execution
+- **AND** results are returned in the same format as `execute_query`
+
+#### Scenario: Re-execute stored query with overridden params
+- **WHEN** `execute_stored_query` is called with a valid `storedQueryId` and `params: ["pending"]`
+- **THEN** the stored query's SQL is executed with the provided params instead of the stored ones
+- **AND** results are returned normally
+
+#### Scenario: Stored query not found
+- **WHEN** `execute_stored_query` is called with a `storedQueryId` that does not exist
+- **THEN** an error content response with `isError: true` and a "Stored query not found" message is returned
+
+#### Scenario: Stored query belongs to different project
+- **WHEN** `execute_stored_query` is called with a `storedQueryId` that belongs to a different project
+- **THEN** an error content response with `isError: true` and a "Stored query not found" message is returned (no information leakage)
+
+#### Scenario: Stored query model out of scope
+- **WHEN** `execute_stored_query` is called with a valid `storedQueryId` whose `modelName` is not in the token's scopes
+- **THEN** an error content response with `isError: true` and an "Access denied" message is returned
 

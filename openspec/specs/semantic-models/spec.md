@@ -132,7 +132,7 @@ The system SHALL provide a `SemanticModelFileService` class that manages all YAM
 
 ### Requirement: Zod Schema Validation
 
-All YAML files SHALL be validated against Zod schemas on read. Invalid files SHALL be skipped during `list()` operations. The schemas SHALL enforce required fields (`name`, `expression` object for fields, `source` for datasets), validate `custom_extensions` structure, validate `dimension` structure, accept `ai_context` as string or object, use snake_case property names throughout, and apply sensible defaults (empty arrays for optional collections).
+All YAML files SHALL be validated against Zod schemas on read. Invalid files SHALL be skipped during `list()` operations. The schemas SHALL enforce required fields (`name`, `expression` object for fields, `source` for datasets), validate `custom_extensions` structure, validate `dimension` structure, accept `ai_context` as string or object, use snake_case property names throughout, and apply sensible defaults (empty arrays for optional collections). String fields that conventionally contain serialized JSON (such as `custom_extensions[].data`) SHALL be validated as parseable JSON at the schema level using a reusable `jsonStringSchema` refinement, so that invalid JSON is rejected before reaching the filesystem.
 
 #### Scenario: Invalid YAML file is skipped
 
@@ -149,6 +149,22 @@ All YAML files SHALL be validated against Zod schemas on read. Invalid files SHA
 
 - **WHEN** a field has `expression: "plain_string"` (not an Expression object)
 - **THEN** Zod validation fails because `expression` must be an object with a `dialects` array
+
+#### Scenario: Schema rejects invalid JSON in custom_extensions data
+
+- **WHEN** a custom extension has `data: "not valid json{"`
+- **THEN** Zod validation fails with a descriptive error indicating the JSON is malformed
+- **AND** the invalid data is never written to disk
+
+#### Scenario: Schema accepts valid JSON in custom_extensions data
+
+- **WHEN** a custom extension has `data: '{"data_type":"VARCHAR","example_data":["Active"]}'`
+- **THEN** Zod validation succeeds and the extension is accepted
+
+#### Scenario: Schema accepts empty JSON object in custom_extensions data
+
+- **WHEN** a custom extension has `data: '{}'`
+- **THEN** Zod validation succeeds
 
 ### Requirement: AGENTS.md Auto-Generation
 
@@ -242,7 +258,7 @@ All `expression` properties (on fields and metrics) SHALL use the OSI `Expressio
 
 ### Requirement: Custom Extensions on All Entities
 
-All OSI entities (SemanticModel, Dataset, Field, Relationship, Metric) SHALL support an optional `custom_extensions` array. Each entry contains `vendor_name` (string, required — one of `COMMON`, `SNOWFLAKE`, `SALESFORCE`, `DBT`, `DATABRICKS`) and `data` (string, required — typically a JSON string). The Zod schema SHALL validate this structure and pass through `data` without interpreting it. The `SemanticModelFileService` SHALL preserve `custom_extensions` on read/write for all entities.
+All OSI entities (SemanticModel, Dataset, Field, Relationship, Metric) SHALL support an optional `custom_extensions` array. Each entry contains `vendor_name` (string, required — one of `COMMON`, `SNOWFLAKE`, `SALESFORCE`, `DBT`, `DATABRICKS`) and `data` (string, required — must be valid JSON). The Zod schema SHALL validate both the structure and that `data` is parseable JSON. The `SemanticModelFileService` SHALL preserve `custom_extensions` on read/write for all entities. The `updateModelExtensions` and `updateDatasetExtensions` methods SHALL validate that each extension's `data` field contains valid JSON before writing, rejecting the entire operation with a descriptive error if any entry is malformed.
 
 #### Scenario: Field with COMMON extension containing data_type and example_data
 
@@ -265,6 +281,18 @@ All OSI entities (SemanticModel, Dataset, Field, Relationship, Metric) SHALL sup
 
 - **WHEN** a semantic model root file includes `custom_extensions: [{ vendor_name: COMMON, data: '{"source_system":"airbyte"}' }]`
 - **THEN** the extension is stored in the root YAML file and preserved on read/write
+
+#### Scenario: updateModelExtensions rejects invalid JSON
+
+- **WHEN** `updateModelExtensions` is called with `[{ vendor_name: "COMMON", data: "{broken" }]`
+- **THEN** the method throws a descriptive error
+- **AND** the YAML file on disk is not modified
+
+#### Scenario: updateDatasetExtensions rejects invalid JSON
+
+- **WHEN** `updateDatasetExtensions` is called with `[{ vendor_name: "COMMON", data: "not-json" }]`
+- **THEN** the method throws a descriptive error
+- **AND** the dataset YAML file on disk is not modified
 
 ### Requirement: Dimension Support on Fields
 
@@ -486,6 +514,7 @@ The API SHALL expose endpoints under `/api/projects/:projectId/improvements` for
 - `GET /` — List improvements for the project, with optional `modelName` and `status` query filters, sorted by `createdAt` descending
 - `GET /:id` — Get a single improvement by ID
 - `PATCH /:id/implement` — Transition an improvement to `implemented` status, setting `implementedAt` to the current time
+- `DELETE /:id` — Soft-delete an improvement, returning 200 on success
 
 #### Scenario: List improvements filtered by model
 
@@ -508,9 +537,20 @@ The API SHALL expose endpoints under `/api/projects/:projectId/improvements` for
 - **WHEN** `GET /improvements/:id` is called with a non-existent ID
 - **THEN** a 404 error is returned
 
+#### Scenario: Delete improvement
+
+- **WHEN** `DELETE /improvements/:id` is called for an existing improvement
+- **THEN** the improvement is soft-deleted and no longer appears in list queries
+- **AND** a 200 response is returned
+
+#### Scenario: Delete improvement not found
+
+- **WHEN** `DELETE /improvements/:id` is called with a non-existent or already-deleted ID
+- **THEN** a 404 error is returned
+
 ### Requirement: Improvements UI in Semantic Models Sidebar
 
-The Semantic Models page sidebar SHALL include an "Improvements" accordion section below the "History" section. The section SHALL display all improvement suggestions for the project, grouped or filterable by model. Each item SHALL show a lightbulb icon, the truncated title, and a checkmark overlay if the improvement has been implemented. Clicking an improvement SHALL navigate to a detail view in the main content area.
+The Semantic Models page sidebar SHALL include an "Improvements" accordion section below the "History" section. The section SHALL display all improvement suggestions for the project, grouped or filterable by model. Each item SHALL show a lightbulb icon, the truncated title, and a checkmark overlay if the improvement has been implemented. Clicking an improvement SHALL navigate to a detail view in the main content area. Each improvement row SHALL show a trash icon on hover that soft-deletes the improvement when clicked, matching the conversation row delete pattern.
 
 #### Scenario: Sidebar shows pending improvements
 
@@ -525,11 +565,17 @@ The Semantic Models page sidebar SHALL include an "Improvements" accordion secti
 #### Scenario: Empty state
 
 - **WHEN** there are no improvements for the project
-- **THEN** the "Improvements" section shows a message: "No improvement suggestions yet"
+- **THEN** the "Improvements" section shows a message: "Improvement requests are submitted by MCP clients"
+
+#### Scenario: Delete improvement from sidebar
+
+- **WHEN** the user hovers over an improvement row and clicks the trash icon
+- **THEN** the improvement is soft-deleted via the API and removed from the list
+- **AND** if the deleted improvement was the active detail view, the user is navigated away
 
 ### Requirement: Improvement Detail View
 
-When an improvement is selected from the sidebar, the main content area SHALL display the improvement's title, description, target model name, creation date, and the MCP token name that submitted it (`createdVia`). A prominent "Implement" button SHALL appear at the top of the view. Clicking "Implement" SHALL mark the improvement as implemented (via `PATCH /implement`) and navigate to a new chat with the improvement's description pre-filled in the message input textarea. The user still needs to manually submit the message.
+When an improvement is selected from the sidebar, the main content area SHALL display the improvement's title, description, target model name, creation date, and the MCP token name that submitted it (`createdVia`). A prominent "Implement" button SHALL appear at the top of the view. Clicking "Implement" SHALL mark the improvement as implemented (via `PATCH /implement`) and navigate to a new chat with the improvement's description pre-filled in the message input textarea. The user still needs to manually submit the message. A delete action SHALL be available in the detail view header that soft-deletes the improvement and navigates the user away.
 
 #### Scenario: View improvement detail
 
@@ -544,10 +590,17 @@ When an improvement is selected from the sidebar, the main content area SHALL di
 - **AND** the chat message input is pre-filled with the improvement's description
 - **AND** the user must still click send to submit
 
-#### Scenario: Already implemented
+#### Scenario: Re-implement improvement
 
-- **WHEN** the user views an improvement that is already `implemented`
-- **THEN** the "Implement" button is replaced with a "Implemented" badge showing the implementation date
+- **WHEN** the user clicks "Implement" on an already-implemented improvement
+- **THEN** the user is navigated to a new chat with the description pre-filled (no status change needed)
+
+#### Scenario: Delete improvement from detail view
+
+- **WHEN** the user clicks the delete action in the improvement detail header
+- **THEN** the improvement is soft-deleted via the API
+- **AND** the user is navigated away from the detail view
+- **AND** the sidebar list is refreshed
 
 ### Requirement: Dataset Group Storage
 

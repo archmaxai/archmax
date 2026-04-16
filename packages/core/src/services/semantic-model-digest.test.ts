@@ -7,6 +7,7 @@ import {
   rewriteQueryColumns,
   formatField,
   oneLine,
+  blockQuote,
   normalizeAiContext,
   parseCommonExtension,
   parseValidatedQueries,
@@ -71,6 +72,20 @@ describe("oneLine", () => {
 
   it("returns empty string for undefined", () => {
     expect(oneLine(undefined)).toBe("");
+  });
+});
+
+describe("blockQuote", () => {
+  it("prefixes each line with > ", () => {
+    expect(blockQuote("line one\nline two")).toBe("> line one\n> line two");
+  });
+
+  it("handles single line", () => {
+    expect(blockQuote("single")).toBe("> single");
+  });
+
+  it("preserves blank lines inside the block", () => {
+    expect(blockQuote("a\n\nb")).toBe("> a\n> \n> b");
   });
 });
 
@@ -218,6 +233,17 @@ describe("SemanticModelDigest.overview", () => {
     });
     const { content } = SemanticModelDigest.overview(model);
     expect(content).toContain("> Use orders as central table");
+  });
+
+  it("preserves multi-line ai_context instructions structure", () => {
+    const model = makeModel({
+      name: "test",
+      ai_context: {
+        instructions: "## Revenue\nUse order_agreements.\n\n## Orders\nUse orders table.",
+      },
+    });
+    const { content } = SemanticModelDigest.overview(model);
+    expect(content).toContain("> ## Revenue\n> Use order_agreements.\n> \n> ## Orders\n> Use orders table.");
   });
 
   it("renders dataset summary table with Table Name column by default", () => {
@@ -431,6 +457,18 @@ describe("SemanticModelDigest.dataset", () => {
     });
     const { content } = SemanticModelDigest.dataset(ds);
     expect(content).toContain("> Central fact table");
+  });
+
+  it("preserves multi-line dataset instructions structure", () => {
+    const ds = makeDataset({
+      name: "orders",
+      source: "s.p.o",
+      ai_context: {
+        instructions: "## Usage\nCentral fact table.\n\n- Always filter by status",
+      },
+    });
+    const { content } = SemanticModelDigest.dataset(ds);
+    expect(content).toContain("> ## Usage\n> Central fact table.\n> \n> - Always filter by status");
   });
 
   it("paginates at 50 fields per page", () => {
