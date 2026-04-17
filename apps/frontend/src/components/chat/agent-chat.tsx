@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
-import { cn, Button, ScrollArea } from "@archmax/ui";
+import { AlertCircle, AlertTriangle, Loader2, WifiOff } from "lucide-react";
+import { cn, ScrollArea } from "@archmax/ui";
 import { toast } from "sonner";
 import { MarkdownContent } from "./markdown-components";
 import { combineSegments } from "./remark-tool-calls";
@@ -20,6 +20,9 @@ import {
 } from "../../lib/chat-types";
 import { consumeSSEStream } from "../../lib/sse";
 import { api } from "@/lib/api";
+
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY_MS = 1000;
 
 function MessageSegments({ segments }: { segments: ContentSegment[] }) {
   const hasToolCalls = segments.some((s) => s.type === "tool_call");
@@ -122,6 +125,7 @@ export function AgentChat({
   );
   const [input, setInput] = useState(initialInput ?? "");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [focusRequestId, setFocusRequestId] = useState(0);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -131,6 +135,7 @@ export function AgentChat({
   const isStreamingRef = useRef(false);
   const activeConvIdRef = useRef(conversationId);
   const createdConvIdRef = useRef<string | null>(null);
+  const reconnectAttemptRef = useRef(0);
 
   useEffect(() => {
     isStreamingRef.current = isStreaming;
@@ -163,68 +168,6 @@ export function AgentChat({
   }, [conversationId, initialMessages]);
 
   useEffect(() => {
-    if (!activeStreamConversationId || isStreamingRef.current) return;
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setIsStreaming(true);
-
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.role === "assistant" && last.isStreaming) return prev;
-      return [...prev, { role: "assistant", segments: [], isStreaming: true }];
-    });
-
-    const baseUrl = import.meta.env.VITE_API_URL ?? "";
-    const prefix = subscribeUrlPrefix ?? `/api/projects/${projectId}/agent`;
-
-    (async () => {
-      try {
-        const res = await fetch(
-          `${baseUrl}${prefix}/subscribe/${activeStreamConversationId}`,
-          { signal: controller.signal },
-        );
-        if (!res.ok) {
-          setIsStreaming(false);
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === "assistant" && last.isStreaming) {
-              return prev.slice(0, -1);
-            }
-            return prev;
-          });
-          return;
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) { setIsStreaming(false); return; }
-
-        await consumeSSEStream(reader, (event, parsed) => {
-          handleSSEEventRef.current(event, parsed);
-        });
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          console.error("[agent-chat] Stream reconnection failed:", err);
-        }
-      } finally {
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [...prev.slice(0, -1), { ...last, isStreaming: false }];
-          }
-          return prev;
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-        onStreamEnd?.();
-      }
-    })();
-
-    return () => { controller.abort(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStreamConversationId, projectId]);
-
-  useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -247,6 +190,138 @@ export function AgentChat({
   useEffect(() => {
     handleSSEEventRef.current = handleSSEEvent;
   });
+
+  const subscribeUrl = useCallback(
+    (convId: string) => {
+      const baseUrl = import.meta.env.VITE_API_URL ?? "";
+      const prefix = subscribeUrlPrefix ?? `/api/projects/${projectId}/agent`;
+      return `${baseUrl}${prefix}/subscribe/${convId}`;
+    },
+    [projectId, subscribeUrlPrefix],
+  );
+
+  /**
+   * Try to resume a broken stream via the Redis-buffered subscribe endpoint.
+   * Exponential backoff (1s, 2s, 4s…), gives up after MAX_RECONNECT_ATTEMPTS.
+   */
+  const attemptReconnect = useCallback(
+    async (convId: string, signal: AbortSignal): Promise<boolean> => {
+      for (let attempt = 0; attempt < MAX_RECONNECT_ATTEMPTS; attempt++) {
+        if (signal.aborted) return false;
+
+        reconnectAttemptRef.current = attempt + 1;
+        setIsReconnecting(true);
+
+        const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+        if (signal.aborted) return false;
+
+        try {
+          const res = await fetch(subscribeUrl(convId), { signal });
+
+          if (res.status === 404) return false;
+          if (!res.ok) continue;
+
+          const reader = res.body?.getReader();
+          if (!reader) continue;
+
+          setIsReconnecting(false);
+          const { receivedDone } = await consumeSSEStream(reader, (event, parsed) => {
+            handleSSEEventRef.current(event, parsed);
+          });
+
+          if (receivedDone) return true;
+        } catch (err) {
+          if ((err as Error).name === "AbortError") return false;
+        }
+      }
+
+      setIsReconnecting(false);
+      return false;
+    },
+    [subscribeUrl],
+  );
+
+  /**
+   * Consume a reader and, if the stream breaks without a `done` event,
+   * automatically attempt reconnection. Returns true if the stream
+   * completed cleanly (either directly or via reconnect).
+   */
+  const consumeWithReconnect = useCallback(
+    async (
+      reader: ReadableStreamDefaultReader<Uint8Array>,
+      convId: string,
+      signal: AbortSignal,
+      onEvent: (event: string, parsed: Record<string, unknown>) => void,
+    ): Promise<boolean> => {
+      const { receivedDone } = await consumeSSEStream(reader, onEvent);
+      if (receivedDone || signal.aborted) return receivedDone;
+      return attemptReconnect(convId, signal);
+    },
+    [attemptReconnect],
+  );
+
+  useEffect(() => {
+    if (!activeStreamConversationId || isStreamingRef.current) return;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setIsStreaming(true);
+
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === "assistant" && last.isStreaming) return prev;
+      return [...prev, { role: "assistant", segments: [], isStreaming: true }];
+    });
+
+    (async () => {
+      try {
+        const res = await fetch(
+          subscribeUrl(activeStreamConversationId),
+          { signal: controller.signal },
+        );
+        if (!res.ok) {
+          setIsStreaming(false);
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "assistant" && last.isStreaming) return prev.slice(0, -1);
+            return prev;
+          });
+          return;
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) { setIsStreaming(false); return; }
+
+        await consumeWithReconnect(
+          reader,
+          activeStreamConversationId,
+          controller.signal,
+          (event, parsed) => handleSSEEventRef.current(event, parsed),
+        );
+      } catch (err) {
+        if ((err as Error).name !== "AbortError" && !controller.signal.aborted) {
+          await attemptReconnect(activeStreamConversationId, controller.signal);
+        }
+      } finally {
+        reconnectAttemptRef.current = 0;
+        setIsReconnecting(false);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), { ...last, isStreaming: false }];
+          }
+          return prev;
+        });
+        setIsStreaming(false);
+        abortRef.current = null;
+        onStreamEnd?.();
+      }
+    })();
+
+    return () => { controller.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStreamConversationId, subscribeUrl, consumeWithReconnect, attemptReconnect]);
 
   const handleFileUpload = useCallback(async (file: File): Promise<UploadedFile> => {
     setIsUploading(true);
@@ -351,28 +426,47 @@ export function AgentChat({
         return;
       }
 
-      await consumeSSEStream(reader, handleSSEEvent);
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
+      const convId = activeConvIdRef.current;
+      const recovered = convId
+        ? await consumeWithReconnect(reader, convId, controller.signal, handleSSEEvent)
+        : (await consumeSSEStream(reader, handleSSEEvent)).receivedDone;
+
+      if (!recovered && !controller.signal.aborted) {
         updateLastAssistant((m) => {
           const hasContent = getTextContent(m.segments);
-          return {
-            ...m,
-            segments: hasContent
-              ? m.segments
-              : [{ type: "text", content: `Error: ${err instanceof Error ? err.message : "Network error"}` }],
-            isStreaming: false,
-          };
+          if (!hasContent) return { ...m, error: "Connection lost. Please try again." };
+          return m;
         });
       }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        const convId = activeConvIdRef.current;
+        const recovered = convId && !controller.signal.aborted
+          ? await attemptReconnect(convId, controller.signal)
+          : false;
+        if (!recovered) {
+          updateLastAssistant((m) => {
+            const hasContent = getTextContent(m.segments);
+            return {
+              ...m,
+              segments: hasContent
+                ? m.segments
+                : [{ type: "text", content: `Error: ${err instanceof Error ? err.message : "Network error"}` }],
+              isStreaming: false,
+            };
+          });
+        }
+      }
     } finally {
+      reconnectAttemptRef.current = 0;
+      setIsReconnecting(false);
       updateLastAssistant((m) => ({ ...m, isStreaming: false }));
       setIsStreaming(false);
       abortRef.current = null;
       onStreamEnd?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, isStreaming, projectId, conversationId, uploadedFiles, chatRequest]);
+  }, [input, isStreaming, projectId, conversationId, uploadedFiles, chatRequest, consumeWithReconnect, attemptReconnect]);
 
   function handleSSEEvent(
     event: string,
@@ -515,11 +609,28 @@ export function AgentChat({
                               {textContent}
                             </div>
                           ) : msg.segments.length > 0 ? (
-                            <MessageSegments segments={msg.segments} />
+                            <>
+                              <MessageSegments segments={msg.segments} />
+                              {msg.isStreaming && isReconnecting && (
+                                <div className="mt-3 flex items-center gap-2 text-muted-foreground">
+                                  <WifiOff className="h-3.5 w-3.5" />
+                                  <span className="text-xs">Reconnecting…</span>
+                                </div>
+                              )}
+                            </>
                           ) : msg.isStreaming ? (
                             <div className="flex items-center gap-2 text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              <span className="text-xs">Thinking…</span>
+                              {isReconnecting ? (
+                                <>
+                                  <WifiOff className="h-4 w-4" />
+                                  <span className="text-xs">Reconnecting…</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  <span className="text-xs">Thinking…</span>
+                                </>
+                              )}
                             </div>
                           ) : null}
 

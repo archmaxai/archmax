@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lightbulb, Check, ArrowRight, Calendar, Bot, Trash2 } from "lucide-react";
+import { Lightbulb, Check, ArrowRight, Calendar, Bot } from "lucide-react";
 import { Button, Card } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
@@ -56,14 +56,6 @@ function ImprovementRoute() {
     });
   }
 
-  async function handleDelete() {
-    await api.api.projects[":projectId"].improvements[":id"].$delete({
-      param: { projectId, id: improvementId },
-    });
-    queryClient.invalidateQueries({ queryKey: ["improvements", project._id] });
-    navigate({ to: "/$projectId/models", params: { projectId: project._id } });
-  }
-
   return (
     <div className="flex h-full flex-col">
       <header className="px-8 py-6">
@@ -87,14 +79,6 @@ function ImprovementRoute() {
               ) : (
                 <ArrowRight className="h-3.5 w-3.5" />
               )}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDelete}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>
