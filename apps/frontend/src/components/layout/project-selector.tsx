@@ -55,7 +55,7 @@ export function ProjectSelector({ currentProject }: { currentProject: Project | 
                 key={p._id}
                 onClick={() =>
                   navigate({
-                    to: "/$projectId/connections",
+                    to: "/$projectId",
                     params: { projectId: p._id },
                   })
                 }

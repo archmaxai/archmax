@@ -47,7 +47,7 @@ The sidebar SHALL display a project selector above the navigation menu. The sele
 #### Scenario: Switch project
 
 - **WHEN** the user selects a different project from the dropdown
-- **THEN** the URL updates to `/<newProjectId>/connections`
+- **THEN** the URL updates to `/<newProjectId>` (the project dashboard)
 - **AND** all content reloads for the new project context
 
 #### Scenario: Create project via selector
@@ -64,9 +64,27 @@ The sidebar SHALL display a project selector above the navigation menu. The sele
 
 ### Requirement: Sidebar Navigation
 
-The sidebar SHALL display navigation items below the project selector. Each item has an icon and a label. The top-level items are: Data Sources, Semantic Models, Testing, MCP Access, and Settings. The active route is visually highlighted.
+The sidebar SHALL display navigation items below the project selector. Each item has an icon and a label. The top-level items are: Home, Data Federation, Semantic Models, Testing, MCP Access, and Settings. The active route is visually highlighted.
+
+The Home item SHALL be a leaf link pointing to `/$projectId` (the project dashboard). It SHALL use exact-match active detection so it is only highlighted when the user is on the dashboard, not on any sub-route.
+
+The Data Federation item SHALL be a collapsible group with two sub-items: Data Sources (`/$projectId/connections`) and Browser (`/$projectId/connections/data`).
 
 The Testing item SHALL be a collapsible group with four sub-items: Test Agents (`/$projectId/testing/agents`), Test Cases (`/$projectId/testing/cases`), Test Runs (`/$projectId/testing/runs`), and Playground (`/$projectId/testing/playground`). The group expands automatically when the active route is within the testing section. Clicking the Testing label toggles the group open/closed.
+
+The MCP Access item SHALL be a collapsible group with two sub-items: Tokens (`/$projectId/mcp-access`) and Log (`/$projectId/monitoring`).
+
+#### Scenario: Navigate to Home
+
+- **WHEN** the user clicks the Home nav item
+- **THEN** the URL changes to `/<projectId>`
+- **AND** the Home item is highlighted as active
+
+#### Scenario: Home not active on sub-routes
+
+- **WHEN** the user is on `/<projectId>/connections`
+- **THEN** the Home item is not highlighted
+- **AND** the Data Federation group is highlighted instead
 
 #### Scenario: Navigate to Data Connections
 

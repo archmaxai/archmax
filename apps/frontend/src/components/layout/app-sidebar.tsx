@@ -10,6 +10,7 @@ import {
   PanelLeftOpen,
   ChevronRight,
   FlaskConical,
+  House,
 } from "lucide-react";
 import {
   cn,
@@ -29,6 +30,7 @@ type NavItem =
   | { label: string; icon: typeof Database; path?: undefined; children: NavChild[] };
 
 const navItems: NavItem[] = [
+  { label: "Home", icon: House, path: "" },
   {
     label: "Data Federation",
     icon: Database,
@@ -93,6 +95,9 @@ export function AppSidebar({
 
   function isPathActive(path: string) {
     if (!project) return false;
+    if (path === "") {
+      return pathname === `/${project._id}` || pathname === `/${project._id}/`;
+    }
     const href = `/${project._id}/${path}`;
     return pathname === href || pathname.startsWith(href + "/");
   }
@@ -274,7 +279,7 @@ export function AppSidebar({
     if (!project) {
       const inner = (
         <div
-          key={path}
+          key={label}
           className={cn(
             "flex items-center gap-3 rounded-full text-sm text-sidebar-foreground/30 cursor-not-allowed",
             collapsed ? "h-9 w-9 justify-center" : "px-3 py-2",
@@ -287,7 +292,7 @@ export function AppSidebar({
 
       if (collapsed) {
         return (
-          <Tooltip key={path}>
+          <Tooltip key={label}>
             <TooltipTrigger asChild>{inner}</TooltipTrigger>
             <TooltipContent side="right">{label}</TooltipContent>
           </Tooltip>
@@ -297,11 +302,12 @@ export function AppSidebar({
     }
 
     const isActive = isPathActive(path);
+    const linkTo = path === "" ? "/$projectId" : `/$projectId/${path}`;
 
     const link = (
       <Link
-        key={path}
-        to={`/$projectId/${path}`}
+        key={label}
+        to={linkTo}
         params={{ projectId: project._id }}
         className={cn(
           "flex items-center gap-3 rounded-full text-sm transition-colors",
@@ -318,7 +324,7 @@ export function AppSidebar({
 
     if (collapsed) {
       return (
-        <Tooltip key={path}>
+        <Tooltip key={label}>
           <TooltipTrigger asChild>{link}</TooltipTrigger>
           <TooltipContent side="right">{label}</TooltipContent>
         </Tooltip>

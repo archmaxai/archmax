@@ -84,6 +84,11 @@ These colors are used for dataset group boxes in the graph view (with lightened 
 - **Inline label + input layout**: On settings/configuration pages, labels and their corresponding inputs (text fields, selects, number inputs) MUST be placed on the same line using `grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3`. The label sits in the left column, the input stretches in the right column. Do not stack labels above inputs on settings pages — the inline layout is more compact and scannable.
 - **Card sections with description**: Each settings card has a section title (`text-base font-medium`) and a description paragraph, followed by the inline label–input grid. Keep the description above the grid, not interleaved with fields.
 
+### Clickable Cards
+
+- **No shadow on hover**: Cards that act as links (e.g., dashboard metric cards) must NOT use `hover:shadow-*` effects. Shadows are reserved for elevated overlay surfaces (popovers, dialogs). Instead, use a subtle background-color transition: `transition-colors hover:bg-card/80 dark:hover:bg-card/70`.
+- **Hover chevron**: Optionally show a `ChevronRight` icon on hover (hidden by default, revealed via `opacity-0 group-hover:opacity-100`) as an affordance that the card is clickable.
+
 ### Tables
 
 - **No card padding around tables**: When a `<Table>` is placed directly inside a `<Card>`, the card's vertical padding is automatically stripped (via `:has()` on `data-slot`). Tables should sit flush within their container — no extra wrapper padding at top or bottom.

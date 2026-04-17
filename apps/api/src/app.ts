@@ -23,6 +23,7 @@ import testCases from "./routes/test-cases";
 import testRuns from "./routes/test-runs";
 import playground from "./routes/playground";
 import improvements from "./routes/improvements";
+import dashboard from "./routes/dashboard";
 import archmaxMcp from "./mcp/archmax-route";
 
 const app = new Hono()
@@ -89,7 +90,8 @@ const app = new Hono()
   .route("/api/projects/:projectId/test-cases", testCases)
   .route("/api/projects/:projectId/test-runs", testRuns)
   .route("/api/projects/:projectId/playground", playground)
-  .route("/api/projects/:projectId/improvements", improvements);
+  .route("/api/projects/:projectId/improvements", improvements)
+  .route("/api/projects/:projectId/dashboard-stats", dashboard);
 
 app.onError((err, c) => {
   if (err instanceof AppError) {
