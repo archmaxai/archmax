@@ -28,6 +28,9 @@ const envSchema = z.object({
   AGENT_API_KEY: z.string().optional(),
   AGENT_MODEL: z.string().optional().default("anthropic/claude-sonnet-4.6"),
   AGENT_TITLE_MODEL: z.string().optional().default("anthropic/claude-haiku-4-5-20250929"),
+  AGENT_REQUEST_TIMEOUT: z.string().optional().default("300"),
+  AGENT_MAX_RETRIES: z.string().optional().default("3"),
+  QUERY_TIMEOUT_MS: z.string().optional().default("30000"),
 
   REDIS_URL: z.string().optional(),
   WORKER_CONCURRENCY: z.string().optional(),

@@ -176,6 +176,8 @@ export async function createPlaygroundAgent(
     model: agent.llmModel,
     apiKey,
     configuration: { baseURL: agent.llmBaseUrl },
+    maxRetries: 3,
+    timeout: 300_000,
   });
 
   const fileSvc = new SemanticModelFileService(env.projectsDir);

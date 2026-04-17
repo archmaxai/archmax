@@ -24,7 +24,11 @@ function safeStringify(value: unknown): string {
 }
 
 const MAX_ROWS = 1000;
-const QUERY_TIMEOUT_MS = 30_000;
+
+function getQueryTimeoutMs(): number {
+  const configured = Number(process.env.QUERY_TIMEOUT_MS);
+  return configured > 0 ? configured : 30_000;
+}
 
 export const EXECUTE_QUERY_DESCRIPTION = [
   "Run a read-only SQL query scoped to a single semantic model.",
@@ -34,7 +38,7 @@ export const EXECUTE_QUERY_DESCRIPTION = [
   "Do NOT add schema or catalog prefixes; the search_path resolves dataset names automatically.",
   "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed.",
   "Use $1, $2, ... placeholders and provide values in the params array.",
-  `Results are limited to ${MAX_ROWS} rows with a ${QUERY_TIMEOUT_MS / 1000}-second timeout.`,
+  `Results are limited to ${MAX_ROWS} rows with a ${getQueryTimeoutMs() / 1000}-second timeout.`,
   "",
   "When store is true (the default), the response includes a storedQueryId.",
   "Pass this ID to execute_stored_query to re-run the same query later, optionally with different params.",
@@ -52,7 +56,7 @@ export const EXECUTE_STORED_QUERY_DESCRIPTION = [
   "The storedQueryId is returned by execute_query when store is true (the default).",
   "Optionally override the original parameter values by providing a new params array.",
   "If params is omitted, the stored parameters are used.",
-  `Results follow the same format, limits (${MAX_ROWS} rows), and timeout (${QUERY_TIMEOUT_MS / 1000}s) as execute_query.`,
+  `Results follow the same format, limits (${MAX_ROWS} rows), and timeout (${getQueryTimeoutMs() / 1000}s) as execute_query.`,
 ].join("\n");
 
 export async function listSemanticModels(
@@ -265,12 +269,13 @@ export async function executeScopedQuery(
       }
     }
 
+    const queryTimeout = getQueryTimeoutMs();
     const queryResult = await Promise.race([
       prepared.run(),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`Query timed out after ${QUERY_TIMEOUT_MS / 1000}s`)),
-          QUERY_TIMEOUT_MS,
+          () => reject(new Error(`Query timed out after ${queryTimeout / 1000}s`)),
+          queryTimeout,
         ),
       ),
     ]);
