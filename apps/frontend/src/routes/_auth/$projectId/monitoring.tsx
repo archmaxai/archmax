@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -8,6 +8,8 @@ import {
   ChevronRight,
   AlertCircle,
   CheckCircle2,
+  Wand2,
+  X,
 } from "lucide-react";
 import {
   Badge,
@@ -20,6 +22,7 @@ import {
   TableHeader,
   TableRow,
   Sheet,
+  SheetClose,
   SheetContent,
   SheetHeader,
   SheetTitle,
@@ -56,8 +59,39 @@ interface McpLogsResponse {
 
 const PAGE_SIZE = 50;
 
+function getModelName(log: McpLogEntry): string | null {
+  const name = log.inputArgs?.modelName ?? log.inputArgs?.model_name;
+  return typeof name === "string" ? name : null;
+}
+
+function buildLogRefinePrompt(log: McpLogEntry, modelName: string): string {
+  let prompt = `An MCP tool call against the semantic model "${modelName}" needs attention.\n\n`;
+  prompt += `**Tool:** \`${log.toolName}\`\n\n`;
+
+  if (log.inputArgs && Object.keys(log.inputArgs).length > 0) {
+    const argsSummary = JSON.stringify(log.inputArgs, null, 2);
+    const truncated = argsSummary.length > 500 ? argsSummary.slice(0, 500) + "..." : argsSummary;
+    prompt += `**Input arguments:**\n\`\`\`json\n${truncated}\n\`\`\`\n\n`;
+  }
+
+  if (log.isError && log.errorMessage) {
+    prompt += `**Error:** ${log.errorMessage}\n\n`;
+  }
+
+  if (log.outputContent) {
+    const truncated = log.outputContent.length > 500
+      ? log.outputContent.slice(0, 500) + "..."
+      : log.outputContent;
+    prompt += `**Output:** ${truncated}\n\n`;
+  }
+
+  prompt += "Please review the semantic model and refine it to be easier to navigate: improve ai_context descriptions, simplify dataset/field naming, add missing relationships, or reorganize the structure so the agent can answer more efficiently with fewer tool calls.";
+  return prompt;
+}
+
 function MonitoringPage() {
   const { project } = useProject();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [selectedLog, setSelectedLog] = useState<McpLogEntry | null>(null);
 
@@ -220,23 +254,54 @@ function MonitoringPage() {
       </div>
 
       <Sheet open={!!selectedLog} onOpenChange={(open) => { if (!open) setSelectedLog(null); }}>
-        <SheetContent side="right" className="sm:max-w-xl w-full">
+        <SheetContent side="right" className="sm:max-w-xl w-full" showCloseButton={false}>
           {selectedLog && (
             <>
               <SheetHeader>
-                <SheetTitle className="flex items-center gap-2">
-                  <code className="text-sm font-normal bg-muted px-1.5 py-0.5 rounded">
-                    {selectedLog.toolName ?? selectedLog.method}
-                  </code>
-                  {selectedLog.isError ? (
-                    <Badge variant="destructive" className="text-xs">Error</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-xs">OK</Badge>
-                  )}
-                </SheetTitle>
-                <SheetDescription>
-                  {formatTimestamp(selectedLog.createdAt)} &middot; {selectedLog.tokenName} &middot; {formatDuration(selectedLog.durationMs)} &middot; {selectedLog.clientIp}
-                </SheetDescription>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <SheetTitle className="flex items-center gap-2">
+                      {selectedLog.toolName ?? selectedLog.method}
+                      {selectedLog.isError ? (
+                        <Badge variant="destructive" className="text-xs">Error</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs">OK</Badge>
+                      )}
+                    </SheetTitle>
+                    <SheetDescription>
+                      {formatTimestamp(selectedLog.createdAt)} &middot; {selectedLog.tokenName} &middot; {formatDuration(selectedLog.durationMs)} &middot; {selectedLog.clientIp}
+                    </SheetDescription>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {selectedLog.method === "tools/call" && (() => {
+                      const modelName = getModelName(selectedLog);
+                      if (!modelName) return null;
+                      return (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => {
+                            navigate({
+                              to: "/$projectId/models/chat/$conversationId",
+                              params: { projectId: project._id, conversationId: "new" },
+                              search: { prefill: buildLogRefinePrompt(selectedLog, modelName) },
+                            });
+                          }}
+                        >
+                          <Wand2 className="h-3.5 w-3.5" />
+                          Refine
+                        </Button>
+                      );
+                    })()}
+                    <SheetClose asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <X className="h-4 w-4" />
+                        <span className="sr-only">Close</span>
+                      </Button>
+                    </SheetClose>
+                  </div>
+                </div>
               </SheetHeader>
 
               <ScrollArea className="flex-1 min-h-0 px-4">
@@ -246,7 +311,7 @@ function MonitoringPage() {
                       <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
                         Input Arguments
                       </h4>
-                      <pre className="text-xs font-mono bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words">
+                      <pre className="text-xs font-mono bg-card rounded-xl p-3 overflow-x-auto whitespace-pre-wrap break-words">
                         {JSON.stringify(selectedLog.inputArgs, null, 2)}
                       </pre>
                     </div>
@@ -256,7 +321,7 @@ function MonitoringPage() {
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
                       Output
                     </h4>
-                    <pre className="text-xs font-mono bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words">
+                    <pre className="text-xs font-mono bg-card rounded-xl p-3 overflow-x-auto whitespace-pre-wrap break-words">
                       {selectedLog.outputContent ?? "—"}
                     </pre>
                   </div>
@@ -266,7 +331,7 @@ function MonitoringPage() {
                       <h4 className="text-xs font-medium text-destructive uppercase tracking-wide mb-2">
                         Error Message
                       </h4>
-                      <pre className="text-xs font-mono bg-destructive/10 text-destructive rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words">
+                      <pre className="text-xs font-mono bg-destructive/10 text-destructive rounded-xl p-3 overflow-x-auto whitespace-pre-wrap break-words">
                         {selectedLog.errorMessage}
                       </pre>
                     </div>
