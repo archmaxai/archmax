@@ -67,18 +67,19 @@ async function loginAndSaveState(page: Page, context: BrowserContext) {
 async function ensureProject(page: Page): Promise<string> {
   await page.goto("/");
   await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(500);
 
   const url = page.url();
-  const projectMatch = url.match(/\/([a-f0-9]{24})\//);
+  const projectMatch = url.match(/\/([a-f0-9]{24})(?:\/|$)/);
   if (projectMatch) return projectMatch[1];
 
   await page.getByRole("button", { name: "Select a project" }).click();
   await page.getByRole("menuitem", { name: "New Project" }).click();
   await page.getByLabel("Title").fill(PROJECT_NAME);
   await page.getByRole("button", { name: "Create" }).click();
-  await page.waitForURL(/\/[a-f0-9]{24}\//, { timeout: 10_000 });
+  await page.waitForURL(/\/[a-f0-9]{24}(?:\/|$)/, { timeout: 10_000 });
   const newUrl = page.url();
-  return newUrl.match(/\/([a-f0-9]{24})\//)![1];
+  return newUrl.match(/\/([a-f0-9]{24})(?:\/|$)/)![1];
 }
 
 async function createConnection(
