@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockClient = {
   llen: vi.fn(),
@@ -25,13 +25,28 @@ import {
   publishStreamEvent,
   clearStreamBuffer,
   subscribeToStream,
+  bridgeRedisToSSE,
+  streamBufferedToSSE,
+  type SSEWriter,
 } from "./stream-bridge";
 
 const mockedGetRedis = vi.mocked(getRedis);
 
+function createMockWriter(): SSEWriter & { calls: Array<{ event?: string; data: string }> } {
+  const calls: Array<{ event?: string; data: string }> = [];
+  return {
+    calls,
+    writeSSE: vi.fn(async (msg) => { calls.push(msg); }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockedGetRedis.mockReturnValue(mockClient as any);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("isStreamActive", () => {
@@ -158,5 +173,95 @@ describe("subscribeToStream", () => {
 
     await unsub();
     expect(mockSub.unsubscribe).toHaveBeenCalledWith("stream-events:conv-1");
+  });
+});
+
+describe("bridgeRedisToSSE", () => {
+  it("forwards events from Redis pub/sub to the SSE writer and exits on done", async () => {
+    let messageHandler: (ch: string, msg: string) => void = () => {};
+    const mockSub = {
+      on: vi.fn((event: string, handler: (ch: string, msg: string) => void) => {
+        if (event === "message") messageHandler = handler;
+      }),
+      subscribe: vi.fn().mockResolvedValue(undefined),
+      unsubscribe: vi.fn().mockResolvedValue(undefined),
+      quit: vi.fn().mockResolvedValue(undefined),
+    };
+    mockClient.duplicate.mockReturnValue(mockSub);
+
+    const writer = createMockWriter();
+    vi.useFakeTimers();
+
+    const bridgePromise = bridgeRedisToSSE(writer, "conv-1", "[test]");
+
+    // Simulate events arriving via Redis pub/sub
+    await vi.advanceTimersByTimeAsync(0);
+    messageHandler("stream-events:conv-1", JSON.stringify({ event: "token", data: '{"content":"hi"}' }));
+    messageHandler("stream-events:conv-1", JSON.stringify({ event: "done", data: "{}" }));
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await bridgePromise;
+
+    const eventNames = writer.calls.map((c) => c.event);
+    expect(eventNames).toContain("token");
+    expect(eventNames).toContain("done");
+  });
+
+  it("emits error and done when Redis subscription fails", async () => {
+    mockedGetRedis.mockReturnValue(null);
+
+    const writer = createMockWriter();
+    await bridgeRedisToSSE(writer, "conv-1", "[test]");
+
+    const eventNames = writer.calls.map((c) => c.event);
+    expect(eventNames).toContain("error");
+    expect(eventNames).toContain("done");
+  });
+});
+
+describe("streamBufferedToSSE", () => {
+  it("streams buffered events and stops at done", async () => {
+    const writer = createMockWriter();
+
+    mockClient.lrange
+      .mockResolvedValueOnce([
+        JSON.stringify({ event: "token", data: '{"content":"hello"}' }),
+      ])
+      .mockResolvedValueOnce([
+        JSON.stringify({ event: "token", data: '{"content":" world"}' }),
+        JSON.stringify({ event: "done", data: "{}" }),
+      ]);
+
+    vi.useFakeTimers();
+    const promise = streamBufferedToSSE(writer, "conv-1");
+    // First poll returns token, second returns token + done
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(200);
+    await promise;
+
+    const eventNames = writer.calls.map((c) => c.event);
+    expect(eventNames).toEqual(["token", "token", "done"]);
+  });
+
+  it("handles empty polls before events arrive", async () => {
+    const writer = createMockWriter();
+
+    mockClient.lrange
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        JSON.stringify({ event: "done", data: "{}" }),
+      ]);
+
+    vi.useFakeTimers();
+    const promise = streamBufferedToSSE(writer, "conv-1");
+
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(200);
+    await promise;
+
+    const eventNames = writer.calls.map((c) => c.event);
+    expect(eventNames).toEqual(["done"]);
   });
 });

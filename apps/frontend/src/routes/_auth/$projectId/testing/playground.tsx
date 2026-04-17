@@ -189,7 +189,7 @@ function PlaygroundPage() {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="h-5 w-5"
+                className="h-5 w-5 bg-foreground text-background hover:bg-foreground/80 hover:text-background rounded-full"
                 onClick={handleNewConversation}
               >
                 <Plus className="h-3 w-3" />

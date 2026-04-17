@@ -159,7 +159,7 @@ function ModelsLayout() {
                   variant="ghost"
                   size="icon-sm"
                   asChild
-                  className="h-5 w-5"
+                  className="h-5 w-5 bg-foreground text-background hover:bg-foreground/80 hover:text-background rounded-full"
                 >
                   <Link
                     to="/$projectId/models/chat/$conversationId"

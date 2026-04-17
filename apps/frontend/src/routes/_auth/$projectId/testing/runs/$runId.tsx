@@ -35,6 +35,7 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
+  cn,
 } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
@@ -305,12 +306,16 @@ function TestRunDetailPage() {
           <div className="space-y-2">
             {pagedCases.map((tc, i) => {
               const globalIndex = globalOffset + i;
-              const isExpanded = expandedCases.has(globalIndex);
+              const caseFinished = tc.status !== "pending" && tc.status !== "running";
+              const isExpanded = caseFinished && expandedCases.has(globalIndex);
               return (
                 <Card key={globalIndex} className="p-0 gap-0">
                   <button
-                    onClick={() => toggleExpand(globalIndex)}
-                    className="flex items-center gap-3 w-full text-left px-5 py-3.5"
+                    onClick={() => caseFinished && toggleExpand(globalIndex)}
+                    className={cn(
+                      "flex items-center gap-3 w-full text-left px-5 py-3.5",
+                      !caseFinished && "cursor-default",
+                    )}
                   >
                     {caseStatusIcon(tc.status)}
                     <div className="flex-1 min-w-0">
@@ -333,9 +338,9 @@ function TestRunDetailPage() {
                           {(tc.durationMs / 1000).toFixed(1)}s
                         </span>
                       )}
-                      {isExpanded
+                      {caseFinished && (isExpanded
                         ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                        : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                        : <ChevronDown className="h-4 w-4 text-muted-foreground" />)}
                     </div>
                   </button>
 

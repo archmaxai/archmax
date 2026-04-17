@@ -10,6 +10,15 @@ export interface StreamEvent {
   data: string;
 }
 
+/** Minimal interface for an SSE stream writer (compatible with Hono's SSEStreamingApi). */
+export interface SSEWriter {
+  writeSSE(message: { event?: string; data: string }): Promise<void>;
+}
+
+const SSE_PING_INTERVAL_MS = 15_000;
+const SUBSCRIBE_POLL_INTERVAL_MS = 200;
+const SUBSCRIBE_PINGS_PER_CYCLE = Math.round(SSE_PING_INTERVAL_MS / SUBSCRIBE_POLL_INTERVAL_MS);
+
 /**
  * Publish a stream event from the worker to the API via Redis pub/sub,
  * and append it to a Redis list so reconnecting clients can replay history.
@@ -118,4 +127,81 @@ export async function subscribeToStream(
       // already cleaned up
     }
   };
+}
+
+/**
+ * Bridge Redis pub/sub events to an SSE response stream.
+ * Sends periodic pings to keep the connection alive through proxies.
+ */
+export async function bridgeRedisToSSE(
+  stream: SSEWriter,
+  conversationId: string,
+  logPrefix = "[sse]",
+): Promise<void> {
+  let unsubscribe: (() => Promise<void>) | undefined;
+  let streamDone = false;
+
+  try {
+    unsubscribe = await subscribeToStream(conversationId, (event: StreamEvent) => {
+      stream.writeSSE({ event: event.event, data: event.data }).catch(() => {});
+      if (event.event === "done") {
+        streamDone = true;
+        unsubscribe?.().catch(() => {});
+      }
+    });
+
+    while (!streamDone) {
+      await new Promise((r) => setTimeout(r, SSE_PING_INTERVAL_MS));
+      if (!streamDone) {
+        stream.writeSSE({ event: "ping", data: "{}" }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error(`${logPrefix} SSE bridge error:`, err);
+    await stream.writeSSE({ event: "error", data: JSON.stringify({ error: "Stream bridge failed" }) });
+    await stream.writeSSE({ event: "done", data: "{}" });
+  } finally {
+    if (!streamDone && unsubscribe) {
+      await unsubscribe().catch(() => {});
+    }
+  }
+}
+
+/**
+ * Stream buffered events from Redis to an SSE response (polling subscribe).
+ * Sends periodic pings to keep the connection alive through proxies.
+ */
+export async function streamBufferedToSSE(
+  stream: SSEWriter,
+  conversationId: string,
+): Promise<void> {
+  let cursor = 0;
+  let done = false;
+  let pollsSinceLastEvent = 0;
+
+  while (!done) {
+    const { events, nextIndex } = await getBufferedStreamEvents(conversationId, cursor);
+    cursor = nextIndex;
+
+    if (events.length > 0) {
+      pollsSinceLastEvent = 0;
+    } else {
+      pollsSinceLastEvent++;
+    }
+
+    for (const event of events) {
+      await stream.writeSSE({ event: event.event, data: event.data });
+      if (event.event === "done") {
+        done = true;
+        break;
+      }
+    }
+
+    if (!done) {
+      if (pollsSinceLastEvent > 0 && pollsSinceLastEvent % SUBSCRIBE_PINGS_PER_CYCLE === 0) {
+        stream.writeSSE({ event: "ping", data: "{}" }).catch(() => {});
+      }
+      await new Promise((r) => setTimeout(r, SUBSCRIBE_POLL_INTERVAL_MS));
+    }
+  }
 }

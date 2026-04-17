@@ -8,10 +8,9 @@ import { Conversation, TestAgent } from "@archmax/core/models/index";
 import { isRedisConfigured, publishCancelSignal } from "@archmax/core/infra/redis";
 import { enqueueAgentJob } from "@archmax/core/queue/producer";
 import {
-  subscribeToStream,
-  getBufferedStreamEvents,
+  bridgeRedisToSSE,
+  streamBufferedToSSE,
   isStreamActive,
-  type StreamEvent,
 } from "@archmax/core/streaming/stream-bridge";
 import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
 import { processAgentStream, createStreamCollector } from "@archmax/core/services/agent-stream";
@@ -83,39 +82,7 @@ const app = new Hono()
           event: "conversation",
           data: JSON.stringify({ conversationId: conv._id }),
         });
-
-        let unsubscribe: (() => Promise<void>) | null = null;
-
-        try {
-          unsubscribe = await subscribeToStream(
-            conv._id.toString(),
-            (event: StreamEvent) => {
-              stream
-                .writeSSE({ event: event.event, data: event.data })
-                .catch(() => {});
-
-              if (event.event === "done") {
-                unsubscribe?.().catch(() => {});
-                unsubscribe = null;
-              }
-            },
-          );
-
-          while (unsubscribe) {
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-        } catch (err) {
-          console.error("[playground] SSE bridge error:", err);
-          await stream.writeSSE({
-            event: "error",
-            data: JSON.stringify({ error: "Stream bridge failed" }),
-          });
-          await stream.writeSSE({ event: "done", data: "{}" });
-        } finally {
-          if (unsubscribe) {
-            await unsubscribe().catch(() => {});
-          }
-        }
+        await bridgeRedisToSSE(stream, conv._id.toString(), "[playground]");
       });
     }
 
@@ -229,30 +196,7 @@ const app = new Hono()
       return c.json({ error: "No active stream" }, 404);
     }
 
-    return streamSSE(c, async (stream) => {
-      let cursor = 0;
-      let done = false;
-
-      while (!done) {
-        const { events, nextIndex } = await getBufferedStreamEvents(
-          conversationId,
-          cursor,
-        );
-        cursor = nextIndex;
-
-        for (const event of events) {
-          await stream.writeSSE({ event: event.event, data: event.data });
-          if (event.event === "done") {
-            done = true;
-            break;
-          }
-        }
-
-        if (!done) {
-          await new Promise((r) => setTimeout(r, 200));
-        }
-      }
-    });
+    return streamSSE(c, (stream) => streamBufferedToSSE(stream, conversationId));
   })
   .get("/conversations", async (c) => {
     await connectDB();
