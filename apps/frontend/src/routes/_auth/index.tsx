@@ -27,7 +27,7 @@ function IndexPage() {
       const lastId = localStorage.getItem("archmax-last-project");
       const target = projects.find((p) => p._id === lastId) ?? projects[0];
       navigate({
-        to: "/$projectId/connections",
+        to: "/$projectId",
         params: { projectId: target._id },
         replace: true,
       });

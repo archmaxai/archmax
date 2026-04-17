@@ -45,6 +45,8 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
     configuration: {
       baseURL: env.AGENT_API_BASE_URL,
     },
+    maxRetries: Number(env.AGENT_MAX_RETRIES) || 3,
+    timeout: (Number(env.AGENT_REQUEST_TIMEOUT) || 300) * 1000,
   });
 
   const backend = new ValidatingFilesystemBackend({

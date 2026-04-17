@@ -16,7 +16,11 @@ function safeStringify(value: unknown): string {
 }
 
 const MAX_ROWS = 1000;
-const QUERY_TIMEOUT_MS = 30_000;
+
+function getQueryTimeoutMs(): number {
+  const configured = Number(process.env.QUERY_TIMEOUT_MS);
+  return configured > 0 ? configured : 30_000;
+}
 
 export function makeExecuteQueryTool(projectId: string) {
   return tool(
@@ -45,10 +49,11 @@ export function makeExecuteQueryTool(projectId: string) {
           }
         }
 
+        const queryTimeout = getQueryTimeoutMs();
         const result = await Promise.race([
           prepared.run(),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Query timed out after ${QUERY_TIMEOUT_MS / 1000}s`)), QUERY_TIMEOUT_MS),
+            setTimeout(() => reject(new Error(`Query timed out after ${queryTimeout / 1000}s`)), queryTimeout),
           ),
         ]);
 
