@@ -1,0 +1,118 @@
+---
+title: Version Control & GitHub
+description: How archmax tracks changes to your semantic models with built-in Git and optional GitHub sync.
+---
+
+Every archmax project has a built-in Git repository that automatically tracks changes to your semantic models. You can optionally connect a GitHub remote to keep an external copy in sync.
+
+## How It Works
+
+archmax initializes a local Git repository inside each project's data directory. Every time you **publish** your semantic models, archmax:
+
+1. **Pulls** from the GitHub remote (if configured) to incorporate any upstream changes
+2. **Builds** the assembled model files into the `build/` directory
+3. **Commits** all changes (source files, build output, and any other project files) with your publish message
+4. **Pushes** the commit to GitHub (if configured)
+
+This means the full history of your semantic layer is captured automatically — you can see what changed, when, and why.
+
+## Project File Structure
+
+Each project directory is tracked as a Git repo:
+
+```
+<project>/
+├── .git/              # Managed automatically
+├── .gitignore         # Default exclusions
+├── src/               # Semantic model source YAML
+│   ├── my-model.yaml
+│   └── my-model/
+│       ├── orders.yaml
+│       └── customers.yaml
+├── build/             # Assembled models (committed)
+│   └── my-model.yaml
+└── README.md          # Optional
+```
+
+### Default `.gitignore`
+
+archmax creates a `.gitignore` with sensible defaults:
+
+```
+large_tool_results/
+.*tmp
+```
+
+The `large_tool_results/` directory (used for intermediate AI agent output) is excluded from both version control and change detection. The `build/` directory **is** committed so that the published state is always part of the repo history.
+
+## Change Detection
+
+The **Publish** button appears in the UI whenever archmax detects changes in the project directory. Change detection works by computing a SHA-256 hash of all files in the project root, excluding:
+
+- Dotfiles and dotdirs (`.git/`, `.gitignore`, etc.)
+- `node_modules/`
+- `large_tool_results/`
+
+Any file change — YAML, Markdown, JSON, or otherwise — triggers the publish indicator.
+
+## Publish History
+
+The **Settings** page shows a publish history card with the last 10 publishes, including the commit message and timestamp for each. This gives you a quick changelog without leaving the UI.
+
+## Connecting GitHub
+
+To sync your project with a GitHub repository:
+
+1. Go to **Settings** in your project
+2. In the **GitHub** card, enter:
+   - **Repository URL** — the HTTPS clone URL (e.g. `https://github.com/owner/repo.git`)
+   - **Access Token** — a GitHub Personal Access Token (PAT)
+   - **Branch** — the branch to sync (default: `main`)
+3. Click **Save changes** at the top of the settings page
+
+### Required PAT Scopes
+
+Your Personal Access Token needs one of:
+
+| Token type | Required scope |
+|-----------|---------------|
+| Classic PAT | `repo` |
+| Fine-grained PAT | **Contents: Read and write** |
+
+### What GitHub Sync Does
+
+When GitHub is configured, the publish flow becomes:
+
+1. **Pull** — fetch the remote branch and merge. If the remote has commits you don't have locally (e.g. someone pushed a `README.md` directly to GitHub), they are merged in automatically. Unrelated histories (when local and remote were initialized independently) are handled gracefully.
+2. **Build** — assemble source models into `build/`
+3. **Commit** — stage all changes and commit with your publish message
+4. **Push** — push the commit to the configured remote branch
+
+If the push fails (e.g. expired token, network issue), the publish still succeeds locally. A warning is shown in the response, and the push can be retried on the next publish.
+
+### Sync Now
+
+Click **Sync Now** in the GitHub card to pull remote changes without publishing. This is useful when you want to incorporate upstream changes (e.g. someone edited the README on GitHub) before making local edits.
+
+### Disconnect
+
+Click **Disconnect** to remove the GitHub configuration. This only removes the remote link — your local Git history and all committed files are preserved.
+
+### Re-init Git
+
+If the local Git history becomes corrupted or you want a clean slate, click **Re-init Git**. This deletes the `.git` directory and re-creates the repository with a fresh initial commit. Your working files are preserved, but all previous commit history is lost.
+
+:::caution
+Re-init is destructive — it erases all local Git history. If you have a GitHub remote configured, the next push will require a force push or a fresh remote repository.
+:::
+
+## Conflict Handling
+
+archmax uses [isomorphic-git](https://isomorphic-git.org/) for all Git operations. When pulling from a remote:
+
+- **Fast-forward merges** are applied automatically
+- **Non-conflicting merges** (e.g. different files changed on each side) are merged and committed
+- **Unrelated histories** (local and remote share no common ancestor) are merged by adding remote-only files
+- **Conflicts** (same file changed differently on both sides) block publishing — the UI reports which files conflict so you can resolve them manually
+
+If conflicts are detected, the publish button shows a warning and you must resolve the conflicting files before you can publish again.

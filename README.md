@@ -68,6 +68,7 @@ Because the OSI YAML format is verbose and token-intensive, archmax **does not s
 - **Scoped Query Execution**: agents run read-only SQL against sandboxed VIEWs, never raw tables
 - **Token-Based Access Control**: MCP tokens with configurable model scopes and expiry
 - **Testing Suite**: test cases that validate whether agents can use your semantic models correctly
+- **Version Control**: built-in Git tracks every publish; optional GitHub sync pushes models to a remote repository
 - **Self-Hosted**: deploy with Docker in minutes, keep your data on your infrastructure
 
 ## Quick Start
@@ -201,6 +202,21 @@ Configure your MCP client with:
   }
 }
 ```
+
+## Version Control & GitHub
+
+Every project has a built-in Git repository that automatically tracks changes. Each time you **publish**, archmax commits the current state of your semantic models (source YAML and assembled build output) with your publish message.
+
+Optionally connect a GitHub remote in **Settings → GitHub** to keep an external copy in sync. The publish flow becomes: pull → build → commit → push. You need a [Personal Access Token](https://github.com/settings/tokens) with the `repo` scope (classic) or `Contents: Read and write` (fine-grained).
+
+Key capabilities:
+- **Automatic change detection** — the Publish button appears when any file in the project changes
+- **Publish history** — see the last 10 publishes with messages and timestamps in Settings
+- **Sync Now** — pull remote changes without publishing
+- **Conflict detection** — blocks publishing when merge conflicts exist and tells you which files need attention
+- **Re-init** — reset local Git history if needed (working files are preserved)
+
+See the [Version Control guide](https://docs.archmax.ai/guides/version-control/) for details.
 
 ## Configuration
 

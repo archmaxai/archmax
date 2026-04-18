@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ListOrdered, FolderPen, Github, Loader2, Trash2, GitBranch, History,
@@ -11,6 +11,7 @@ import {
 } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
+import { useGitStatus, useGitInit, useGitReinit, useGitSync, useGitLog } from "@/lib/use-git";
 
 export const Route = createFileRoute("/_auth/$projectId/settings")({
   component: SettingsPage,
@@ -39,6 +40,9 @@ function SettingsPage() {
   const [pageSizeInput, setPageSizeInput] = useState(
     String(project.mcpPageSize ?? 50),
   );
+  const [ghUrlInput, setGhUrlInput] = useState(project.github?.url ?? "");
+  const [ghBranchInput, setGhBranchInput] = useState(project.github?.branch ?? "main");
+  const [ghTokenInput, setGhTokenInput] = useState("");
 
   useEffect(() => {
     setTitleInput(project.title);
@@ -46,10 +50,13 @@ function SettingsPage() {
     setPageSizeInput(String(project.mcpPageSize ?? 50));
     setSlugTouched(false);
     setSlugError(null);
-  }, [project._id, project.title, project.slug, project.mcpPageSize]);
+    setGhUrlInput(project.github?.url ?? "");
+    setGhBranchInput(project.github?.branch ?? "main");
+    setGhTokenInput("");
+  }, [project._id, project.title, project.slug, project.mcpPageSize, project.github?.url, project.github?.branch]);
 
   const saveMutation = useMutation({
-    mutationFn: async (body: { title?: string; slug?: string; mcpPageSize?: number }) => {
+    mutationFn: async (body: { title?: string; slug?: string; mcpPageSize?: number; github?: { url: string; branch: string; token?: string } }) => {
       const res = await api.api.projects[":id"].$put({
         param: { id: project._id },
         json: body,
@@ -66,6 +73,7 @@ function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project", project._id] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setGhTokenInput("");
       toast.success("Settings saved");
     },
     onError: (err) => {
@@ -104,14 +112,27 @@ function SettingsPage() {
   const titleDirty = trimmedTitle !== project.title && trimmedTitle.length > 0;
   const slugDirty = slugInput !== project.slug && slugValid;
   const pageSizeDirty = pageSizeValid && parsedPageSize !== (project.mcpPageSize ?? 50);
-  const isDirty = titleDirty || slugDirty || pageSizeDirty;
+  const ghUrlDirty = ghUrlInput.trim() !== (project.github?.url ?? "");
+  const ghBranchDirty = ghBranchInput.trim() !== (project.github?.branch ?? "main");
+  const ghTokenDirty = ghTokenInput.length > 0;
+  const ghDirty = ghUrlDirty || ghBranchDirty || ghTokenDirty;
+  const ghCanSave = ghDirty && ghUrlInput.trim().length > 0 && (ghTokenInput.length > 0 || !!project.github?.connected);
+  const isDirty = titleDirty || slugDirty || pageSizeDirty || ghCanSave;
   const hasValidationErrors = !!slugError || (pageSizeInput !== "" && !pageSizeValid);
 
   function handleSave() {
-    const updates: { title?: string; slug?: string; mcpPageSize?: number } = {};
+    const updates: { title?: string; slug?: string; mcpPageSize?: number; github?: { url: string; branch: string; token?: string } } = {};
     if (titleDirty) updates.title = trimmedTitle;
     if (slugDirty) updates.slug = slugInput;
     if (pageSizeDirty) updates.mcpPageSize = parsedPageSize;
+    if (ghCanSave) {
+      const ghPayload: { url: string; branch: string; token?: string } = {
+        url: ghUrlInput.trim(),
+        branch: ghBranchInput.trim() || "main",
+      };
+      if (ghTokenInput) ghPayload.token = ghTokenInput;
+      updates.github = ghPayload;
+    }
     if (Object.keys(updates).length > 0) {
       saveMutation.mutate(updates);
     }
@@ -142,7 +163,7 @@ function SettingsPage() {
       <div className="divider-subtle mx-8" />
 
       <div className="flex-1 overflow-y-auto p-8">
-        <div className="flex max-w-xl flex-col gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <Card className="p-6">
             <div className="flex gap-3">
               <FolderPen className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
@@ -219,7 +240,15 @@ function SettingsPage() {
             </div>
           </Card>
 
-          <GitSection />
+          <GitSection
+            ghUrlInput={ghUrlInput}
+            setGhUrlInput={setGhUrlInput}
+            ghBranchInput={ghBranchInput}
+            setGhBranchInput={setGhBranchInput}
+            ghTokenInput={ghTokenInput}
+            setGhTokenInput={setGhTokenInput}
+          />
+
           <DeleteProjectCard />
         </div>
       </div>
@@ -227,17 +256,17 @@ function SettingsPage() {
   );
 }
 
-function GitSection() {
-  const { project } = useProject();
+interface GitHubInputProps {
+  ghUrlInput: string;
+  setGhUrlInput: (v: string) => void;
+  ghBranchInput: string;
+  setGhBranchInput: (v: string) => void;
+  ghTokenInput: string;
+  setGhTokenInput: (v: string) => void;
+}
 
-  const gitStatusQuery = useQuery({
-    queryKey: ["git-status", project._id],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/git/status`);
-      if (!res.ok) return { initialized: false };
-      return res.json() as Promise<{ initialized: boolean }>;
-    },
-  });
+function GitSection(props: GitHubInputProps) {
+  const gitStatusQuery = useGitStatus();
 
   if (gitStatusQuery.isLoading) return null;
 
@@ -247,34 +276,14 @@ function GitSection() {
 
   return (
     <>
-      <GitHubCard />
+      <GitHubCard {...props} />
       <PublishHistoryCard />
     </>
   );
 }
 
 function GitMigrationCard() {
-  const { project } = useProject();
-  const queryClient = useQueryClient();
-
-  const initMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/git/init`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error((data as { error?: string } | null)?.error ?? "Failed to initialize Git");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["git-status", project._id] });
-      toast.success("Git repository initialized");
-    },
-    onError: (err) => toast.error(err.message),
-  });
+  const initMutation = useGitInit();
 
   return (
     <Card className="p-6">
@@ -305,47 +314,11 @@ function GitMigrationCard() {
   );
 }
 
-function GitHubCard() {
+function GitHubCard({ ghUrlInput, setGhUrlInput, ghBranchInput, setGhBranchInput, ghTokenInput, setGhTokenInput }: GitHubInputProps) {
   const { project } = useProject();
   const queryClient = useQueryClient();
 
-  const [urlInput, setUrlInput] = useState(project.github?.url ?? "");
-  const [branchInput, setBranchInput] = useState(project.github?.branch ?? "main");
-  const [tokenInput, setTokenInput] = useState("");
-
-  useEffect(() => {
-    setUrlInput(project.github?.url ?? "");
-    setBranchInput(project.github?.branch ?? "main");
-    setTokenInput("");
-  }, [project._id, project.github?.url, project.github?.branch]);
-
   const isConnected = !!project.github?.connected;
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const ghPayload: { url: string; branch: string; token?: string } = {
-        url: urlInput.trim(),
-        branch: branchInput.trim() || "main",
-      };
-      if (tokenInput) ghPayload.token = tokenInput;
-      const res = await api.api.projects[":id"].$put({
-        param: { id: project._id },
-        json: { github: ghPayload },
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error((data as { error?: string } | null)?.error ?? "Failed to save");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setTokenInput("");
-      toast.success("GitHub settings saved");
-    },
-    onError: (err) => toast.error(err.message),
-  });
 
   const removeMutation = useMutation({
     mutationFn: async () => {
@@ -364,39 +337,19 @@ function GitHubCard() {
     onError: (err) => toast.error(err.message),
   });
 
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/git/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Sync failed");
-      return data as { conflicts: boolean; files?: string[]; message: string };
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["semantic-models"] });
-      queryClient.invalidateQueries({ queryKey: ["git-log", project._id] });
-      if (data.conflicts) {
-        toast.error(`Merge conflicts in: ${data.files?.join(", ")}`);
-      } else {
-        toast.success(data.message);
-      }
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const canSave = urlInput.trim().length > 0 && (tokenInput.length > 0 || isConnected);
+  const syncMutation = useGitSync();
+  const reinitMutation = useGitReinit();
 
   return (
-    <Card className="p-6">
-      <div className="flex gap-3">
+    <Card className="min-w-0 p-6">
+      <div className="flex min-w-0 gap-3">
         <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-        <div className="flex flex-1 flex-col gap-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="content-tight">
             <Label className="text-base font-medium">GitHub</Label>
             <p className="text-muted-foreground text-sm">
               Push published semantic models to a GitHub repository using a Personal Access Token.
+              The PAT needs the <code className="rounded bg-muted px-1 py-0.5 text-xs">repo</code> scope (classic) or <code className="rounded bg-muted px-1 py-0.5 text-xs">Contents: Read and write</code> permission (fine-grained).
             </p>
           </div>
 
@@ -405,54 +358,56 @@ function GitHubCard() {
             <Input
               id="github-url"
               placeholder="https://github.com/owner/repo.git"
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
+              value={ghUrlInput}
+              onChange={(e) => setGhUrlInput(e.target.value)}
             />
             <Label htmlFor="github-token" className="text-sm">Access Token</Label>
             <Input
               id="github-token"
               type="password"
               placeholder={isConnected ? "••••••••••" : "ghp_..."}
-              value={tokenInput}
-              onChange={(e) => setTokenInput(e.target.value)}
+              value={ghTokenInput}
+              onChange={(e) => setGhTokenInput(e.target.value)}
             />
             <Label htmlFor="github-branch" className="text-sm">Branch</Label>
             <Input
               id="github-branch"
-              value={branchInput}
-              onChange={(e) => setBranchInput(e.target.value)}
+              value={ghBranchInput}
+              onChange={(e) => setGhBranchInput(e.target.value)}
             />
           </div>
 
           <div className="flex gap-2">
+            {isConnected && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending}
+              >
+                {syncMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Sync Now
+              </Button>
+            )}
             <Button
+              variant="outline"
               size="sm"
-              onClick={() => saveMutation.mutate()}
-              disabled={!canSave || saveMutation.isPending}
+              onClick={() => reinitMutation.mutate()}
+              disabled={reinitMutation.isPending}
             >
-              {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save
+              {reinitMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Reinitialize Connection
             </Button>
             {isConnected && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => syncMutation.mutate()}
-                  disabled={syncMutation.isPending}
-                >
-                  {syncMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Sync Now
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => removeMutation.mutate()}
-                  disabled={removeMutation.isPending}
-                >
-                  Remove
-                </Button>
-              </>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="ml-auto"
+                onClick={() => removeMutation.mutate()}
+                disabled={removeMutation.isPending}
+              >
+                Disconnect
+              </Button>
             )}
           </div>
         </div>
@@ -476,16 +431,7 @@ function timeAgo(dateStr: string): string {
 }
 
 function PublishHistoryCard() {
-  const { project } = useProject();
-
-  const logQuery = useQuery({
-    queryKey: ["git-log", project._id],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/git/log?limit=10`);
-      if (!res.ok) return [];
-      return res.json() as Promise<Array<{ oid: string; message: string; timestamp: string }>>;
-    },
-  });
+  const logQuery = useGitLog(10);
 
   return (
     <Card className="p-6">
@@ -495,7 +441,7 @@ function PublishHistoryCard() {
           <div className="content-tight">
             <Label className="text-base font-medium">Publish History</Label>
             <p className="text-muted-foreground text-sm">
-              Recent commits from the local Git repository.
+              Last 10 commits from the local Git repository.
             </p>
           </div>
 

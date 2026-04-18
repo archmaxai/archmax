@@ -49,6 +49,7 @@ export default defineConfig({
             { label: "Semantic Models", slug: "guides/semantic-models" },
             { label: "MCP Integration", slug: "guides/mcp-integration" },
             { label: "Data Federation", slug: "guides/data-federation" },
+            { label: "Version Control & GitHub", slug: "guides/version-control" },
             { label: "Testing", slug: "guides/testing" },
             { label: "Self-Hosting", slug: "guides/self-hosting" },
           ],

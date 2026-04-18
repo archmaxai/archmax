@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import { join, resolve } from "node:path";
-import { readdir, readFile, writeFile, unlink, stat, mkdir } from "node:fs/promises";
+import { readdir, readFile, writeFile, unlink, stat, mkdir, rm } from "node:fs/promises";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
 
 const AUTHOR = { name: "archmax", email: "archmax@localhost" };
 
-const DEFAULT_GITIGNORE = `build/
+const DEFAULT_GITIGNORE = `large_tool_results/
 .*tmp
 `;
 
@@ -44,6 +44,12 @@ export class GitService {
     } catch {
       return false;
     }
+  }
+
+  async reinit(): Promise<void> {
+    const gitDir = join(this.dir, ".git");
+    await rm(gitDir, { recursive: true, force: true });
+    await this.ensureRepo();
   }
 
   async ensureRepo(): Promise<{ created: boolean }> {
@@ -97,6 +103,9 @@ export class GitService {
     if (result.error) {
       throw new Error(`Push failed: ${result.error}`);
     }
+
+    await git.setConfig({ fs, dir: this.dir, path: `branch.${remote.branch}.remote`, value: "origin" });
+    await git.setConfig({ fs, dir: this.dir, path: `branch.${remote.branch}.merge`, value: `refs/heads/${remote.branch}` });
   }
 
   async pull(remote: GitRemoteConfig): Promise<SyncResult> {
@@ -151,11 +160,19 @@ export class GitService {
         ours: remote.branch,
         theirs: `remotes/origin/${remote.branch}`,
         author: AUTHOR,
-        abortOnConflict: false,
+        abortOnConflict: true,
       });
       await git.checkout({ fs, dir: this.dir, ref: remote.branch, force: true });
       return { conflicts: false, conflictedFiles: [], newCommits: 1, message: "Merged upstream changes" };
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isUnsupported = msg.includes("Merges with conflicts are not supported")
+        || msg.includes("Could not find a merge base");
+
+      if (isUnsupported) {
+        return this.mergeUnrelatedHistories(localOid, remoteOid, remote.branch);
+      }
+
       const conflictedFiles = await this.detectConflicts();
       if (conflictedFiles.length > 0) {
         return {
@@ -167,6 +184,76 @@ export class GitService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Handles the case where local and remote have no common ancestor
+   * (e.g. local was initialized independently from the remote).
+   * Writes remote-only files into the working tree and creates a merge commit.
+   */
+  private async mergeUnrelatedHistories(
+    localOid: string,
+    remoteOid: string,
+    branch: string,
+  ): Promise<SyncResult> {
+    const remoteFiles = await this.listTree(remoteOid);
+    const localFiles = await this.listTree(localOid);
+    const localPaths = new Set(localFiles.map((f) => f.filepath));
+    const conflicted: string[] = [];
+
+    for (const { filepath, oid } of remoteFiles) {
+      if (localPaths.has(filepath)) {
+        const localEntry = localFiles.find((f) => f.filepath === filepath);
+        if (localEntry && localEntry.oid !== oid) {
+          conflicted.push(filepath);
+        }
+        continue;
+      }
+      const { blob } = await git.readBlob({ fs, dir: this.dir, oid });
+      const fullPath = join(this.dir, filepath);
+      await mkdir(join(fullPath, ".."), { recursive: true });
+      await writeFile(fullPath, Buffer.from(blob));
+    }
+
+    if (conflicted.length > 0) {
+      return {
+        conflicts: true,
+        conflictedFiles: conflicted,
+        newCommits: 0,
+        message: "Merge conflicts detected in files that exist in both local and remote with different content.",
+      };
+    }
+
+    await this.stageAll();
+    await git.commit({
+      fs,
+      dir: this.dir,
+      message: "Merge remote changes",
+      author: AUTHOR,
+      parent: [localOid, remoteOid],
+    });
+    await git.checkout({ fs, dir: this.dir, ref: branch, force: true });
+
+    return { conflicts: false, conflictedFiles: [], newCommits: 1, message: "Merged remote changes (unrelated histories)" };
+  }
+
+  private async listTree(oid: string): Promise<Array<{ filepath: string; oid: string }>> {
+    const files: Array<{ filepath: string; oid: string }> = [];
+    await git.walk({
+      fs,
+      dir: this.dir,
+      trees: [git.TREE({ ref: oid })],
+      map: async (filepath, [entry]) => {
+        if (!entry || filepath === ".") return;
+        const type = await entry.type();
+        if (type === "blob") {
+          const entryOid = await entry.oid();
+          files.push({ filepath, oid: entryOid });
+        }
+        return;
+      },
+    });
+    return files;
   }
 
   async log(limit = 20): Promise<GitLogEntry[]> {

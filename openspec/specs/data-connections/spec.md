@@ -96,7 +96,7 @@ The API SHALL expose CRUD endpoints for connections at `/api/projects/:projectId
 
 ### Requirement: DuckDB Federation
 
-The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB. The MSSQL extension SHALL be installed from the DuckDB community extension registry (`INSTALL mssql FROM community`). The MSSQL attach string SHALL use ADO.NET format (`Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes|no`) when structured connection parameters are provided, or pass through the raw URI/connection string when `connectionConfig.uri` is set. For iceberg connections, the system SHALL use a two-step attach process: (1) create a DuckDB secret with `TYPE iceberg` containing the bearer token (or OAuth2 credentials in future), and (2) attach the catalog with `TYPE iceberg, ENDPOINT, SECRET` options. The `iceberg` and `httpfs` extensions SHALL be installed and loaded before attaching iceberg connections. The Docker image SHALL pre-install the `iceberg` and `httpfs` extensions alongside the existing pre-installed extensions.
+The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB. The MSSQL extension SHALL be installed from the DuckDB community extension registry (`INSTALL mssql FROM community`). The MSSQL attach string SHALL use ADO.NET format (`Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes|no`) when structured connection parameters are provided, or pass through the raw URI/connection string when `connectionConfig.uri` is set. For iceberg connections, the system SHALL use a two-step attach process: (1) create a DuckDB secret with `TYPE iceberg` containing the bearer token (or OAuth2 credentials in future), and (2) attach the catalog with `TYPE iceberg, ENDPOINT, SECRET` options. The `iceberg` and `httpfs` extensions SHALL be installed and loaded before attaching iceberg connections. The Docker image SHALL pre-install the `iceberg` and `httpfs` extensions alongside the existing pre-installed extensions. ATTACH operations SHALL be subject to a 30-second timeout; on timeout, the DuckDB connection is interrupted and the error is propagated. The connection test endpoint SHALL enforce a 15-second timeout on the `SELECT 1` verification query. Data browser queries SHALL be subject to the same `QUERY_TIMEOUT_MS` timeout as MCP queries, with cancellation via `connection.interrupt()`.
 
 #### Scenario: Attach a postgres connection
 
@@ -125,6 +125,21 @@ The system SHALL maintain a DuckDB instance per project that attaches all active
 - **THEN** the `iceberg` and `httpfs` extensions are installed and loaded
 - **AND** a DuckDB secret named `lake_secret` is created with `TYPE iceberg, TOKEN '<decrypted_token>'`
 - **AND** the catalog is attached using `ATTACH 'analytics' AS lake (TYPE iceberg, ENDPOINT 'https://catalog.example.com', SECRET 'lake_secret')`
+
+#### Scenario: Attach timeout for unreachable database
+- **WHEN** an ATTACH operation for a connection hangs because the remote database is unreachable
+- **THEN** the ATTACH is cancelled via `connection.interrupt()` after 30 seconds
+- **AND** an error is propagated to the caller
+
+#### Scenario: Connection test timeout
+- **WHEN** the Test Connection action is invoked and the `SELECT 1` verification query hangs
+- **THEN** the query is cancelled via `connection.interrupt()` after 15 seconds
+- **AND** an error response is returned to the client
+
+#### Scenario: Data browser query timeout
+- **WHEN** a data browser query (table listing, row count, or paginated data fetch) exceeds `QUERY_TIMEOUT_MS`
+- **THEN** the query is cancelled via `connection.interrupt()`
+- **AND** an error is returned to the client
 
 #### Scenario: Remove connection from DuckDB
 

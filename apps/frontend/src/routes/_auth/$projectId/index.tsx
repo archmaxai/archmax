@@ -21,6 +21,8 @@ import {
   LayoutGrid,
   Activity,
   AlertCircle,
+  Github,
+  Star,
 } from "lucide-react";
 import { Card, Skeleton } from "@archmax/ui";
 import { api } from "@/lib/api";
@@ -66,13 +68,25 @@ function DashboardPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {project.title}
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Project overview and quick access
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {project.title}
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Project overview and quick access
+          </p>
+        </div>
+        <a
+          href="https://github.com/archmaxai/archmax"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 shrink-0"
+        >
+          <Github className="h-4 w-4" />
+          Star us on GitHub
+          <Star className="h-3.5 w-3.5" />
+        </a>
       </header>
 
       {isLoading ? (

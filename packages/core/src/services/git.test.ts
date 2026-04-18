@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, mkdir, writeFile, readFile, stat } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readFile, stat, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import git from "isomorphic-git";
 import fs from "node:fs";
 import { GitService } from "./git";
+
+async function copyGitObjects(srcDir: string, destDir: string): Promise<void> {
+  const srcObjects = join(srcDir, ".git", "objects");
+  const destObjects = join(destDir, ".git", "objects");
+  await cp(srcObjects, destObjects, { recursive: true, force: true });
+}
 
 describe("GitService", () => {
   let tmpDir: string;
@@ -39,7 +45,7 @@ describe("GitService", () => {
       expect(s.isDirectory()).toBe(true);
 
       const gitignore = await readFile(join(tmpDir, ".gitignore"), "utf-8");
-      expect(gitignore).toContain("build/");
+      expect(gitignore).toContain("large_tool_results/");
 
       const commits = await git.log({ fs, dir: tmpDir, depth: 1 });
       expect(commits).toHaveLength(1);
@@ -58,6 +64,34 @@ describe("GitService", () => {
       await svc.ensureRepo();
       const content = await readFile(join(tmpDir, ".gitignore"), "utf-8");
       expect(content).toBe("custom\n");
+    });
+  });
+
+  describe("reinit", () => {
+    it("wipes git history and creates a fresh initial commit", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "file.txt"), "data", "utf-8");
+      await svc.commit("second commit");
+
+      const logBefore = await git.log({ fs, dir: tmpDir });
+      expect(logBefore.length).toBeGreaterThanOrEqual(2);
+
+      await svc.reinit();
+
+      const logAfter = await git.log({ fs, dir: tmpDir });
+      expect(logAfter).toHaveLength(1);
+      expect(logAfter[0].commit.message.trim()).toBe("Initial commit");
+    });
+
+    it("preserves working directory files", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "keep.txt"), "important", "utf-8");
+      await svc.commit("add file");
+
+      await svc.reinit();
+
+      const content = await readFile(join(tmpDir, "keep.txt"), "utf-8");
+      expect(content).toBe("important");
     });
   });
 
@@ -193,6 +227,84 @@ describe("GitService", () => {
       await git.init({ fs, dir: emptyDir, defaultBranch: "main" });
       await expect(emptySvc.discardAllChanges()).resolves.toBeUndefined();
       await rm(emptyDir, { recursive: true, force: true });
+    });
+  });
+
+  describe("mergeUnrelatedHistories", () => {
+    it("merges files from a second independent repo", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "local.txt"), "local content", "utf-8");
+      await svc.commit("local file");
+
+      const remoteDir = await mkdtemp(join(tmpdir(), "git-remote-"));
+      const remoteSvc = new GitService(remoteDir);
+      await remoteSvc.ensureRepo();
+      await writeFile(join(remoteDir, "remote.txt"), "remote content", "utf-8");
+      await remoteSvc.commit("remote file");
+
+      const remoteOid = (await git.log({ fs, dir: remoteDir, depth: 1 }))[0].oid;
+      await copyGitObjects(remoteDir, tmpDir);
+
+      const localOid = (await git.log({ fs, dir: tmpDir, depth: 1 }))[0].oid;
+      const result = await (svc as any).mergeUnrelatedHistories(localOid, remoteOid, "main");
+
+      expect(result.conflicts).toBe(false);
+      expect(result.newCommits).toBe(1);
+
+      const remoteFile = await readFile(join(tmpDir, "remote.txt"), "utf-8");
+      expect(remoteFile).toBe("remote content");
+      const localFile = await readFile(join(tmpDir, "local.txt"), "utf-8");
+      expect(localFile).toBe("local content");
+
+      await rm(remoteDir, { recursive: true, force: true });
+    });
+
+    it("detects conflicts when same file differs in both histories", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "shared.txt"), "local version", "utf-8");
+      await svc.commit("local shared");
+
+      const remoteDir = await mkdtemp(join(tmpdir(), "git-remote-"));
+      const remoteSvc = new GitService(remoteDir);
+      await remoteSvc.ensureRepo();
+      await writeFile(join(remoteDir, "shared.txt"), "remote version", "utf-8");
+      await remoteSvc.commit("remote shared");
+
+      const remoteOid = (await git.log({ fs, dir: remoteDir, depth: 1 }))[0].oid;
+      await copyGitObjects(remoteDir, tmpDir);
+
+      const localOid = (await git.log({ fs, dir: tmpDir, depth: 1 }))[0].oid;
+      const result = await (svc as any).mergeUnrelatedHistories(localOid, remoteOid, "main");
+
+      expect(result.conflicts).toBe(true);
+      expect(result.conflictedFiles).toContain("shared.txt");
+
+      await rm(remoteDir, { recursive: true, force: true });
+    });
+
+    it("skips identical files that exist in both histories", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "same.txt"), "identical content", "utf-8");
+      await svc.commit("local same");
+
+      const remoteDir = await mkdtemp(join(tmpdir(), "git-remote-"));
+      const remoteSvc = new GitService(remoteDir);
+      await remoteSvc.ensureRepo();
+      await writeFile(join(remoteDir, "same.txt"), "identical content", "utf-8");
+      await writeFile(join(remoteDir, "extra.txt"), "bonus", "utf-8");
+      await remoteSvc.commit("remote same");
+
+      const remoteOid = (await git.log({ fs, dir: remoteDir, depth: 1 }))[0].oid;
+      await copyGitObjects(remoteDir, tmpDir);
+
+      const localOid = (await git.log({ fs, dir: tmpDir, depth: 1 }))[0].oid;
+      const result = await (svc as any).mergeUnrelatedHistories(localOid, remoteOid, "main");
+
+      expect(result.conflicts).toBe(false);
+      const extra = await readFile(join(tmpDir, "extra.txt"), "utf-8");
+      expect(extra).toBe("bonus");
+
+      await rm(remoteDir, { recursive: true, force: true });
     });
   });
 

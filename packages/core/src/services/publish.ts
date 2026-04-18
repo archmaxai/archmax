@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, rename, unlink, mkdir, rm } from "node:fs/promises";
+import { readdir, readFile, writeFile, rename, unlink, mkdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import yaml from "js-yaml";
@@ -70,11 +70,13 @@ export class PublishService {
    * Used for change detection between publishes.
    */
   async computeSourceHash(projectId: string): Promise<string> {
-    const srcDir = join(this.projectDir(projectId), "src");
+    const projDir = this.projectDir(projectId);
     const hash = createHash("sha256");
-    await this.hashDirectory(srcDir, hash);
+    await this.hashDirectory(projDir, hash);
     return hash.digest("hex");
   }
+
+  private static SKIP_DIRS = new Set(["node_modules", "large_tool_results"]);
 
   private async hashDirectory(dir: string, hash: ReturnType<typeof createHash>): Promise<void> {
     let entries: string[];
@@ -85,18 +87,19 @@ export class PublishService {
     }
 
     for (const entry of entries) {
-      if (entry.startsWith(".")) continue;
+      if (entry.startsWith(".") || PublishService.SKIP_DIRS.has(entry)) continue;
       const fullPath = join(dir, entry);
-      if (entry.endsWith(".yaml")) {
-        try {
+      try {
+        const s = await stat(fullPath);
+        if (s.isDirectory()) {
+          await this.hashDirectory(fullPath, hash);
+        } else {
           const content = await readFile(fullPath, "utf-8");
           hash.update(entry);
           hash.update(content);
-        } catch {
-          // skip unreadable files
         }
-      } else {
-        await this.hashDirectory(fullPath, hash);
+      } catch {
+        // skip unreadable files
       }
     }
   }

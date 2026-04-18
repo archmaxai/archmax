@@ -22,6 +22,15 @@ const app = new Hono()
       message: created ? "Repository initialized with initial commit" : "Repository already initialized",
     });
   })
+  .post("/reinit", async (c) => {
+    const projectId = param(c, "projectId");
+    const gitSvc = getGitService(projectId);
+    await gitSvc.reinit();
+    return c.json({
+      initialized: true,
+      message: "Repository re-initialized with fresh history",
+    });
+  })
   .post(
     "/revert-file",
     zValidator("json", z.object({ path: z.string().min(1) })),
