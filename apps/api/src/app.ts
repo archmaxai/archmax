@@ -17,7 +17,7 @@ import agentChat from "./routes/agent";
 import dataBrowser from "./routes/data-browser";
 import documents from "./routes/documents";
 import publish from "./routes/publish";
-import github, { githubCallback } from "./routes/github";
+import gitRoutes from "./routes/git";
 import testAgents from "./routes/test-agents";
 import testCases from "./routes/test-cases";
 import testRuns from "./routes/test-runs";
@@ -59,12 +59,10 @@ const app = new Hono()
   .get("/api/config", (c) => {
     const env = getEnv();
     return c.json({
-      githubEnabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
       agentConfigured: !!env.AGENT_API_KEY,
     });
   })
   .on(["POST", "GET"], "/api/auth/**", (c) => auth.handler(c.req.raw))
-  .route("/api/github", githubCallback)
   .route("/mcp/:slug/mcp", archmaxMcp)
   .route("/mcp/:slug/test/mcp", archmaxMcp)
   .use("/api/*", async (c, next) => {
@@ -85,7 +83,7 @@ const app = new Hono()
   .route("/api/projects/:projectId/data-browser", dataBrowser)
   .route("/api/projects/:projectId/documents", documents)
   .route("/api/projects/:projectId/publish", publish)
-  .route("/api/projects/:projectId/github", github)
+  .route("/api/projects/:projectId/git", gitRoutes)
   .route("/api/projects/:projectId/test-agents", testAgents)
   .route("/api/projects/:projectId/test-cases", testCases)
   .route("/api/projects/:projectId/test-runs", testRuns)

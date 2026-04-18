@@ -3,6 +3,8 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Project, type IProject, Connection, McpToken, generateUniqueSlug, PROJECT_SLUG_PATTERN } from "@archmax/core/models/index";
+import { getEnv } from "@archmax/core/config/env";
+import { encrypt } from "@archmax/core/infra/crypto";
 import { AppError } from "../utils/errors";
 
 const createSchema = z.object({
@@ -16,18 +18,22 @@ const updateSchema = z.object({
   description: z.string().optional(),
   mcpPageSize: z.number().int().min(10).max(200).optional(),
   slug: z.string().regex(PROJECT_SLUG_PATTERN).min(2).optional(),
-  githubRepo: z.string().optional(),
-  githubBranch: z.string().optional(),
+  github: z.object({
+    url: z.string().min(1),
+    branch: z.string().min(1),
+    token: z.string().min(1).optional(),
+  }).optional(),
+  clearGithub: z.boolean().optional(),
 });
 
-interface SerializedGitHub { connected: boolean; owner: string; repo: string; branch: string }
+interface SerializedGitHub { connected: boolean; url: string; branch: string }
 type ProjectResponse = Omit<IProject, "github"> & { _id: string; deleted: boolean; deletedAt: Date | null; github?: SerializedGitHub };
 
 function serializeProject(project: Record<string, unknown>): ProjectResponse {
-  const { github, ...rest } = project as Record<string, unknown> & { github?: { owner?: string; repo?: string; branch?: string; encryptedToken?: string } };
+  const { github, ...rest } = project as Record<string, unknown> & { github?: { url?: string; branch?: string; encryptedToken?: string } };
   const serialized = { ...rest } as unknown as ProjectResponse;
   if (github?.encryptedToken) {
-    serialized.github = { connected: true, owner: github.owner ?? "", repo: github.repo ?? "", branch: github.branch ?? "main" };
+    serialized.github = { connected: true, url: github.url ?? "", branch: github.branch ?? "main" };
   }
   return serialized;
 }
@@ -64,14 +70,29 @@ const app = new Hono()
       if (existing) throw AppError.conflict("Slug already in use");
     }
 
-    const { githubRepo, githubBranch, ...updateFields } = body;
+    const { github: githubInput, clearGithub, ...updateFields } = body;
     const $set: Record<string, unknown> = { ...updateFields };
-    if (githubRepo !== undefined) $set["github.repo"] = githubRepo;
-    if (githubBranch !== undefined) $set["github.branch"] = githubBranch;
+    const $unset: Record<string, unknown> = {};
+
+    if (clearGithub) {
+      $unset.github = "";
+    } else if (githubInput) {
+      const encryptionKey = getEnv().ENCRYPTION_KEY;
+      if (!encryptionKey) throw AppError.badRequest("ENCRYPTION_KEY is required for GitHub integration");
+      $set["github.url"] = githubInput.url;
+      $set["github.branch"] = githubInput.branch;
+      if (githubInput.token) {
+        $set["github.encryptedToken"] = encrypt(githubInput.token, encryptionKey);
+      }
+    }
+
+    const updateOp: Record<string, unknown> = {};
+    if (Object.keys($set).length > 0) updateOp.$set = $set;
+    if (Object.keys($unset).length > 0) updateOp.$unset = $unset;
 
     const project = await Project.findByIdAndUpdate(
       id,
-      { $set },
+      updateOp,
       { new: true },
     );
     if (!project) throw AppError.notFound("Project not found");

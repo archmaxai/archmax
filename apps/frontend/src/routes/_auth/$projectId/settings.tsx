@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ListOrdered, FolderPen, Github, Loader2, Trash2 } from "lucide-react";
+import {
+  ListOrdered, FolderPen, Github, Loader2, Trash2, GitBranch, History,
+} from "lucide-react";
 import {
   Label, Card, Input, Button,
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@archmax/ui";
 import { api } from "@/lib/api";
@@ -218,7 +219,7 @@ function SettingsPage() {
             </div>
           </Card>
 
-          <GitHubCard />
+          <GitSection />
           <DeleteProjectCard />
         </div>
       </div>
@@ -226,67 +227,166 @@ function SettingsPage() {
   );
 }
 
+function GitSection() {
+  const { project } = useProject();
+
+  const gitStatusQuery = useQuery({
+    queryKey: ["git-status", project._id],
+    queryFn: async () => {
+      const res = await fetch(`/api/projects/${project._id}/git/status`);
+      if (!res.ok) return { initialized: false };
+      return res.json() as Promise<{ initialized: boolean }>;
+    },
+  });
+
+  if (gitStatusQuery.isLoading) return null;
+
+  if (!gitStatusQuery.data?.initialized) {
+    return <GitMigrationCard />;
+  }
+
+  return (
+    <>
+      <GitHubCard />
+      <PublishHistoryCard />
+    </>
+  );
+}
+
+function GitMigrationCard() {
+  const { project } = useProject();
+  const queryClient = useQueryClient();
+
+  const initMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/projects/${project._id}/git/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error((data as { error?: string } | null)?.error ?? "Failed to initialize Git");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["git-status", project._id] });
+      toast.success("Git repository initialized");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <Card className="p-6">
+      <div className="flex gap-3">
+        <GitBranch className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="flex flex-1 flex-col gap-4">
+          <div className="content-tight">
+            <Label className="text-base font-medium">Version Control</Label>
+            <p className="text-muted-foreground text-sm">
+              This project has not been migrated to Git versioning yet. Initialize a
+              local Git repository to enable version history, revert tools, and GitHub sync.
+            </p>
+          </div>
+          <div>
+            <Button
+              onClick={() => initMutation.mutate()}
+              disabled={initMutation.isPending}
+            >
+              {initMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Initialize Git
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function GitHubCard() {
   const { project } = useProject();
   const queryClient = useQueryClient();
 
-  const configQuery = useQuery({
-    queryKey: ["config"],
-    queryFn: async () => {
-      const res = await fetch("/api/config");
-      return res.json() as Promise<{ githubEnabled: boolean }>;
-    },
-    staleTime: Infinity,
-  });
+  const [urlInput, setUrlInput] = useState(project.github?.url ?? "");
+  const [branchInput, setBranchInput] = useState(project.github?.branch ?? "main");
+  const [tokenInput, setTokenInput] = useState("");
 
-  const reposQuery = useQuery({
-    queryKey: ["github-repos", project._id],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/github/repos`);
-      if (!res.ok) throw new Error("Failed to fetch repos");
-      return res.json() as Promise<Array<{ full_name: string; name: string; owner: string }>>;
-    },
-    enabled: !!project.github?.connected,
-  });
+  useEffect(() => {
+    setUrlInput(project.github?.url ?? "");
+    setBranchInput(project.github?.branch ?? "main");
+    setTokenInput("");
+  }, [project._id, project.github?.url, project.github?.branch]);
 
-  const disconnectMutation = useMutation({
+  const isConnected = !!project.github?.connected;
+
+  const saveMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/github`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to disconnect");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      toast.success("GitHub disconnected");
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const updateGitHubMutation = useMutation({
-    mutationFn: async (body: { githubRepo?: string; githubBranch?: string }) => {
+      const ghPayload: { url: string; branch: string; token?: string } = {
+        url: urlInput.trim(),
+        branch: branchInput.trim() || "main",
+      };
+      if (tokenInput) ghPayload.token = tokenInput;
       const res = await api.api.projects[":id"].$put({
         param: { id: project._id },
-        json: body,
+        json: { github: ghPayload },
       });
-      if (!res.ok) throw new Error("Failed to update");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error((data as { error?: string } | null)?.error ?? "Failed to save");
+      }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project", project._id] });
-      toast.success("GitHub settings updated");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setTokenInput("");
+      toast.success("GitHub settings saved");
     },
     onError: (err) => toast.error(err.message),
   });
 
-  const [branchInput, setBranchInput] = useState(project.github?.branch ?? "main");
+  const removeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.api.projects[":id"].$put({
+        param: { id: project._id },
+        json: { clearGithub: true },
+      });
+      if (!res.ok) throw new Error("Failed to remove");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("GitHub configuration removed");
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
-  useEffect(() => {
-    setBranchInput(project.github?.branch ?? "main");
-  }, [project.github?.branch]);
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/projects/${project._id}/git/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Sync failed");
+      return data as { conflicts: boolean; files?: string[]; message: string };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["semantic-models"] });
+      queryClient.invalidateQueries({ queryKey: ["git-log", project._id] });
+      if (data.conflicts) {
+        toast.error(`Merge conflicts in: ${data.files?.join(", ")}`);
+      } else {
+        toast.success(data.message);
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
-  if (!configQuery.data?.githubEnabled) return null;
-
-  const gh = project.github;
+  const canSave = urlInput.trim().length > 0 && (tokenInput.length > 0 || isConnected);
 
   return (
     <Card className="p-6">
@@ -294,71 +394,125 @@ function GitHubCard() {
         <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div className="flex flex-1 flex-col gap-4">
           <div className="content-tight">
-            <Label className="text-base font-medium">GitHub Integration</Label>
+            <Label className="text-base font-medium">GitHub</Label>
             <p className="text-muted-foreground text-sm">
-              Push published semantic models to a GitHub repository.
+              Push published semantic models to a GitHub repository using a Personal Access Token.
             </p>
           </div>
 
-          {!gh?.connected ? (
+          <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+            <Label htmlFor="github-url" className="text-sm">Repository URL</Label>
+            <Input
+              id="github-url"
+              placeholder="https://github.com/owner/repo.git"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+            />
+            <Label htmlFor="github-token" className="text-sm">Access Token</Label>
+            <Input
+              id="github-token"
+              type="password"
+              placeholder={isConnected ? "••••••••••" : "ghp_..."}
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+            />
+            <Label htmlFor="github-branch" className="text-sm">Branch</Label>
+            <Input
+              id="github-branch"
+              value={branchInput}
+              onChange={(e) => setBranchInput(e.target.value)}
+            />
+          </div>
+
+          <div className="flex gap-2">
             <Button
-              variant="outline"
-              onClick={() => {
-                window.location.href = `/api/projects/${project._id}/github/authorize`;
-              }}
+              size="sm"
+              onClick={() => saveMutation.mutate()}
+              disabled={!canSave || saveMutation.isPending}
             >
-              Connect to GitHub
+              {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save
             </Button>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm">
-                Connected as <span className="font-medium">{gh.owner}</span>
-              </p>
-
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
-                <Label htmlFor="github-repo" className="text-sm">Repository</Label>
-                <Select
-                  value={gh.repo || undefined}
-                  onValueChange={(val) => updateGitHubMutation.mutate({ githubRepo: val })}
+            {isConnected && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => syncMutation.mutate()}
+                  disabled={syncMutation.isPending}
                 >
-                  <SelectTrigger id="github-repo">
-                    <SelectValue placeholder="Select a repository..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reposQuery.data?.map((repo) => (
-                      <SelectItem key={repo.full_name} value={repo.full_name}>
-                        {repo.full_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Label htmlFor="github-branch" className="text-sm">Branch</Label>
-                <Input
-                  id="github-branch"
-                  value={branchInput}
-                  onChange={(e) => setBranchInput(e.target.value)}
-                  onBlur={() => {
-                    const trimmed = branchInput.trim() || "main";
-                    if (trimmed !== gh.branch) {
-                      updateGitHubMutation.mutate({ githubBranch: trimmed });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                  }}
-                />
-              </div>
-
-              <div>
+                  {syncMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Sync Now
+                </Button>
                 <Button
                   variant="destructive"
                   size="sm"
-                  onClick={() => disconnectMutation.mutate()}
-                  disabled={disconnectMutation.isPending}
+                  onClick={() => removeMutation.mutate()}
+                  disabled={removeMutation.isPending}
                 >
-                  Disconnect
+                  Remove
                 </Button>
-              </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function timeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+function PublishHistoryCard() {
+  const { project } = useProject();
+
+  const logQuery = useQuery({
+    queryKey: ["git-log", project._id],
+    queryFn: async () => {
+      const res = await fetch(`/api/projects/${project._id}/git/log?limit=10`);
+      if (!res.ok) return [];
+      return res.json() as Promise<Array<{ oid: string; message: string; timestamp: string }>>;
+    },
+  });
+
+  return (
+    <Card className="p-6">
+      <div className="flex gap-3">
+        <History className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="flex flex-1 flex-col gap-4">
+          <div className="content-tight">
+            <Label className="text-base font-medium">Publish History</Label>
+            <p className="text-muted-foreground text-sm">
+              Recent commits from the local Git repository.
+            </p>
+          </div>
+
+          {logQuery.isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          ) : !logQuery.data?.length ? (
+            <p className="text-sm text-muted-foreground">No publish history yet.</p>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {logQuery.data.map((entry) => (
+                <div key={entry.oid} className="flex items-baseline justify-between gap-3 text-sm">
+                  <span className="truncate">{entry.message.split("\n")[0]}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {timeAgo(entry.timestamp)}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
         </div>

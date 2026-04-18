@@ -85,6 +85,7 @@ export class PublishService {
     }
 
     for (const entry of entries) {
+      if (entry.startsWith(".")) continue;
       const fullPath = join(dir, entry);
       if (entry.endsWith(".yaml")) {
         try {

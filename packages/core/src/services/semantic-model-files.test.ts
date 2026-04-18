@@ -129,6 +129,87 @@ describe("SemanticModelFileService.updateModelExtensions", () => {
   });
 });
 
+describe("SemanticModelFileService conflict detection", () => {
+  let tmpDir: string;
+  let svc: SemanticModelFileService;
+  const projectId = "proj1";
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "smfs-conflict-"));
+    svc = new SemanticModelFileService(tmpDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("list() returns a stub with hasConflicts for files with conflict markers", async () => {
+    const srcDir = join(tmpDir, projectId, "src");
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(
+      join(srcDir, "sales.yaml"),
+      "name: sales\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>>\n",
+      "utf-8",
+    );
+
+    const models = await svc.list(projectId);
+    expect(models).toHaveLength(1);
+    expect(models[0].name).toBe("sales");
+    expect(models[0].hasConflicts).toBe(true);
+    expect(models[0].datasets).toEqual([]);
+  });
+
+  it("get() returns a stub with rawContent for a conflicted file", async () => {
+    const srcDir = join(tmpDir, projectId, "src");
+    await mkdir(srcDir, { recursive: true });
+    const conflictContent = "name: orders\n<<<<<<< HEAD\nversion: 1\n=======\nversion: 2\n>>>>>>>\n";
+    await writeFile(join(srcDir, "orders.yaml"), conflictContent, "utf-8");
+
+    const model = await svc.get(projectId, "orders");
+    expect(model).not.toBeNull();
+    expect(model!.hasConflicts).toBe(true);
+    expect(model!.rawContent).toBe(conflictContent);
+    expect(model!.datasets).toEqual([]);
+  });
+
+  it("list() returns normal models alongside conflicted ones", async () => {
+    const srcDir = join(tmpDir, projectId, "src");
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(
+      join(srcDir, "good.yaml"),
+      yaml.dump({ name: "good", description: "", relationships: [], metrics: [], datasets: [] }),
+      "utf-8",
+    );
+    await writeFile(
+      join(srcDir, "bad.yaml"),
+      "name: bad\n<<<<<<< HEAD\n=======\n>>>>>>>\n",
+      "utf-8",
+    );
+
+    const models = await svc.list(projectId);
+    expect(models).toHaveLength(2);
+
+    const good = models.find((m) => m.name === "good");
+    const bad = models.find((m) => m.name === "bad");
+    expect(good?.hasConflicts).toBeUndefined();
+    expect(bad?.hasConflicts).toBe(true);
+  });
+
+  it("list() skips dotfiles", async () => {
+    const srcDir = join(tmpDir, projectId, "src");
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(join(srcDir, ".hidden.yaml"), yaml.dump({ name: "hidden" }), "utf-8");
+    await writeFile(
+      join(srcDir, "visible.yaml"),
+      yaml.dump({ name: "visible", description: "", relationships: [], metrics: [], datasets: [] }),
+      "utf-8",
+    );
+
+    const models = await svc.list(projectId);
+    expect(models.map((m) => m.name)).toEqual(["visible"]);
+  });
+});
+
 describe("SemanticModelFileService.updateDatasetExtensions", () => {
   let tmpDir: string;
   let svc: SemanticModelFileService;

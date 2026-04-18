@@ -8,8 +8,7 @@ export interface Project {
   mcpPageSize: number;
   github?: {
     connected: boolean;
-    owner: string;
-    repo: string;
+    url: string;
     branch: string;
   };
   createdAt: string;

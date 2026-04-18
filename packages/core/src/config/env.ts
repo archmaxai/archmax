@@ -37,8 +37,6 @@ const envSchema = z.object({
 
   TEST_AGENT_MAX_ITERATIONS: z.string().optional().default("100"),
 
-  GITHUB_CLIENT_ID: z.string().optional(),
-  GITHUB_CLIENT_SECRET: z.string().optional(),
   ENCRYPTION_KEY: z.string().optional(),
 });
 
