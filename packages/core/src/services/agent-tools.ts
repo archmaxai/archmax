@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 import { getEnv } from "../config/env";
 import { Connection, TestAgent, TestCase, type IConnectionDocument } from "../models/index";
 import { connectDB } from "../infra/db";
-import { getProjectInstance, hardenConnection } from "./duckdb";
+import { getProjectInstance, hardenConnection, withQueryTimeout, withProjectQuerySlot } from "./duckdb";
 import { validateReadOnlySQL } from "./sql-validation";
 import { DocumentFileService } from "./document-files";
 import { SEMANTIC_MODEL_AGENT_PROMPT } from "../prompts/index";
@@ -16,11 +16,6 @@ function safeStringify(value: unknown): string {
 }
 
 const MAX_ROWS = 1000;
-
-function getQueryTimeoutMs(): number {
-  const configured = Number(process.env.QUERY_TIMEOUT_MS);
-  return configured > 0 ? configured : 30_000;
-}
 
 export function makeExecuteQueryTool(projectId: string) {
   return tool(
@@ -37,53 +32,49 @@ export function makeExecuteQueryTool(projectId: string) {
       }).lean()) as IConnectionDocument[];
 
       const instance = await getProjectInstance(projectId, connections, { readOnly: true });
-      const db = await instance.connect();
 
-      try {
-        const hasIceberg = connections.some((c) => c.type === "iceberg");
-        await hardenConnection(db, undefined, { allowExternalAccess: hasIceberg });
-        const prepared = await db.prepare(sql);
-        if (params.length > 0) {
-          for (let i = 0; i < params.length; i++) {
-            prepared.bindVarchar(i + 1, String(params[i]));
-          }
-        }
-
-        const queryTimeout = getQueryTimeoutMs();
-        const result = await Promise.race([
-          prepared.run(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Query timed out after ${queryTimeout / 1000}s`)), queryTimeout),
-          ),
-        ]);
-
-        const rows: Record<string, unknown>[] = [];
-        const columns = result.columnNames();
-        for await (const chunk of result) {
-          const chunkRows = chunk.getRows();
-          for (const row of chunkRows) {
-            const obj: Record<string, unknown> = {};
-            for (let i = 0; i < columns.length; i++) {
-              obj[columns[i]] = row[i];
+      return withProjectQuerySlot(projectId, async () => {
+        const db = await instance.connect();
+        try {
+          const hasIceberg = connections.some((c) => c.type === "iceberg");
+          await hardenConnection(db, undefined, { allowExternalAccess: hasIceberg });
+          const prepared = await db.prepare(sql);
+          if (params.length > 0) {
+            for (let i = 0; i < params.length; i++) {
+              prepared.bindVarchar(i + 1, String(params[i]));
             }
-            rows.push(obj);
+          }
+
+          const result = await withQueryTimeout(db, () => prepared.run());
+
+          const rows: Record<string, unknown>[] = [];
+          const columns = result.columnNames();
+          for await (const chunk of result) {
+            const chunkRows = chunk.getRows();
+            for (const row of chunkRows) {
+              const obj: Record<string, unknown> = {};
+              for (let i = 0; i < columns.length; i++) {
+                obj[columns[i]] = row[i];
+              }
+              rows.push(obj);
+              if (rows.length >= MAX_ROWS) break;
+            }
             if (rows.length >= MAX_ROWS) break;
           }
-          if (rows.length >= MAX_ROWS) break;
-        }
 
-        return safeStringify({
-          columns,
-          rows,
-          rowCount: rows.length,
-          truncated: rows.length >= MAX_ROWS,
-        });
-      } catch (err) {
-        console.error("[executeQuery] Query error:", err);
-        return safeStringify({ error: "Query execution failed." });
-      } finally {
-        db.disconnectSync();
-      }
+          return safeStringify({
+            columns,
+            rows,
+            rowCount: rows.length,
+            truncated: rows.length >= MAX_ROWS,
+          });
+        } catch (err) {
+          console.error("[executeQuery] Query error:", err);
+          return safeStringify({ error: "Query execution failed." });
+        } finally {
+          db.disconnectSync();
+        }
+      });
     },
     {
       name: "executeQuery",

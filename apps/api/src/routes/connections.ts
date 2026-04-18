@@ -3,12 +3,13 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
-import { testSingleConnection } from "@archmax/core/services/duckdb";
+import { testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
 import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
 
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const CONNECTION_TEST_TIMEOUT_MS = 15_000;
 
 const connectionConfigSchema = z.object({
   host: z.string().optional(),
@@ -195,7 +196,7 @@ const app = new Hono()
       const instance = await testSingleConnection(conn as IConnectionDocument);
       const db = await instance.connect();
       try {
-        await db.run("SELECT 1");
+        await withQueryTimeout(db, () => db.run("SELECT 1"), CONNECTION_TEST_TIMEOUT_MS);
       } finally {
         db.disconnectSync();
       }
