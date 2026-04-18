@@ -9,6 +9,9 @@ import {
   scopeSchemaName,
   getAttachedCatalogSlugs,
   hardenConnection,
+  withQueryTimeout,
+  withProjectQuerySlot,
+  getQueryTimeoutMs,
 } from "./duckdb";
 import { validateReadOnlySQL, validateScopedSQL } from "./sql-validation";
 
@@ -24,11 +27,6 @@ function safeStringify(value: unknown): string {
 }
 
 const MAX_ROWS = 1000;
-
-function getQueryTimeoutMs(): number {
-  const configured = Number(process.env.QUERY_TIMEOUT_MS);
-  return configured > 0 ? configured : 30_000;
-}
 
 export const EXECUTE_QUERY_DESCRIPTION = [
   "Run a read-only SQL query scoped to a single semantic model.",
@@ -257,61 +255,54 @@ export async function executeScopedQuery(
   const instance = await getProjectInstance(projectId, connections, { readOnly: true });
   await createScopedViews(instance, projectId, model);
 
-  const db = await instance.connect();
-  try {
-    const hasIceberg = connections.some((c) => c.type === "iceberg");
-    await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
+  return withProjectQuerySlot(projectId, async () => {
+    const db = await instance.connect();
+    try {
+      const hasIceberg = connections.some((c) => c.type === "iceberg");
+      await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
 
-    const prepared = await db.prepare(sql);
-    if (params.length > 0) {
-      for (let i = 0; i < params.length; i++) {
-        prepared.bindVarchar(i + 1, String(params[i]));
-      }
-    }
-
-    const queryTimeout = getQueryTimeoutMs();
-    const queryResult = await Promise.race([
-      prepared.run(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Query timed out after ${queryTimeout / 1000}s`)),
-          queryTimeout,
-        ),
-      ),
-    ]);
-
-    const rows: Record<string, unknown>[] = [];
-    const columns = queryResult.columnNames();
-    for await (const chunk of queryResult) {
-      const chunkRows = chunk.getRows();
-      for (const row of chunkRows) {
-        const obj: Record<string, unknown> = {};
-        for (let i = 0; i < columns.length; i++) {
-          obj[columns[i]] = row[i];
+      const prepared = await db.prepare(sql);
+      if (params.length > 0) {
+        for (let i = 0; i < params.length; i++) {
+          prepared.bindVarchar(i + 1, String(params[i]));
         }
-        rows.push(obj);
+      }
+
+      const queryResult = await withQueryTimeout(db, () => prepared.run());
+
+      const rows: Record<string, unknown>[] = [];
+      const columns = queryResult.columnNames();
+      for await (const chunk of queryResult) {
+        const chunkRows = chunk.getRows();
+        for (const row of chunkRows) {
+          const obj: Record<string, unknown> = {};
+          for (let i = 0; i < columns.length; i++) {
+            obj[columns[i]] = row[i];
+          }
+          rows.push(obj);
+          if (rows.length >= MAX_ROWS) break;
+        }
         if (rows.length >= MAX_ROWS) break;
       }
-      if (rows.length >= MAX_ROWS) break;
+
+      const payload = safeStringify({
+        columns,
+        rows,
+        rowCount: rows.length,
+        truncated: rows.length >= MAX_ROWS,
+      });
+
+      return { text: payload, columns, rows, rowCount: rows.length, truncated: rows.length >= MAX_ROWS };
+    } catch (err) {
+      console.error("[executeScopedQuery] Query error:", err);
+      const msg = err instanceof Error ? err.message : "Query execution failed.";
+      const hint = buildColumnHint(msg, model.datasets);
+      return {
+        text: hint ? `${msg}\n\n${hint}` : msg,
+        isError: true,
+      };
+    } finally {
+      db.disconnectSync();
     }
-
-    const payload = safeStringify({
-      columns,
-      rows,
-      rowCount: rows.length,
-      truncated: rows.length >= MAX_ROWS,
-    });
-
-    return { text: payload, columns, rows, rowCount: rows.length, truncated: rows.length >= MAX_ROWS };
-  } catch (err) {
-    console.error("[executeScopedQuery] Query error:", err);
-    const msg = err instanceof Error ? err.message : "Query execution failed.";
-    const hint = buildColumnHint(msg, model.datasets);
-    return {
-      text: hint ? `${msg}\n\n${hint}` : msg,
-      isError: true,
-    };
-  } finally {
-    db.disconnectSync();
-  }
+  });
 }

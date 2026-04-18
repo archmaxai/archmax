@@ -5,6 +5,108 @@ import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
 import { getEnv } from "../config/env";
 
+// ── Query timeout helper ─────────────────────────────────────────────
+
+export function getQueryTimeoutMs(): number {
+  const configured = Number(process.env.QUERY_TIMEOUT_MS);
+  return configured > 0 ? configured : 30_000;
+}
+
+/**
+ * Run an async operation against a DuckDB connection with a hard timeout.
+ * On timeout, `connection.interrupt()` is called to cancel the in-flight
+ * query inside DuckDB, then the promise rejects with a timeout error.
+ * The timer is always cleaned up regardless of outcome.
+ */
+export async function withQueryTimeout<T>(
+  connection: DuckDBConnection,
+  operation: () => Promise<T>,
+  timeoutMs: number = getQueryTimeoutMs(),
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      try { connection.interrupt(); } catch { /* best-effort */ }
+      reject(new Error(`Query timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation(), timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Per-project query concurrency limiter ────────────────────────────
+
+function getMaxConcurrentQueries(): number {
+  const configured = Number(process.env.MAX_CONCURRENT_QUERIES);
+  return configured > 0 ? configured : 10;
+}
+
+class Semaphore {
+  private waiting: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+  private count: number;
+  constructor(private readonly max: number) { this.count = max; }
+
+  async acquire(timeoutMs?: number): Promise<void> {
+    if (this.count > 0) { this.count--; return; }
+    return new Promise<void>((resolve, reject) => {
+      const entry = { resolve, reject };
+      this.waiting.push(entry);
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        const timer = setTimeout(() => {
+          const idx = this.waiting.indexOf(entry);
+          if (idx !== -1) {
+            this.waiting.splice(idx, 1);
+            reject(new Error(`Query slot unavailable — ${this.max} queries already running for this project. Try again shortly.`));
+          }
+        }, timeoutMs);
+        const origResolve = entry.resolve;
+        entry.resolve = () => { clearTimeout(timer); origResolve(); };
+      }
+    });
+  }
+
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) { next.resolve(); } else { this.count++; }
+  }
+}
+
+const projectSemaphores = new Map<string, Semaphore>();
+
+function getProjectSemaphore(projectId: string): Semaphore {
+  let sem = projectSemaphores.get(projectId);
+  if (!sem) {
+    sem = new Semaphore(getMaxConcurrentQueries());
+    projectSemaphores.set(projectId, sem);
+  }
+  return sem;
+}
+
+/**
+ * Acquire a per-project query slot, run the operation, then release.
+ * Prevents unbounded concurrent queries from exhausting DuckDB resources.
+ * If all slots are occupied, waits up to the query timeout before rejecting.
+ */
+export async function withProjectQuerySlot<T>(
+  projectId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const sem = getProjectSemaphore(projectId);
+  await sem.acquire(getQueryTimeoutMs());
+  try {
+    return await operation();
+  } finally {
+    sem.release();
+  }
+}
+
+// ── Project DuckDB instance cache ────────────────────────────────────
+
 interface ProjectDuckDB {
   instance: DuckDBInstance;
   attachedSlugs: Set<string>;
@@ -165,6 +267,8 @@ async function installAndLoadExtension(
   }
 }
 
+const ATTACH_TIMEOUT_MS = 30_000;
+
 async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument): Promise<void> {
   if (conn.type === "iceberg") {
     await attachIcebergCatalog(entry, conn);
@@ -183,7 +287,11 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
   try {
     const connStr = buildAttachString(conn).replace(/'/g, "''");
     const readOnlyClause = entry.readOnly ? ", READ_ONLY" : "";
-    await db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}${readOnlyClause})`);
+    await withQueryTimeout(
+      db,
+      () => db.run(`ATTACH '${connStr}' AS ${conn.slug} (TYPE ${ext.toUpperCase()}${readOnlyClause})`),
+      ATTACH_TIMEOUT_MS,
+    );
     entry.attachedSlugs.add(conn.slug);
   } finally {
     db.disconnectSync();
@@ -219,8 +327,12 @@ async function attachIcebergCatalog(entry: ProjectDuckDB, conn: IConnectionDocum
   const db = await entry.instance.connect();
   try {
     await db.run(`CREATE SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
-    await db.run(
-      `ATTACH '${warehouse}' AS ${conn.slug} (TYPE iceberg, ENDPOINT '${endpoint}', SECRET '${secretName}')`,
+    await withQueryTimeout(
+      db,
+      () => db.run(
+        `ATTACH '${warehouse}' AS ${conn.slug} (TYPE iceberg, ENDPOINT '${endpoint}', SECRET '${secretName}')`,
+      ),
+      ATTACH_TIMEOUT_MS,
     );
     entry.attachedSlugs.add(conn.slug);
   } finally {
@@ -297,7 +409,6 @@ async function testIcebergConnection(conn: IConnectionDocument): Promise<DuckDBI
   return instance;
 }
 
-
 // ── Scoped VIEWs for MCP ──────────────────────────────────────────────
 
 const SIMPLE_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -350,8 +461,9 @@ export async function createScopedViews(
   const schema = scopeSchemaName(model.name);
   const db = await instance.connect();
   const viewErrors: Array<{ dataset: string; field: string; error: string }> = [];
+  const perFieldTimeout = Math.min(getQueryTimeoutMs(), 10_000);
   try {
-    await db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+    await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000);
     for (const ds of model.datasets) {
       if (ds.fields.length === 0) continue;
 
@@ -360,7 +472,7 @@ export async function createScopedViews(
         const expr = f.expression.dialects[0]?.expression ?? f.name;
         const col = buildColumnSelect(expr, f.name);
         try {
-          await db.run(`SELECT ${col} FROM ${ds.source} LIMIT 0`);
+          await withQueryTimeout(db, () => db.run(`SELECT ${col} FROM ${ds.source} LIMIT 0`), perFieldTimeout);
           validColumns.push(col);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -370,8 +482,10 @@ export async function createScopedViews(
 
       if (validColumns.length === 0) continue;
       const viewName = scopedViewName(model.name, ds.name);
-      await db.run(
-        `CREATE OR REPLACE VIEW ${viewName} AS SELECT ${validColumns.join(", ")} FROM ${ds.source}`,
+      await withQueryTimeout(
+        db,
+        () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS SELECT ${validColumns.join(", ")} FROM ${ds.source}`),
+        perFieldTimeout,
       );
     }
     scopeViewCache.set(cacheKey, { hash });
