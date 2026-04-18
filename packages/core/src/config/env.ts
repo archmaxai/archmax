@@ -31,6 +31,7 @@ const envSchema = z.object({
   AGENT_REQUEST_TIMEOUT: z.string().optional().default("300"),
   AGENT_MAX_RETRIES: z.string().optional().default("3"),
   QUERY_TIMEOUT_MS: z.string().optional().default("30000"),
+  MAX_CONCURRENT_QUERIES: z.string().optional().default("10"),
 
   REDIS_URL: z.string().optional(),
   WORKER_CONCURRENCY: z.string().optional(),

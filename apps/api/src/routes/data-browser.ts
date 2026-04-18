@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 import { zValidator } from "@hono/zod-validator";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, Project } from "@archmax/core/models/index";
-import { getProjectInstance } from "@archmax/core/services/duckdb";
+import { getProjectInstance, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
 type ProjectInstance = Awaited<ReturnType<typeof getProjectInstance>>;
@@ -48,7 +48,7 @@ async function getProjectDuckDB(projectId: string): Promise<ProjectInstance> {
 async function collectRows(instance: ProjectInstance, sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
   const db = await instance.connect();
   try {
-    const result = await db.run(sql);
+    const result = await withQueryTimeout(db, () => db.run(sql));
     const columns = result.columnNames();
     const rows: Record<string, unknown>[] = [];
     for await (const chunk of result) {
@@ -137,8 +137,11 @@ const app = new Hono()
 
     const db = await instance.connect();
     try {
-      const existsResult = await db.run(
-        `SELECT 1 FROM information_schema.tables WHERE table_catalog = '${database}' AND table_schema = '${schema}' AND table_name = '${table}' LIMIT 1`,
+      const existsResult = await withQueryTimeout(
+        db,
+        () => db.run(
+          `SELECT 1 FROM information_schema.tables WHERE table_catalog = '${database}' AND table_schema = '${schema}' AND table_name = '${table}' LIMIT 1`,
+        ),
       );
       let exists = false;
       for await (const chunk of existsResult) {
@@ -146,14 +149,17 @@ const app = new Hono()
       }
       if (!exists) throw AppError.notFound("Table not found");
 
-      const countResult = await db.run(`SELECT COUNT(*) FROM ${fqTable}`);
+      const countResult = await withQueryTimeout(db, () => db.run(`SELECT COUNT(*) FROM ${fqTable}`));
       let total = 0;
       for await (const chunk of countResult) {
         const rows = chunk.getRows();
         if (rows.length > 0) total = Number(rows[0][0] ?? 0);
       }
 
-      const dataResult = await db.run(`SELECT * FROM ${fqTable} LIMIT ${pageSize} OFFSET ${offset}`);
+      const dataResult = await withQueryTimeout(
+        db,
+        () => db.run(`SELECT * FROM ${fqTable} LIMIT ${pageSize} OFFSET ${offset}`),
+      );
       const columnNames = dataResult.columnNames();
       const columnTypes = dataResult.columnTypes().map((t) => t.toString());
       const columns = columnNames.map((name, i) => ({ name, type: columnTypes[i] }));

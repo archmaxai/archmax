@@ -1,0 +1,14 @@
+## 1. Implementation
+- [x] 1.1 Create `withQueryTimeout` helper with `interrupt()` and timer cleanup
+- [x] 1.2 Create per-project `Semaphore` with acquire timeout
+- [x] 1.3 Create `withProjectQuerySlot` wrapper
+- [x] 1.4 Apply timeout to MCP `executeScopedQuery` and `executeStoredQuery`
+- [x] 1.5 Apply timeout to agent `makeExecuteQueryTool`
+- [x] 1.6 Apply timeout to data browser `collectRows` and paginated queries
+- [x] 1.7 Apply timeout to connection test endpoint
+- [x] 1.8 Apply timeout to `createScopedViews` per-field validation
+- [x] 1.9 Apply timeout to `attachConnection` and `attachIcebergCatalog`
+- [x] 1.10 Make `MAX_CONCURRENT_QUERIES` configurable via env
+- [x] 1.11 Document in `.env.example`
+- [x] 1.12 Write tests for `withQueryTimeout`, `withProjectQuerySlot`, `getQueryTimeoutMs`
+- [x] 1.13 Update spec deltas

@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
 
 vi.mock("../config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
 }));
 
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, buildColumnSelect, COMMUNITY_EXTENSIONS } from "./duckdb";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, buildColumnSelect, COMMUNITY_EXTENSIONS, getQueryTimeoutMs, withQueryTimeout, withProjectQuerySlot } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
@@ -470,6 +470,222 @@ describe("buildAttachString — postgres", () => {
       connectionConfig: { host: "pg.local", port: 5432, database: "app", user: "admin", password: "pw" },
     });
     expect(buildAttachString(conn)).toBe("host=pg.local port=5432 dbname=app user=admin password=pw");
+  });
+});
+
+describe("getQueryTimeoutMs", () => {
+  const origEnv = process.env.QUERY_TIMEOUT_MS;
+  afterEach(() => {
+    if (origEnv === undefined) delete process.env.QUERY_TIMEOUT_MS;
+    else process.env.QUERY_TIMEOUT_MS = origEnv;
+  });
+
+  it("returns default 30_000 when env is unset", () => {
+    delete process.env.QUERY_TIMEOUT_MS;
+    expect(getQueryTimeoutMs()).toBe(30_000);
+  });
+
+  it("parses numeric env value", () => {
+    process.env.QUERY_TIMEOUT_MS = "5000";
+    expect(getQueryTimeoutMs()).toBe(5000);
+  });
+
+  it("falls back to default for non-positive values", () => {
+    process.env.QUERY_TIMEOUT_MS = "0";
+    expect(getQueryTimeoutMs()).toBe(30_000);
+    process.env.QUERY_TIMEOUT_MS = "-1";
+    expect(getQueryTimeoutMs()).toBe(30_000);
+  });
+
+  it("falls back to default for non-numeric strings", () => {
+    process.env.QUERY_TIMEOUT_MS = "not_a_number";
+    expect(getQueryTimeoutMs()).toBe(30_000);
+  });
+});
+
+describe("withQueryTimeout", () => {
+  it("returns the result when the operation completes in time", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      const result = await withQueryTimeout(db, () => db.run("SELECT 42 AS val"), 5_000);
+      expect(result.columnNames()).toEqual(["val"]);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("rejects with timeout error when operation exceeds deadline", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      await expect(
+        withQueryTimeout(db, () => new Promise(() => {}), 50),
+      ).rejects.toThrow(/timed out after 0\.05s/i);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("calls interrupt() on the connection when timeout fires", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    const interruptSpy = vi.spyOn(db, "interrupt");
+    try {
+      await withQueryTimeout(db, () => new Promise(() => {}), 50).catch(() => {});
+      expect(interruptSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      interruptSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
+  it("clears the timer when operation succeeds before deadline", async () => {
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      await withQueryTimeout(db, () => db.run("SELECT 1"), 5_000);
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
+  it("clears the timer when operation rejects before deadline", async () => {
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      await expect(
+        withQueryTimeout(db, () => Promise.reject(new Error("query error")), 5_000),
+      ).rejects.toThrow("query error");
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
+  it("uses custom timeout duration", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    try {
+      await expect(
+        withQueryTimeout(db, () => new Promise(() => {}), 25),
+      ).rejects.toThrow(/timed out after 0\.025s/);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+});
+
+describe("withProjectQuerySlot", () => {
+  it("runs the operation and returns its result", async () => {
+    const result = await withProjectQuerySlot("slot-test-basic", async () => "ok");
+    expect(result).toBe("ok");
+  });
+
+  it("propagates errors from the operation", async () => {
+    await expect(
+      withProjectQuerySlot("slot-test-error", async () => { throw new Error("boom"); }),
+    ).rejects.toThrow("boom");
+  });
+
+  it("releases the slot after success so subsequent calls work", async () => {
+    const pid = "slot-test-release";
+    for (let i = 0; i < 15; i++) {
+      await withProjectQuerySlot(pid, async () => i);
+    }
+  });
+
+  it("releases the slot after failure so subsequent calls work", async () => {
+    const pid = "slot-test-release-err";
+    await withProjectQuerySlot(pid, async () => "ok");
+    await expect(
+      withProjectQuerySlot(pid, async () => { throw new Error("fail"); }),
+    ).rejects.toThrow("fail");
+    const result = await withProjectQuerySlot(pid, async () => "recovered");
+    expect(result).toBe("recovered");
+  });
+
+  it("limits concurrency to the configured maximum", async () => {
+    const pid = "slot-test-concurrency";
+    let concurrent = 0;
+    let maxConcurrent = 0;
+
+    const delay = () => new Promise<void>((r) => setTimeout(r, 50));
+
+    const tasks = Array.from({ length: 15 }, () =>
+      withProjectQuerySlot(pid, async () => {
+        concurrent++;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await delay();
+        concurrent--;
+      }),
+    );
+
+    await Promise.all(tasks);
+    expect(maxConcurrent).toBe(10);
+    expect(concurrent).toBe(0);
+  });
+
+  it("rejects with a clear message when queue wait exceeds timeout", async () => {
+    const pid = "slot-test-queue-timeout";
+    const origEnv = process.env.QUERY_TIMEOUT_MS;
+    process.env.QUERY_TIMEOUT_MS = "100";
+
+    const blockers: Array<() => void> = [];
+    const blockingTasks = Array.from({ length: 10 }, () =>
+      withProjectQuerySlot(pid, () => new Promise<void>((r) => blockers.push(r))),
+    );
+
+    await vi.waitFor(() => expect(blockers.length).toBe(10), { timeout: 1000 });
+
+    await expect(
+      withProjectQuerySlot(pid, async () => "should not run"),
+    ).rejects.toThrow(/queries already running/);
+
+    blockers.forEach((r) => r());
+    await Promise.all(blockingTasks);
+
+    if (origEnv === undefined) delete process.env.QUERY_TIMEOUT_MS;
+    else process.env.QUERY_TIMEOUT_MS = origEnv;
+  });
+
+  it("uses independent semaphores per project", async () => {
+    let concurrentA = 0;
+    let concurrentB = 0;
+    const resolversA: Array<() => void> = [];
+    const resolversB: Array<() => void> = [];
+
+    const tasksA = Array.from({ length: 10 }, () =>
+      withProjectQuerySlot("slot-iso-a", async () => {
+        concurrentA++;
+        await new Promise<void>((r) => resolversA.push(r));
+        concurrentA--;
+      }),
+    );
+    const tasksB = Array.from({ length: 10 }, () =>
+      withProjectQuerySlot("slot-iso-b", async () => {
+        concurrentB++;
+        await new Promise<void>((r) => resolversB.push(r));
+        concurrentB--;
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(resolversA.length).toBe(10);
+      expect(resolversB.length).toBe(10);
+    }, { timeout: 1000 });
+
+    expect(concurrentA).toBe(10);
+    expect(concurrentB).toBe(10);
+
+    resolversA.forEach((r) => r());
+    resolversB.forEach((r) => r());
+    await Promise.all([...tasksA, ...tasksB]);
   });
 });
 
