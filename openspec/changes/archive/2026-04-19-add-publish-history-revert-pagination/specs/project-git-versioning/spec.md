@@ -38,29 +38,6 @@ The system SHALL provide an API endpoint `POST /api/projects/:projectId/git/reve
 - **WHEN** a POST request is made with an OID that does not exist
 - **THEN** a 400 error is returned with a descriptive message
 
-## MODIFIED Requirements
-
-### Requirement: Commit History
-
-The system SHALL provide an API endpoint `GET /api/projects/:projectId/git/log` accepting optional `limit` (default 10, max 100) and `page` (default 1) query parameters that returns paginated commit history. The response SHALL be `{ entries: GitLogEntry[], total: number, page: number, limit: number }`. Each entry SHALL include `oid` (commit hash), `message`, `author` (name + email), and `timestamp` (ISO 8601). Entries SHALL be returned in reverse chronological order.
-
-#### Scenario: Retrieve first page of commit history
-
-- **WHEN** a log request is made with default parameters for a project with 25 commits
-- **THEN** 10 entries are returned (default limit) for page 1
-- **AND** `total` is 25
-
-#### Scenario: Retrieve second page
-
-- **WHEN** a log request is made with `page=2&limit=10` for a project with 25 commits
-- **THEN** 10 entries are returned for page 2 (commits 11–20)
-- **AND** `total` is 25
-
-#### Scenario: Empty repository
-
-- **WHEN** a log request is made for a project with no commits
-- **THEN** `entries` is an empty array and `total` is 0
-
 ### Requirement: Publish History UI
 
 The project settings page SHALL display a "Publish History" card showing paginated Git commit history. Each history entry SHALL display the commit message (first line, truncated) and a relative timestamp. Each entry SHALL include a revert icon button (Lucide `Undo2`) that, when clicked, opens a confirmation dialog. The confirmation dialog SHALL display the commit message and ask the user to confirm the revert. On confirmation, `POST /git/revert-to-commit` is called with the entry's OID. On success, a toast confirms the revert, the history list refreshes, and related caches (publish status, semantic models) are invalidated. Pagination controls SHALL appear below the list only when `total` exceeds the page size, using the project's standard pagination pattern: left-aligned total count (`text-xs text-muted-foreground`), right-aligned chevron buttons with page indicator (`tabular-nums`).
@@ -97,3 +74,26 @@ The project settings page SHALL display a "Publish History" card showing paginat
 
 - **WHEN** the most recent commit is displayed (first entry on page 1)
 - **THEN** the revert button is hidden or disabled (reverting to HEAD is a no-op)
+
+## MODIFIED Requirements
+
+### Requirement: Commit History
+
+The system SHALL provide an API endpoint `GET /api/projects/:projectId/git/log` accepting optional `limit` (default 10, max 100) and `page` (default 1) query parameters that returns paginated commit history. The response SHALL be `{ entries: GitLogEntry[], total: number, page: number, limit: number }`. Each entry SHALL include `oid` (commit hash), `message`, `author` (name + email), and `timestamp` (ISO 8601). Entries SHALL be returned in reverse chronological order.
+
+#### Scenario: Retrieve first page of commit history
+
+- **WHEN** a log request is made with default parameters for a project with 25 commits
+- **THEN** 10 entries are returned (default limit) for page 1
+- **AND** `total` is 25
+
+#### Scenario: Retrieve second page
+
+- **WHEN** a log request is made with `page=2&limit=10` for a project with 25 commits
+- **THEN** 10 entries are returned for page 2 (commits 11–20)
+- **AND** `total` is 25
+
+#### Scenario: Empty repository
+
+- **WHEN** a log request is made for a project with no commits
+- **THEN** `entries` is an empty array and `total` is 0
