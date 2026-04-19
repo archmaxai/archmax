@@ -12,24 +12,28 @@ A semantic layer for your data: archmax describes it, you sharpen it, AI agents 
 
 <table>
 <tr>
-<td width="33%"><img src="docs/images/screenshot-graph-view.png" alt="Semantic model graph view" /></td>
-<td width="33%"><img src="docs/images/screenshot-model-builder.png" alt="AI-assisted model builder" /></td>
-<td width="33%"><img src="docs/images/screenshot-mcp-access.png" alt="MCP access" /></td>
+<td width="25%"><img src="docs/images/screenshot-home.png" alt="Project home dashboard" /></td>
+<td width="25%"><img src="docs/images/screenshot-graph-view.png" alt="Semantic model graph view" /></td>
+<td width="25%"><img src="docs/images/screenshot-model-builder.png" alt="AI-assisted model builder" /></td>
+<td width="25%"><img src="docs/images/screenshot-mcp-access.png" alt="MCP access" /></td>
 </tr>
 <tr>
+<td align="center"><b>Project Home</b></td>
 <td align="center"><b>Graph View</b></td>
 <td align="center"><b>Model Builder</b></td>
 <td align="center"><b>MCP Access</b></td>
 </tr>
 <tr>
-<td width="33%"><img src="docs/images/screenshot-test-agents.png" alt="Test agents configuration" /></td>
-<td width="33%"><img src="docs/images/screenshot-test-cases.png" alt="Test cases" /></td>
-<td width="33%"><img src="docs/images/screenshot-test-runs.png" alt="Test runs" /></td>
+<td width="25%"><img src="docs/images/screenshot-test-agents.png" alt="Test agents configuration" /></td>
+<td width="25%"><img src="docs/images/screenshot-test-cases.png" alt="Test cases" /></td>
+<td width="25%"><img src="docs/images/screenshot-test-runs.png" alt="Test runs" /></td>
+<td width="25%"><img src="docs/images/screenshot-settings.png" alt="Project settings" /></td>
 </tr>
 <tr>
 <td align="center"><b>Test Agents</b></td>
 <td align="center"><b>Test Cases</b></td>
 <td align="center"><b>Test Runs</b></td>
+<td align="center"><b>Settings</b></td>
 </tr>
 </table>
 
