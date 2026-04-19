@@ -23,6 +23,7 @@ import {
   AlertCircle,
   Github,
   Star,
+  BookOpen,
 } from "lucide-react";
 import { Card, Skeleton } from "@archmax/ui";
 import { api } from "@/lib/api";
@@ -77,16 +78,27 @@ function DashboardPage() {
             Project overview and quick access
           </p>
         </div>
-        <a
-          href="https://github.com/archmaxai/archmax"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 shrink-0"
-        >
-          <Github className="h-4 w-4" />
-          Star us on GitHub
-          <Star className="h-3.5 w-3.5" />
-        </a>
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href="https://docs.archmax.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-full bg-muted px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/70"
+          >
+            <BookOpen className="h-4 w-4" />
+            Documentation
+          </a>
+          <a
+            href="https://github.com/archmaxai/archmax"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <Github className="h-4 w-4" />
+            Star us on GitHub
+            <Star className="h-3.5 w-3.5" />
+          </a>
+        </div>
       </header>
 
       {isLoading ? (
