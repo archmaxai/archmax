@@ -13,7 +13,7 @@ jobs:
       packages: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: docker/setup-qemu-action@v4
 
@@ -85,7 +85,7 @@ jobs:
     env:
       APP_IMAGE: ghcr.io/${{ github.repository }}:pr-${{ github.event.pull_request.number }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Generate random credentials
         run: |
