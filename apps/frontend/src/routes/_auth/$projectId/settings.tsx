@@ -530,7 +530,7 @@ function PublishHistoryCard() {
           <DialogHeader>
             <DialogTitle>Revert to this version?</DialogTitle>
             <DialogDescription>
-              This will restore all files to the state of the selected commit and create a new commit recording the revert.
+              This will restore all files to the state of the selected commit and create a new commit recording the revert. <strong>It will push to the remote if configured.</strong>
             </DialogDescription>
           </DialogHeader>
           {revertTarget && (
