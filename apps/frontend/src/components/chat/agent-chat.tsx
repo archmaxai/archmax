@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { memo, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, AlertTriangle, Loader2, WifiOff } from "lucide-react";
 import { cn, ScrollArea } from "@archmax/ui";
@@ -24,7 +24,11 @@ import { api } from "@/lib/api";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1000;
 
-function MessageSegments({ segments }: { segments: ContentSegment[] }) {
+const MessageSegments = memo(function MessageSegments({
+  segments,
+}: {
+  segments: ContentSegment[];
+}) {
   const hasToolCalls = segments.some((s) => s.type === "tool_call");
 
   const { markdown, toolCallMap } = useMemo(() => {
@@ -46,7 +50,82 @@ function MessageSegments({ segments }: { segments: ContentSegment[] }) {
       toolCalls={toolCallMap.size > 0 ? toolCallMap : undefined}
     />
   );
-}
+});
+
+/**
+ * One chat bubble. Memoized so that unrelated state changes in AgentChat
+ * (typing in the input, toggling `isStreaming` at stream end, etc.) don't
+ * re-render every prior message — which otherwise forces `react-markdown`
+ * to re-parse the full conversation and blocks the main thread.
+ *
+ * `isReconnecting` is only relevant when the message itself is streaming, so
+ * the parent passes `false` for non-streaming messages to keep props stable.
+ */
+const ChatMessageItem = memo(function ChatMessageItem({
+  msg,
+  isReconnecting,
+}: {
+  msg: ChatMessage;
+  isReconnecting: boolean;
+}) {
+  const isUser = msg.role === "user";
+  const textContent = isUser ? getTextContent(msg.segments) : "";
+
+  return (
+    <div
+      className={cn(
+        "flex w-full px-4 lg:px-8",
+        isUser ? "justify-end" : "justify-start",
+      )}
+    >
+      <div className="max-w-[95%] md:max-w-[80%]">
+        <div
+          className={cn(
+            "rounded-2xl px-6 py-5 text-sm leading-relaxed",
+            isUser
+              ? "bg-[oklch(0.25_0_0)] text-white dark:bg-[oklch(0.965_0_0)] dark:text-[oklch(0.145_0_0)]"
+              : "bg-card",
+          )}
+        >
+          {isUser ? (
+            <div className="whitespace-pre-wrap break-words">{textContent}</div>
+          ) : msg.segments.length > 0 ? (
+            <>
+              <MessageSegments segments={msg.segments} />
+              {msg.isStreaming && isReconnecting && (
+                <div className="mt-3 flex items-center gap-2 text-muted-foreground">
+                  <WifiOff className="h-3.5 w-3.5" />
+                  <span className="text-xs">Reconnecting…</span>
+                </div>
+              )}
+            </>
+          ) : msg.isStreaming ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              {isReconnecting ? (
+                <>
+                  <WifiOff className="h-4 w-4" />
+                  <span className="text-xs">Reconnecting…</span>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-xs">Thinking…</span>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {!isUser && msg.error && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-destructive text-xs">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{msg.error}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export type ChatRequestFn = (params: {
   projectId: string;
@@ -583,68 +662,13 @@ export function AgentChat({
                   </div>
                 ))}
 
-                {messages.map((msg, i) => {
-                  const textContent = getTextContent(msg.segments);
-                  const isUser = msg.role === "user";
-
-                  return (
-                    <div
-                      key={i}
-                      className={cn(
-                        "flex w-full px-4 lg:px-8",
-                        isUser ? "justify-end" : "justify-start",
-                      )}
-                    >
-                      <div className="max-w-[95%] md:max-w-[80%]">
-                        <div
-                          className={cn(
-                            "rounded-2xl px-6 py-5 text-sm leading-relaxed",
-                            isUser
-                              ? "bg-[oklch(0.25_0_0)] text-white dark:bg-[oklch(0.965_0_0)] dark:text-[oklch(0.145_0_0)]"
-                              : "bg-card",
-                          )}
-                        >
-                          {isUser ? (
-                            <div className="whitespace-pre-wrap break-words">
-                              {textContent}
-                            </div>
-                          ) : msg.segments.length > 0 ? (
-                            <>
-                              <MessageSegments segments={msg.segments} />
-                              {msg.isStreaming && isReconnecting && (
-                                <div className="mt-3 flex items-center gap-2 text-muted-foreground">
-                                  <WifiOff className="h-3.5 w-3.5" />
-                                  <span className="text-xs">Reconnecting…</span>
-                                </div>
-                              )}
-                            </>
-                          ) : msg.isStreaming ? (
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                              {isReconnecting ? (
-                                <>
-                                  <WifiOff className="h-4 w-4" />
-                                  <span className="text-xs">Reconnecting…</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  <span className="text-xs">Thinking…</span>
-                                </>
-                              )}
-                            </div>
-                          ) : null}
-
-                          {!isUser && msg.error && (
-                            <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-destructive text-xs">
-                              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                              <span>{msg.error}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {messages.map((msg, i) => (
+                  <ChatMessageItem
+                    key={i}
+                    msg={msg}
+                    isReconnecting={!!msg.isStreaming && isReconnecting}
+                  />
+                ))}
 
                 <div ref={scrollRef} />
               </div>

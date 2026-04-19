@@ -132,6 +132,13 @@ export async function subscribeToStream(
 /**
  * Bridge Redis pub/sub events to an SSE response stream.
  * Sends periodic pings to keep the connection alive through proxies.
+ *
+ * The ping sleep is interruptible via a `wakeup` callback so that arrival of a
+ * `done` event closes the HTTP body immediately instead of waiting up to
+ * `SSE_PING_INTERVAL_MS`. Without this the client sees the `done` SSE event
+ * but its `reader.read()` keeps blocking until the server finally closes the
+ * response, leaving the chat UI in a "still streaming" state for several
+ * seconds after the stream has logically ended.
  */
 export async function bridgeRedisToSSE(
   stream: SSEWriter,
@@ -140,18 +147,31 @@ export async function bridgeRedisToSSE(
 ): Promise<void> {
   let unsubscribe: (() => Promise<void>) | undefined;
   let streamDone = false;
+  let wakeup: (() => void) | null = null;
 
   try {
     unsubscribe = await subscribeToStream(conversationId, (event: StreamEvent) => {
       stream.writeSSE({ event: event.event, data: event.data }).catch(() => {});
       if (event.event === "done") {
         streamDone = true;
+        wakeup?.();
         unsubscribe?.().catch(() => {});
       }
     });
 
     while (!streamDone) {
-      await new Promise((r) => setTimeout(r, SSE_PING_INTERVAL_MS));
+      await new Promise<void>((resolve) => {
+        let resolved = false;
+        const timer = setTimeout(() => finish(), SSE_PING_INTERVAL_MS);
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          wakeup = null;
+          resolve();
+        };
+        wakeup = finish;
+      });
       if (!streamDone) {
         stream.writeSSE({ event: "ping", data: "{}" }).catch(() => {});
       }
