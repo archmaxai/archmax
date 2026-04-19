@@ -42,7 +42,7 @@ jobs:
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/docs/dist/
 
