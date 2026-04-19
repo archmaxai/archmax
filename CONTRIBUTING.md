@@ -206,6 +206,27 @@ Default credentials are `admin` / `testpass123`. Override with `UI_USERNAME` / `
 4. Open a PR targeting `main`
 5. CI runs lint, typecheck, and tests automatically
 
+## Dependency Updates
+
+Dependabot raises weekly pull requests every Monday across three ecosystems:
+
+| Ecosystem | Scope | Commit prefix |
+|---|---|---|
+| `npm` | `pnpm-lock.yaml` + every workspace `package.json` | `chore(deps)` |
+| `github-actions` | action versions in `.github/workflows/*.yml` | `chore(ci)` |
+| `docker` | base image in the root `Dockerfile` | `chore(docker)` |
+
+Config lives in [`.github/dependabot.yml`](.github/dependabot.yml).
+
+- **Grouping.** Minor and patch `npm` bumps are combined into a single weekly PR labelled
+  `dependencies`. Major bumps stay in their own PRs so breaking changes get a deliberate
+  review.
+- **CI gate.** Every Dependabot PR runs the same `Lint & Typecheck` and `Test` jobs as
+  human-authored PRs. Merge only after both pass.
+- **OpenSpec exemption.** Dependabot-authored PRs do **not** require an
+  `openspec/changes/<id>/` entry. This matches the existing exemption for
+  "non-breaking dependency updates" in `openspec/project.md`.
+
 ## Releases
 
 Releases are created automatically when a labeled PR is merged to `main`. No manual tagging or version files needed.
