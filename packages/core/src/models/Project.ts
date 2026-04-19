@@ -27,8 +27,7 @@ export async function generateUniqueSlug(title: string, excludeId?: string): Pro
 }
 
 export interface IGitHubConfig {
-  owner: string;
-  repo: string;
+  url: string;
   branch: string;
   encryptedToken: string;
 }
@@ -48,8 +47,7 @@ export interface IProjectDocument extends IProject, SoftDeleteFields, SoftDelete
 
 const GitHubConfigSchema = new Schema(
   {
-    owner: { type: String, required: true },
-    repo: { type: String, default: "" },
+    url: { type: String, required: true },
     branch: { type: String, default: "main" },
     encryptedToken: { type: String, required: true },
   },

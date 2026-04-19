@@ -130,7 +130,7 @@ pnpm --filter @archmax/api build   # tsc (emits JS to dist/)
 - **DB connection**: Singleton `connectDB()` with global mongoose cache in `@archmax/core/infra/db`
 - **DuckDB service**: Lazy per-project DuckDB instances in `@archmax/core/services/duckdb` — connections attached as named schemas via postgres/mysql/mssql extensions
 - **API structure**: Hono app exports `AppType` for typed RPC client in frontend
-- **Frontend API client**: `hc<AppType>` from `hono/client` — fully typed end-to-end
+- **Frontend API client**: `hc<AppType>` from `hono/client` — fully typed end-to-end. **All frontend HTTP calls MUST use the typed `api` client** from `@/lib/api` (e.g. `api.api.projects[":projectId"].git.status.$get(...)`) — never raw `fetch()` to API routes. This ensures compile-time type safety for request params, bodies, and response types. Reusable query/mutation logic should be extracted into custom hooks (e.g. `@/lib/use-git.ts`, `@/lib/use-publish.ts`) that wrap `useQuery`/`useMutation` with the typed client call, error handling, cache invalidation, and toast feedback.
 - **Error handling**: `AppError` class with static factory methods (badRequest, notFound, etc.)
 - **MCP tools**: Function returning tool map `Record<string, { description, handler }>`, separate schema/required helpers
 - **Auth**: Better Auth with session-based admin login

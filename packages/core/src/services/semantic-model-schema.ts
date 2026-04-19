@@ -115,7 +115,10 @@ export const datasetFileSchema = z.object({
   dataset: datasetSchema,
 });
 
-export type SemanticModel = z.infer<typeof semanticModelSchema>;
+export type SemanticModel = z.infer<typeof semanticModelSchema> & {
+  hasConflicts?: boolean;
+  rawContent?: string;
+};
 export type Dataset = z.infer<typeof datasetSchema>;
 export type Field = z.infer<typeof fieldSchema>;
 export type Relationship = z.infer<typeof relationshipSchema>;

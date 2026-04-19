@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ListOrdered, FolderPen, Github, Loader2, Trash2 } from "lucide-react";
+import {
+  ListOrdered, FolderPen, Github, Loader2, Trash2, GitBranch, History,
+  Undo2, ChevronLeft, ChevronRight,
+} from "lucide-react";
 import {
   Label, Card, Input, Button,
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
+import { useGitStatus, useGitInit, useGitReinit, useGitSync, useGitLog, useGitRevertToCommit } from "@/lib/use-git";
 
 export const Route = createFileRoute("/_auth/$projectId/settings")({
   component: SettingsPage,
@@ -38,6 +41,9 @@ function SettingsPage() {
   const [pageSizeInput, setPageSizeInput] = useState(
     String(project.mcpPageSize ?? 50),
   );
+  const [ghUrlInput, setGhUrlInput] = useState(project.github?.url ?? "");
+  const [ghBranchInput, setGhBranchInput] = useState(project.github?.branch ?? "main");
+  const [ghTokenInput, setGhTokenInput] = useState("");
 
   useEffect(() => {
     setTitleInput(project.title);
@@ -45,10 +51,13 @@ function SettingsPage() {
     setPageSizeInput(String(project.mcpPageSize ?? 50));
     setSlugTouched(false);
     setSlugError(null);
-  }, [project._id, project.title, project.slug, project.mcpPageSize]);
+    setGhUrlInput(project.github?.url ?? "");
+    setGhBranchInput(project.github?.branch ?? "main");
+    setGhTokenInput("");
+  }, [project._id, project.title, project.slug, project.mcpPageSize, project.github?.url, project.github?.branch]);
 
   const saveMutation = useMutation({
-    mutationFn: async (body: { title?: string; slug?: string; mcpPageSize?: number }) => {
+    mutationFn: async (body: { title?: string; slug?: string; mcpPageSize?: number; github?: { url: string; branch: string; token?: string } }) => {
       const res = await api.api.projects[":id"].$put({
         param: { id: project._id },
         json: body,
@@ -65,6 +74,7 @@ function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project", project._id] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setGhTokenInput("");
       toast.success("Settings saved");
     },
     onError: (err) => {
@@ -103,14 +113,27 @@ function SettingsPage() {
   const titleDirty = trimmedTitle !== project.title && trimmedTitle.length > 0;
   const slugDirty = slugInput !== project.slug && slugValid;
   const pageSizeDirty = pageSizeValid && parsedPageSize !== (project.mcpPageSize ?? 50);
-  const isDirty = titleDirty || slugDirty || pageSizeDirty;
+  const ghUrlDirty = ghUrlInput.trim() !== (project.github?.url ?? "");
+  const ghBranchDirty = ghBranchInput.trim() !== (project.github?.branch ?? "main");
+  const ghTokenDirty = ghTokenInput.length > 0;
+  const ghDirty = ghUrlDirty || ghBranchDirty || ghTokenDirty;
+  const ghCanSave = ghDirty && ghUrlInput.trim().length > 0 && (ghTokenInput.length > 0 || !!project.github?.connected);
+  const isDirty = titleDirty || slugDirty || pageSizeDirty || ghCanSave;
   const hasValidationErrors = !!slugError || (pageSizeInput !== "" && !pageSizeValid);
 
   function handleSave() {
-    const updates: { title?: string; slug?: string; mcpPageSize?: number } = {};
+    const updates: { title?: string; slug?: string; mcpPageSize?: number; github?: { url: string; branch: string; token?: string } } = {};
     if (titleDirty) updates.title = trimmedTitle;
     if (slugDirty) updates.slug = slugInput;
     if (pageSizeDirty) updates.mcpPageSize = parsedPageSize;
+    if (ghCanSave) {
+      const ghPayload: { url: string; branch: string; token?: string } = {
+        url: ghUrlInput.trim(),
+        branch: ghBranchInput.trim() || "main",
+      };
+      if (ghTokenInput) ghPayload.token = ghTokenInput;
+      updates.github = ghPayload;
+    }
     if (Object.keys(updates).length > 0) {
       saveMutation.mutate(updates);
     }
@@ -141,7 +164,7 @@ function SettingsPage() {
       <div className="divider-subtle mx-8" />
 
       <div className="flex-1 overflow-y-auto p-8">
-        <div className="flex max-w-xl flex-col gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <Card className="p-6">
             <div className="flex gap-3">
               <FolderPen className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
@@ -218,7 +241,15 @@ function SettingsPage() {
             </div>
           </Card>
 
-          <GitHubCard />
+          <GitSection
+            ghUrlInput={ghUrlInput}
+            setGhUrlInput={setGhUrlInput}
+            ghBranchInput={ghBranchInput}
+            setGhBranchInput={setGhBranchInput}
+            ghTokenInput={ghTokenInput}
+            setGhTokenInput={setGhTokenInput}
+          />
+
           <DeleteProjectCard />
         </div>
       </div>
@@ -226,144 +257,311 @@ function SettingsPage() {
   );
 }
 
-function GitHubCard() {
-  const { project } = useProject();
-  const queryClient = useQueryClient();
+interface GitHubInputProps {
+  ghUrlInput: string;
+  setGhUrlInput: (v: string) => void;
+  ghBranchInput: string;
+  setGhBranchInput: (v: string) => void;
+  ghTokenInput: string;
+  setGhTokenInput: (v: string) => void;
+}
 
-  const configQuery = useQuery({
-    queryKey: ["config"],
-    queryFn: async () => {
-      const res = await fetch("/api/config");
-      return res.json() as Promise<{ githubEnabled: boolean }>;
-    },
-    staleTime: Infinity,
-  });
+function GitSection(props: GitHubInputProps) {
+  const gitStatusQuery = useGitStatus();
 
-  const reposQuery = useQuery({
-    queryKey: ["github-repos", project._id],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/github/repos`);
-      if (!res.ok) throw new Error("Failed to fetch repos");
-      return res.json() as Promise<Array<{ full_name: string; name: string; owner: string }>>;
-    },
-    enabled: !!project.github?.connected,
-  });
+  if (gitStatusQuery.isLoading) return null;
 
-  const disconnectMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/github`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to disconnect");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      toast.success("GitHub disconnected");
-    },
-    onError: (err) => toast.error(err.message),
-  });
+  if (!gitStatusQuery.data?.initialized) {
+    return <GitMigrationCard />;
+  }
 
-  const updateGitHubMutation = useMutation({
-    mutationFn: async (body: { githubRepo?: string; githubBranch?: string }) => {
-      const res = await api.api.projects[":id"].$put({
-        param: { id: project._id },
-        json: body,
-      });
-      if (!res.ok) throw new Error("Failed to update");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
-      toast.success("GitHub settings updated");
-    },
-    onError: (err) => toast.error(err.message),
-  });
+  return (
+    <>
+      <GitHubCard {...props} />
+      <PublishHistoryCard />
+    </>
+  );
+}
 
-  const [branchInput, setBranchInput] = useState(project.github?.branch ?? "main");
-
-  useEffect(() => {
-    setBranchInput(project.github?.branch ?? "main");
-  }, [project.github?.branch]);
-
-  if (!configQuery.data?.githubEnabled) return null;
-
-  const gh = project.github;
+function GitMigrationCard() {
+  const initMutation = useGitInit();
 
   return (
     <Card className="p-6">
       <div className="flex gap-3">
-        <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+        <GitBranch className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div className="flex flex-1 flex-col gap-4">
           <div className="content-tight">
-            <Label className="text-base font-medium">GitHub Integration</Label>
+            <Label className="text-base font-medium">Version Control</Label>
             <p className="text-muted-foreground text-sm">
-              Push published semantic models to a GitHub repository.
+              This project has not been migrated to Git versioning yet. Initialize a
+              local Git repository to enable version history, revert tools, and GitHub sync.
             </p>
           </div>
-
-          {!gh?.connected ? (
+          <div>
             <Button
-              variant="outline"
-              onClick={() => {
-                window.location.href = `/api/projects/${project._id}/github/authorize`;
-              }}
+              onClick={() => initMutation.mutate()}
+              disabled={initMutation.isPending}
             >
-              Connect to GitHub
+              {initMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Initialize Git
             </Button>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm">
-                Connected as <span className="font-medium">{gh.owner}</span>
-              </p>
-
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
-                <Label htmlFor="github-repo" className="text-sm">Repository</Label>
-                <Select
-                  value={gh.repo || undefined}
-                  onValueChange={(val) => updateGitHubMutation.mutate({ githubRepo: val })}
-                >
-                  <SelectTrigger id="github-repo">
-                    <SelectValue placeholder="Select a repository..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reposQuery.data?.map((repo) => (
-                      <SelectItem key={repo.full_name} value={repo.full_name}>
-                        {repo.full_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Label htmlFor="github-branch" className="text-sm">Branch</Label>
-                <Input
-                  id="github-branch"
-                  value={branchInput}
-                  onChange={(e) => setBranchInput(e.target.value)}
-                  onBlur={() => {
-                    const trimmed = branchInput.trim() || "main";
-                    if (trimmed !== gh.branch) {
-                      updateGitHubMutation.mutate({ githubBranch: trimmed });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                  }}
-                />
-              </div>
-
-              <div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => disconnectMutation.mutate()}
-                  disabled={disconnectMutation.isPending}
-                >
-                  Disconnect
-                </Button>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </Card>
+  );
+}
+
+function GitHubCard({ ghUrlInput, setGhUrlInput, ghBranchInput, setGhBranchInput, ghTokenInput, setGhTokenInput }: GitHubInputProps) {
+  const { project } = useProject();
+  const queryClient = useQueryClient();
+
+  const isConnected = !!project.github?.connected;
+
+  const removeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.api.projects[":id"].$put({
+        param: { id: project._id },
+        json: { clearGithub: true },
+      });
+      if (!res.ok) throw new Error("Failed to remove");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project", project._id] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("GitHub configuration removed");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const syncMutation = useGitSync();
+  const reinitMutation = useGitReinit();
+
+  return (
+    <Card className="min-w-0 p-6">
+      <div className="flex min-w-0 gap-3">
+        <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          <div className="content-tight">
+            <Label className="text-base font-medium">GitHub</Label>
+            <p className="text-muted-foreground text-sm">
+              Push published semantic models to a GitHub repository using a Personal Access Token.
+              Create one in GitHub under <span className="font-medium text-foreground">Settings &rarr; Developer settings &rarr; Personal access tokens</span>.
+              The PAT needs the <code className="rounded bg-muted px-1 py-0.5 text-xs">repo</code> scope (classic) or <code className="rounded bg-muted px-1 py-0.5 text-xs">Contents: Read and write</code> permission (fine-grained).
+            </p>
+          </div>
+
+          <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+            <Label htmlFor="github-url" className="text-sm">Repository URL</Label>
+            <Input
+              id="github-url"
+              placeholder="https://github.com/owner/repo.git"
+              value={ghUrlInput}
+              onChange={(e) => setGhUrlInput(e.target.value)}
+            />
+            <Label htmlFor="github-token" className="text-sm">Access Token</Label>
+            <Input
+              id="github-token"
+              type="password"
+              placeholder={isConnected ? "••••••••••" : "ghp_..."}
+              value={ghTokenInput}
+              onChange={(e) => setGhTokenInput(e.target.value)}
+            />
+            <Label htmlFor="github-branch" className="text-sm">Branch</Label>
+            <Input
+              id="github-branch"
+              value={ghBranchInput}
+              onChange={(e) => setGhBranchInput(e.target.value)}
+            />
+          </div>
+
+          <div className="flex gap-2">
+            {isConnected && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending}
+              >
+                {syncMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Sync Now
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => reinitMutation.mutate()}
+              disabled={reinitMutation.isPending}
+            >
+              {reinitMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Reinitialize Connection
+            </Button>
+            {isConnected && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="ml-auto"
+                onClick={() => removeMutation.mutate()}
+                disabled={removeMutation.isPending}
+              >
+                Disconnect
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function timeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+const PAGE_SIZE = 10;
+
+function PublishHistoryCard() {
+  const [page, setPage] = useState(1);
+  const [revertTarget, setRevertTarget] = useState<{ oid: string; message: string } | null>(null);
+  const logQuery = useGitLog({ limit: PAGE_SIZE, page });
+  const revertMutation = useGitRevertToCommit();
+
+  const entries = logQuery.data?.entries ?? [];
+  const total = logQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <>
+      <Card className="p-6">
+        <div className="flex gap-3">
+          <History className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div className="flex flex-1 flex-col gap-4">
+            <div className="content-tight">
+              <Label className="text-base font-medium">Publish History</Label>
+              <p className="text-muted-foreground text-sm">
+                Commits from the local Git repository.
+              </p>
+            </div>
+
+            {logQuery.isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : !entries.length ? (
+              <p className="text-sm text-muted-foreground">No publish history yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {entries.map((entry, idx) => {
+                  const isHead = page === 1 && idx === 0;
+                  return (
+                    <div key={entry.oid} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate">{entry.message.split("\n")[0]}</span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {!isHead && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            title="Revert to this version"
+                            onClick={() => setRevertTarget({ oid: entry.oid, message: entry.message.split("\n")[0] })}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {timeAgo(entry.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-muted-foreground">{total} total entries</span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="min-w-[3.5rem] text-center text-xs tabular-nums">
+                    {page} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <Dialog
+        open={!!revertTarget}
+        onOpenChange={(v) => { if (!revertMutation.isPending && !v) setRevertTarget(null); }}
+      >
+        <DialogContent showCloseButton={!revertMutation.isPending}>
+          <DialogHeader>
+            <DialogTitle>Revert to this version?</DialogTitle>
+            <DialogDescription>
+              This will restore all files to the state of the selected commit and create a new commit recording the revert. <strong>It will push to the remote if configured.</strong>
+            </DialogDescription>
+          </DialogHeader>
+          {revertTarget && (
+            <p className="rounded-md bg-muted px-3 py-2 text-sm font-medium">
+              {revertTarget.message}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRevertTarget(null)}
+              disabled={revertMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={revertMutation.isPending}
+              onClick={() => {
+                if (!revertTarget) return;
+                revertMutation.mutate(revertTarget.oid, {
+                  onSuccess: () => setRevertTarget(null),
+                });
+              }}
+            >
+              {revertMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Revert
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

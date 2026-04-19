@@ -5,6 +5,8 @@ export interface SemanticModelFull {
   relationships: RelationshipFull[];
   metrics: MetricFull[];
   custom_extensions?: CustomExtension[];
+  hasConflicts?: boolean;
+  rawContent?: string;
 }
 
 export interface DatasetFull {

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Database, Loader2 } from "lucide-react";
+import { Database, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@archmax/ui";
 import { api } from "@/lib/api";
 
@@ -9,6 +9,7 @@ interface SemanticModelSummary {
   description?: string;
   datasets: unknown[];
   metrics: unknown[];
+  hasConflicts?: boolean;
 }
 
 interface SemanticModelExplorerProps {
@@ -61,9 +62,15 @@ export function SemanticModelExplorer({
           >
             <Database className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{model.name}</span>
-            <span className="ml-auto text-[10px] text-muted-foreground/60">
-              {model.datasets.length}ds
-            </span>
+            {model.hasConflicts ? (
+              <span className="ml-auto shrink-0" title="Merge conflicts">
+                <AlertTriangle className="h-3 w-3 text-amber-500" />
+              </span>
+            ) : (
+              <span className="ml-auto text-[10px] text-muted-foreground/60">
+                {model.datasets.length}ds
+              </span>
+            )}
           </Link>
         ))}
       </div>

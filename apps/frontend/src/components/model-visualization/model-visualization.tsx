@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Code, TreePine, Network, Loader2, Download } from "lucide-react";
+import { Code, TreePine, Network, Loader2, Download, AlertTriangle } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from "@archmax/ui";
 import { toast } from "sonner";
 import { ModelYamlView } from "./model-yaml-view";
@@ -128,24 +128,48 @@ export function ModelVisualization({
         </div>
 
         <TabsContent value="graph" className="flex-1 min-h-0">
-          <ModelGraphView
-            key={modelName}
-            projectId={projectId}
-            modelName={modelName}
-            model={model}
-            diff={diff}
-            className="h-full"
-          />
+          {model.hasConflicts ? (
+            <ConflictBanner />
+          ) : (
+            <ModelGraphView
+              key={modelName}
+              projectId={projectId}
+              modelName={modelName}
+              model={model}
+              diff={diff}
+              className="h-full"
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="tree" className="flex-1 min-h-0">
-          <ModelTreeView model={model} diff={diff} className="h-full" />
+          {model.hasConflicts ? (
+            <ConflictBanner />
+          ) : (
+            <ModelTreeView model={model} diff={diff} className="h-full" />
+          )}
         </TabsContent>
 
         <TabsContent value="yaml" className="flex-1 min-h-0">
           <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function ConflictBanner() {
+  return (
+    <div className="flex h-full items-center justify-center p-8">
+      <div className="flex max-w-md flex-col items-center gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-amber-500" />
+        <p className="text-sm font-medium">Merge conflicts detected</p>
+        <p className="text-sm text-muted-foreground">
+          This model has merge conflicts that must be resolved before it can be
+          visualized. Switch to the YAML tab to see the conflict markers and
+          resolve them manually or using the chat agent.
+        </p>
+      </div>
     </div>
   );
 }

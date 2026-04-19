@@ -19,35 +19,45 @@ The system SHALL provide a `PublishEvent` Mongoose model with: `project` (Object
 
 ### Requirement: Publish API
 
-The API SHALL expose a POST endpoint at `/api/projects/:projectId/publish` that accepts `{ message: string }`. The endpoint SHALL: validate the message is non-empty, invoke the build assembly, create a `PublishEvent`, and if GitHub is configured, push to the configured repository. The endpoint SHALL return the created `PublishEvent`.
+The API SHALL expose a POST endpoint at `/api/projects/:projectId/publish` that accepts `{ message: string }`. The endpoint SHALL: validate the message is non-empty, invoke the build assembly, ensure the project directory is a Git repository (lazy init if needed), pull/merge upstream changes if a remote is configured (abort on conflicts), stage all changes and create a Git commit with the user-provided message, create a `PublishEvent`, and push to the remote if configured. The endpoint SHALL return the created `PublishEvent` along with any push warnings. Conflict errors SHALL return a 409 status with the list of conflicted file paths.
 
-#### Scenario: Successful publish
+#### Scenario: Successful publish (local only)
 
-- **WHEN** a POST request is made with `{ message: "Release v2 with new metrics" }`
+- **WHEN** a POST request is made with `{ message: "Release v2 with new metrics" }` on a project without a remote
 - **THEN** source models are assembled into `build/`
+- **AND** all changes are staged and committed via `isomorphic-git`
 - **AND** a `PublishEvent` is created
 - **AND** the response includes the event with status 201
 
-#### Scenario: Publish with GitHub sync
+#### Scenario: Publish with upstream sync and push
 
-- **WHEN** a publish is triggered on a project with GitHub configured
-- **THEN** after build assembly, the `src/`, `uploads/`, and `build/` directories are pushed to the GitHub repo
-- **AND** the commit message matches the user-provided publish message
+- **WHEN** a publish is triggered on a project with a configured remote
+- **THEN** upstream changes are pulled and merged first
+- **AND** local changes are committed
+- **AND** the commit is pushed to the remote
+- **AND** a `PublishEvent` is created
+
+#### Scenario: Publish aborted due to merge conflicts
+
+- **WHEN** a publish is triggered but the upstream pull results in merge conflicts
+- **THEN** a 409 error is returned with `{ conflicts: true, files: [...] }`
+- **AND** no commit or `PublishEvent` is created
+- **AND** the conflicted files remain on disk with conflict markers for manual resolution
 
 #### Scenario: Publish with empty message
 
 - **WHEN** a POST request is made with an empty or missing message
 - **THEN** a 400 error is returned
 
-#### Scenario: GitHub push failure does not block publish
+#### Scenario: Push failure does not block publish
 
-- **WHEN** a publish is triggered and GitHub push fails (e.g., auth error, network issue)
-- **THEN** the local build assembly and `PublishEvent` creation still succeed
-- **AND** the response includes a warning about the GitHub push failure
+- **WHEN** a publish is triggered and the commit succeeds but the push to remote fails
+- **THEN** the local commit and `PublishEvent` creation still succeed
+- **AND** the response includes a warning about the push failure with the specific error message
 
 ### Requirement: Publish Status API
 
-The API SHALL expose a GET endpoint at `/api/projects/:projectId/publish/status` that returns `{ hasUnpublishedChanges: boolean, lastPublishedAt: string | null, lastMessage: string | null }`. Unpublished changes are detected by comparing a SHA-256 hash of the current source files against the `contentHash` of the most recent `PublishEvent`.
+The API SHALL expose a GET endpoint at `/api/projects/:projectId/publish/status` that returns `{ hasUnpublishedChanges: boolean, lastPublishedAt: string | null, lastMessage: string | null, hasConflicts: boolean }`. Unpublished changes are detected by comparing a SHA-256 hash of the current source files against the `contentHash` of the most recent `PublishEvent`. The `hasConflicts` field SHALL be `true` if any YAML file in `src/` contains Git conflict markers.
 
 #### Scenario: No previous publish
 
@@ -69,6 +79,11 @@ The API SHALL expose a GET endpoint at `/api/projects/:projectId/publish/status`
 
 - **WHEN** status is requested for a project with no source models
 - **THEN** `hasUnpublishedChanges` is `false`
+
+#### Scenario: Conflict markers detected
+
+- **WHEN** status is requested and a YAML file in `src/` contains `<<<<<<<` conflict markers
+- **THEN** `hasConflicts` is `true`
 
 ### Requirement: Publish Toolbar
 
@@ -155,29 +170,4 @@ The project settings page SHALL display a "GitHub Integration" card. When GitHub
 - **WHEN** `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET` env vars are not set
 - **THEN** the GitHub integration card is hidden from the settings page
 - **AND** the OAuth endpoints return 404
-
-### Requirement: GitHub Push on Publish
-
-When a project has GitHub connected and a publish occurs, the system SHALL push the project's `src/`, `uploads/`, and `build/` directories to the configured GitHub repository using the GitHub API (via Octokit authenticated with the decrypted OAuth token). The commit message SHALL be the user-provided publish message. The push SHALL use the configured branch.
-
-#### Scenario: Push project files to GitHub
-
-- **WHEN** a publish is triggered on a project with GitHub repo `semlayer-models` owned by `myorg` on branch `main`
-- **THEN** a commit is created on the `main` branch containing:
-  - `src/<model>.yaml` and `src/<model>/<dataset>.yaml` files
-  - `uploads/` directory contents (if any)
-  - `build/<model>.yaml` assembled files and `build/AGENTS.md`
-- **AND** the commit message is the user's publish message
-
-#### Scenario: First push to empty repository
-
-- **WHEN** the GitHub repository is empty (no commits)
-- **THEN** an initial commit is created with all project files
-
-#### Scenario: GitHub token is invalid or revoked
-
-- **WHEN** a publish triggers a GitHub push but the OAuth token has been revoked or is invalid
-- **THEN** the push fails with an error
-- **AND** the local publish (build assembly + event) still succeeds
-- **AND** the response includes a warning about the GitHub push failure
 

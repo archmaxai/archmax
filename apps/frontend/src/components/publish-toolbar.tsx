@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload, Loader2 } from "lucide-react";
-import { toast } from "sonner";
 import {
   Button,
   Dialog,
@@ -13,52 +11,15 @@ import {
   Textarea,
 } from "@archmax/ui";
 import { useProject } from "@/lib/project-context";
-
-interface PublishStatus {
-  hasUnpublishedChanges: boolean;
-  lastPublishedAt: string | null;
-  lastMessage: string | null;
-}
+import { usePublishStatus, usePublish } from "@/lib/use-publish";
 
 export function PublishButton() {
   const { project } = useProject();
-  const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [message, setMessage] = useState("");
 
-  const statusQuery = useQuery({
-    queryKey: ["publish-status", project._id],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${project._id}/publish/status`);
-      if (!res.ok) throw new Error("Failed to fetch publish status");
-      return res.json() as Promise<PublishStatus>;
-    },
-    refetchInterval: 15_000,
-  });
-
-  const publishMutation = useMutation({
-    mutationFn: async (msg: string) => {
-      const res = await fetch(`/api/projects/${project._id}/publish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error((data as { error?: string } | null)?.error ?? "Publish failed");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      setDialogOpen(false);
-      setMessage("");
-      queryClient.invalidateQueries({ queryKey: ["publish-status", project._id] });
-      toast.success("Changes published");
-    },
-    onError: (err) => {
-      toast.error(err.message);
-    },
-  });
+  const statusQuery = usePublishStatus();
+  const publishMutation = usePublish();
 
   const hasChanges = statusQuery.data?.hasUnpublishedChanges ?? false;
 
@@ -81,7 +42,7 @@ export function PublishButton() {
             <DialogTitle>Publish Semantic Models</DialogTitle>
             <DialogDescription>
               Publish current models to make them available via MCP.
-              {project.github?.connected && project.github.repo &&
+              {project.github?.connected &&
                 " Changes will also be pushed to GitHub."
               }
             </DialogDescription>
@@ -100,7 +61,14 @@ export function PublishButton() {
               Cancel
             </Button>
             <Button
-              onClick={() => publishMutation.mutate(message)}
+              onClick={() =>
+                publishMutation.mutate(message, {
+                  onSuccess: () => {
+                    setDialogOpen(false);
+                    setMessage("");
+                  },
+                })
+              }
               disabled={!message.trim() || publishMutation.isPending}
             >
               {publishMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}

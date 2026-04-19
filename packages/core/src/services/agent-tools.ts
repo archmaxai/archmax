@@ -6,6 +6,7 @@ import { connectDB } from "../infra/db";
 import { getProjectInstance, hardenConnection, withQueryTimeout, withProjectQuerySlot } from "./duckdb";
 import { validateReadOnlySQL } from "./sql-validation";
 import { DocumentFileService } from "./document-files";
+import { GitService } from "./git";
 import { SEMANTIC_MODEL_AGENT_PROMPT } from "../prompts/index";
 import type { ValidatingFilesystemBackend } from "./agent-filesystem";
 
@@ -376,6 +377,55 @@ export function makeCreateTestCaseTool(projectId: string) {
           .optional()
           .describe("ID of a test agent to assign (from list_test_agents). Omit to leave unassigned."),
       }),
+    },
+  );
+}
+
+export function makeRevertFileTool(projectDir: string) {
+  const gitSvc = new GitService(projectDir);
+  return tool(
+    async ({ path: filePath }: { path: string }) => {
+      try {
+        const result = await gitSvc.revertFile(filePath);
+        if (result.deleted) {
+          return JSON.stringify({ reverted: filePath, action: "deleted (not in last commit)" });
+        }
+        return JSON.stringify({ reverted: filePath, action: "restored to last commit" });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : "Failed to revert file" });
+      }
+    },
+    {
+      name: "revert_file",
+      description:
+        "Restore a single file to its state at the last Git commit (HEAD). " +
+        "Pass the relative path from the project root (e.g. 'src/sales.yaml'). " +
+        "If the file does not exist in the last commit, it will be deleted from disk.",
+      schema: z.object({
+        path: z.string().describe("Relative path of the file to revert (from project root)"),
+      }),
+    },
+  );
+}
+
+export function makeDiscardAllChangesTool(projectDir: string) {
+  const gitSvc = new GitService(projectDir);
+  return tool(
+    async () => {
+      try {
+        await gitSvc.discardAllChanges();
+        return JSON.stringify({ ok: true, message: "All uncommitted changes discarded" });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : "Failed to discard changes" });
+      }
+    },
+    {
+      name: "discard_all_changes",
+      description:
+        "Restore the entire working directory to the state at the last Git commit (HEAD). " +
+        "All uncommitted modifications, additions, and deletions are reverted. " +
+        "Use with caution — this removes all unsaved work.",
+      schema: z.object({}),
     },
   );
 }

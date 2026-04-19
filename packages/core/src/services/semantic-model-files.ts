@@ -33,6 +33,12 @@ function stripEmptyExtensions<T extends Record<string, unknown>>(obj: T): T {
   return result as T;
 }
 
+const CONFLICT_MARKER = "<<<<<<<";
+
+function hasConflictMarkers(content: string): boolean {
+  return content.includes(CONFLICT_MARKER);
+}
+
 const SAFE_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 export function assertSafeSegment(value: string, label: string): void {
@@ -135,12 +141,25 @@ export class SemanticModelFileService {
       return [];
     }
 
-    const yamlFiles = entries.filter((f) => f.endsWith(".yaml"));
+    const yamlFiles = entries.filter((f) => f.endsWith(".yaml") && !f.startsWith("."));
     const models: SemanticModel[] = [];
 
     for (const file of yamlFiles) {
       const name = file.replace(/\.yaml$/, "");
       try {
+        const rawContent = await readFile(join(dir, file), "utf-8");
+        if (hasConflictMarkers(rawContent)) {
+          models.push({
+            name,
+            description: "",
+            datasets: [],
+            relationships: [],
+            metrics: [],
+            custom_extensions: [],
+            hasConflicts: true,
+          });
+          continue;
+        }
         const model = await this.get(projectId, name);
         if (model) models.push(model);
       } catch (err) {
@@ -160,6 +179,19 @@ export class SemanticModelFileService {
       rawRoot = await readFile(rootPath, "utf-8");
     } catch {
       return null;
+    }
+
+    if (hasConflictMarkers(rawRoot)) {
+      return {
+        name,
+        description: "",
+        datasets: [],
+        relationships: [],
+        metrics: [],
+        custom_extensions: [],
+        hasConflicts: true,
+        rawContent: rawRoot,
+      };
     }
 
     const parsed = yaml.load(rawRoot);
@@ -256,7 +288,7 @@ export class SemanticModelFileService {
   private async readAllDatasets(dsDir: string): Promise<Dataset[]> {
     let entries: string[];
     try {
-      entries = (await readdir(dsDir)).filter((f) => f.endsWith(".yaml"));
+      entries = (await readdir(dsDir)).filter((f) => f.endsWith(".yaml") && !f.startsWith("."));
     } catch {
       return [];
     }
