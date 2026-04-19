@@ -103,7 +103,7 @@ function MonitoringPage() {
         query: { page: String(page), limit: String(PAGE_SIZE) },
       });
       if (!res.ok) throw new Error("Failed to load MCP logs");
-      return res.json() as Promise<McpLogsResponse>;
+      return res.json() as unknown as Promise<McpLogsResponse>;
     },
     refetchInterval: 10_000,
   });

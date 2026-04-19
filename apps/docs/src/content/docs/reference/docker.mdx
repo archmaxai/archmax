@@ -18,7 +18,7 @@ The `ghcr.io/archmaxai/archmax` Docker image bundles the application components 
 | **MongoDB** | Embedded `mongod`; starts automatically when `MONGODB_URI` is not set |
 | **Redis** | Embedded `redis-server`; starts automatically when `REDIS_URL` is not set |
 
-Base image: `node:24-slim` (Debian Bookworm).
+Base image: `node:25-slim` (Debian Bookworm).
 
 <Aside type="tip">
 Both MongoDB and Redis are embedded and start automatically when their respective connection URLs are not provided. Pass `MONGODB_URI` and/or `REDIS_URL` to use external instances instead.

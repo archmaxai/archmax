@@ -9,13 +9,17 @@ import type { ChatMessage, ConversationFull } from "@/lib/chat-types";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
+type ModelsChatSearch = { prefill?: string };
+
 export const Route = createFileRoute(
   "/_auth/$projectId/models/chat/$conversationId",
 )({
   component: ModelsChat,
-  validateSearch: (search: Record<string, unknown>) => ({
-    prefill: typeof search.prefill === "string" ? search.prefill : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): ModelsChatSearch => {
+    const prefill =
+      typeof search.prefill === "string" ? search.prefill : undefined;
+    return prefill === undefined ? {} : { prefill };
+  },
 });
 
 function ModelsChat() {

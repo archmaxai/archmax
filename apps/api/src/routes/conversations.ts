@@ -1,15 +1,23 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Conversation } from "@archmax/core/models/index";
 import { isStreamActive } from "@archmax/core/streaming/stream-bridge";
 import { AppError } from "../utils/errors";
 
+const listQuerySchema = z.object({
+  limit: z.string().optional(),
+  skip: z.string().optional(),
+});
+
 const app = new Hono()
-  .get("/", async (c) => {
+  .get("/", zValidator("query", listQuerySchema), async (c) => {
     await connectDB();
     const projectId = c.req.param("projectId")!;
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "10", 10) || 10, 1), 100);
-    const skip = Math.max(parseInt(c.req.query("skip") ?? "0", 10) || 0, 0);
+    const q = c.req.valid("query");
+    const limit = Math.min(Math.max(parseInt(q.limit ?? "10", 10) || 10, 1), 100);
+    const skip = Math.max(parseInt(q.skip ?? "0", 10) || 0, 0);
 
     const filter = { project: projectId, testAgent: null };
     const [rawItems, total] = await Promise.all([

@@ -17,18 +17,27 @@ const createSchema = z.object({
 
 const updateSchema = createSchema.partial();
 
+const listQuerySchema = z.object({
+  page: z.string().optional(),
+  limit: z.string().optional(),
+  agentId: z.string().optional(),
+  semanticModel: z.string().optional(),
+  tags: z.string().optional(),
+});
+
 const app = new Hono()
-  .get("/", async (c) => {
+  .get("/", zValidator("query", listQuerySchema), async (c) => {
     await connectDB();
     const projectId = c.req.param("projectId")!;
-    const page = Math.max(parseInt(c.req.query("page") ?? "1", 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "25", 10) || 25, 1), 100);
+    const q = c.req.valid("query");
+    const page = Math.max(parseInt(q.page ?? "1", 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(q.limit ?? "25", 10) || 25, 1), 100);
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = { project: projectId };
-    const agentId = c.req.query("agentId");
-    const semanticModel = c.req.query("semanticModel");
-    const tagsParam = c.req.query("tags");
+    const agentId = q.agentId;
+    const semanticModel = q.semanticModel;
+    const tagsParam = q.tags;
     if (agentId) filter.testAgent = agentId;
     if (semanticModel) filter.semanticModel = semanticModel;
     if (tagsParam) filter.tags = { $in: tagsParam.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean) };

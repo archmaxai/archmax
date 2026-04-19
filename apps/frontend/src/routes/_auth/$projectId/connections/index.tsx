@@ -422,7 +422,6 @@ function ConnectionFormDialog({
   async function testConnection(connId: string) {
     const res = await api.api.projects[":projectId"].connections[":id"].test.$post({
       param: { projectId, id: connId },
-      json: {},
     });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
