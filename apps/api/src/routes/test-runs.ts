@@ -12,12 +12,18 @@ const createSchema = z.object({
   testCaseIds: z.array(z.string().min(1)).min(1),
 });
 
+const listQuerySchema = z.object({
+  page: z.string().optional(),
+  limit: z.string().optional(),
+});
+
 const app = new Hono()
-  .get("/", async (c) => {
+  .get("/", zValidator("query", listQuerySchema), async (c) => {
     await connectDB();
     const projectId = c.req.param("projectId")!;
-    const page = Math.max(parseInt(c.req.query("page") ?? "1", 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "25", 10) || 25, 1), 100);
+    const q = c.req.valid("query");
+    const page = Math.max(parseInt(q.page ?? "1", 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(q.limit ?? "25", 10) || 25, 1), 100);
     const skip = (page - 1) * limit;
 
     const filter = { project: projectId };

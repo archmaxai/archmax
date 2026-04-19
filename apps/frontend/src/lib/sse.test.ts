@@ -6,7 +6,7 @@ function makeReader(chunks: string[]): ReadableStreamDefaultReader<Uint8Array> {
   let i = 0;
   return {
     read: vi.fn(async () => {
-      if (i >= chunks.length) return { done: true, value: undefined } as ReadableStreamReadDoneResult;
+      if (i >= chunks.length) return { done: true, value: undefined } as ReadableStreamReadDoneResult<Uint8Array>;
       return { done: false, value: encoder.encode(chunks[i++]) } as ReadableStreamReadValueResult<Uint8Array>;
     }),
     cancel: vi.fn(),

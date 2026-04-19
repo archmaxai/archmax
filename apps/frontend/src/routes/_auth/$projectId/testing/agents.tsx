@@ -64,7 +64,7 @@ function TestAgentsPage() {
         param: { projectId: project._id },
       });
       if (!res.ok) throw new Error("Failed to load test agents");
-      return res.json() as Promise<TestAgentItem[]>;
+      return res.json() as unknown as Promise<TestAgentItem[]>;
     },
   });
 
@@ -296,7 +296,6 @@ function AgentFormDialog({
   async function testAgentConnection(agentId: string) {
     const res = await api.api.projects[":projectId"]["test-agents"][":agentId"]["test-connection"].$post({
       param: { projectId, agentId },
-      json: {},
     });
     if (!res.ok) {
       const body = await res.json().catch(() => null);

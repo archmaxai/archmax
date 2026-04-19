@@ -59,7 +59,7 @@ function PlaygroundPage() {
         param: { projectId: project._id },
       });
       if (!res.ok) throw new Error("Failed to load agents");
-      return res.json() as Promise<TestAgentItem[]>;
+      return res.json() as unknown as Promise<TestAgentItem[]>;
     },
   });
 
@@ -86,10 +86,9 @@ function PlaygroundPage() {
     queryFn: async () => {
       const res = await api.api.projects[":projectId"].playground.conversations.$get({
         param: { projectId: project._id },
-        query: {},
       });
       if (!res.ok) throw new Error("Failed to load conversations");
-      return res.json() as Promise<ConversationListItem[]>;
+      return res.json() as unknown as Promise<ConversationListItem[]>;
     },
     refetchInterval: 10_000,
   });

@@ -207,6 +207,37 @@ describe("bridgeRedisToSSE", () => {
     expect(eventNames).toContain("done");
   });
 
+  it("exits immediately when done arrives without waiting for the next ping", async () => {
+    let messageHandler: (ch: string, msg: string) => void = () => {};
+    const mockSub = {
+      on: vi.fn((event: string, handler: (ch: string, msg: string) => void) => {
+        if (event === "message") messageHandler = handler;
+      }),
+      subscribe: vi.fn().mockResolvedValue(undefined),
+      unsubscribe: vi.fn().mockResolvedValue(undefined),
+      quit: vi.fn().mockResolvedValue(undefined),
+    };
+    mockClient.duplicate.mockReturnValue(mockSub);
+
+    const writer = createMockWriter();
+    vi.useFakeTimers();
+
+    const bridgePromise = bridgeRedisToSSE(writer, "conv-1", "[test]");
+
+    await vi.advanceTimersByTimeAsync(0);
+    messageHandler("stream-events:conv-1", JSON.stringify({ event: "done", data: "{}" }));
+
+    // Without advancing timers past the ping interval (15s), the bridge should
+    // still complete — the done event wakes up the ping sleep.
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(bridgePromise).resolves.toBeUndefined();
+
+    // No ping should have been emitted (we resolved well before the interval).
+    const eventNames = writer.calls.map((c) => c.event);
+    expect(eventNames).not.toContain("ping");
+    expect(eventNames).toContain("done");
+  });
+
   it("emits error and done when Redis subscription fails", async () => {
     mockedGetRedis.mockReturnValue(null);
 

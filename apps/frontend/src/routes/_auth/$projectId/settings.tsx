@@ -3,13 +3,14 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ListOrdered, FolderPen, Github, Loader2, Trash2, GitBranch, History,
+  ListOrdered, FolderPen, Loader2, Trash2, GitBranch, History,
   Undo2, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import {
   Label, Card, Input, Button,
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@archmax/ui";
+import { GithubIcon } from "@/components/icons/github";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
 import { useGitStatus, useGitInit, useGitReinit, useGitSync, useGitLog, useGitRevertToCommit } from "@/lib/use-git";
@@ -344,7 +345,7 @@ function GitHubCard({ ghUrlInput, setGhUrlInput, ghBranchInput, setGhBranchInput
   return (
     <Card className="min-w-0 p-6">
       <div className="flex min-w-0 gap-3">
-        <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+        <GithubIcon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="content-tight">
             <Label className="text-base font-medium">GitHub</Label>

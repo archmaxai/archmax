@@ -146,7 +146,7 @@ function TestRunDetailPage() {
         param: { projectId: project._id, runId },
       });
       if (!res.ok) throw new Error("Failed to load test run");
-      return res.json() as Promise<TestRunDetail>;
+      return res.json() as unknown as Promise<TestRunDetail>;
     },
     refetchInterval: (query) => {
       const status = query.state.data?.status;

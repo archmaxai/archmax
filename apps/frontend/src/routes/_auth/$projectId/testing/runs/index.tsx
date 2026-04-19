@@ -68,7 +68,7 @@ function TestRunsPage() {
         param: { projectId: project._id },
       });
       if (!res.ok) throw new Error("Failed to load agents");
-      return res.json() as Promise<TestAgentItem[]>;
+      return res.json() as unknown as Promise<TestAgentItem[]>;
     },
   });
 

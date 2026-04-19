@@ -24,9 +24,20 @@ import { ProjectSelector } from "./project-selector";
 import { UserMenu } from "./user-menu";
 import type { Project } from "@/lib/project-context";
 
-type NavChild = { label: string; path: string };
+type NavChildPath =
+  | "connections"
+  | "connections/data"
+  | "models"
+  | "testing/agents"
+  | "testing/cases"
+  | "testing/runs"
+  | "testing/playground"
+  | "mcp-access"
+  | "monitoring"
+  | "settings";
+type NavChild = { label: string; path: NavChildPath };
 type NavItem =
-  | { label: string; icon: typeof Database; path: string; children?: undefined }
+  | { label: string; icon: typeof Database; path: "" | NavChildPath; children?: undefined }
   | { label: string; icon: typeof Database; path?: undefined; children: NavChild[] };
 
 const navItems: NavItem[] = [

@@ -70,7 +70,7 @@ function McpAccessPage() {
         param: { projectId: project._id },
       });
       if (!res.ok) throw new Error("Failed to load tokens");
-      return res.json() as Promise<McpTokenListItem[]>;
+      return res.json() as unknown as Promise<McpTokenListItem[]>;
     },
     refetchInterval: 30_000,
   });

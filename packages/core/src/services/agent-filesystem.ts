@@ -129,7 +129,16 @@ export class ValidatingFilesystemBackend extends FilesystemBackend {
 
     try {
       const raw = await this.readRaw(filePath);
-      yaml.load(raw.content.join("\n"));
+      if (raw.error || !raw.data) {
+        return { ...result, error: `YAML syntax error after edit: ${raw.error ?? "unable to read file"}` };
+      }
+      const { content } = raw.data;
+      const text = Array.isArray(content)
+        ? content.join("\n")
+        : typeof content === "string"
+          ? content
+          : new TextDecoder().decode(content);
+      yaml.load(text);
     } catch (err) {
       const msg = err instanceof yaml.YAMLException ? err.message : String(err);
       return { ...result, error: `YAML syntax error after edit: ${msg}` };

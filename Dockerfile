@@ -1,8 +1,9 @@
 # ---------- base ----------
-FROM node:24-slim AS base
+FROM node:25-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+# Node 25 dropped bundled corepack, so install pnpm directly.
+RUN npm install -g pnpm@10.30.3
 
 # ---------- deps ----------
 FROM base AS deps
@@ -97,7 +98,6 @@ COPY --from=build-worker /app/apps/worker/worker.mjs ./apps/worker/worker.mjs
 COPY --from=build-spa /app/apps/frontend/dist /usr/share/nginx/html
 
 RUN useradd -r -M -d /data -s /bin/false archmax \
- && corepack disable \
  && mkdir -p /data /tmp/redis \
  && chown -R archmax:archmax /data /tmp/redis /var/log
 
