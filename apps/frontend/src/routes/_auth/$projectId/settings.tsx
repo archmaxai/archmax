@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ListOrdered, FolderPen, Github, Loader2, Trash2, GitBranch, History,
+  Undo2, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import {
   Label, Card, Input, Button,
@@ -11,7 +12,7 @@ import {
 } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
-import { useGitStatus, useGitInit, useGitReinit, useGitSync, useGitLog } from "@/lib/use-git";
+import { useGitStatus, useGitInit, useGitReinit, useGitSync, useGitLog, useGitRevertToCommit } from "@/lib/use-git";
 
 export const Route = createFileRoute("/_auth/$projectId/settings")({
   component: SettingsPage,
@@ -349,6 +350,7 @@ function GitHubCard({ ghUrlInput, setGhUrlInput, ghBranchInput, setGhBranchInput
             <Label className="text-base font-medium">GitHub</Label>
             <p className="text-muted-foreground text-sm">
               Push published semantic models to a GitHub repository using a Personal Access Token.
+              Create one in GitHub under <span className="font-medium text-foreground">Settings &rarr; Developer settings &rarr; Personal access tokens</span>.
               The PAT needs the <code className="rounded bg-muted px-1 py-0.5 text-xs">repo</code> scope (classic) or <code className="rounded bg-muted px-1 py-0.5 text-xs">Contents: Read and write</code> permission (fine-grained).
             </p>
           </div>
@@ -430,40 +432,136 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
+const PAGE_SIZE = 10;
+
 function PublishHistoryCard() {
-  const logQuery = useGitLog(10);
+  const [page, setPage] = useState(1);
+  const [revertTarget, setRevertTarget] = useState<{ oid: string; message: string } | null>(null);
+  const logQuery = useGitLog({ limit: PAGE_SIZE, page });
+  const revertMutation = useGitRevertToCommit();
+
+  const entries = logQuery.data?.entries ?? [];
+  const total = logQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <Card className="p-6">
-      <div className="flex gap-3">
-        <History className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-        <div className="flex flex-1 flex-col gap-4">
-          <div className="content-tight">
-            <Label className="text-base font-medium">Publish History</Label>
-            <p className="text-muted-foreground text-sm">
-              Last 10 commits from the local Git repository.
-            </p>
-          </div>
-
-          {logQuery.isLoading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          ) : !logQuery.data?.length ? (
-            <p className="text-sm text-muted-foreground">No publish history yet.</p>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {logQuery.data.map((entry) => (
-                <div key={entry.oid} className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="truncate">{entry.message.split("\n")[0]}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                    {timeAgo(entry.timestamp)}
-                  </span>
-                </div>
-              ))}
+    <>
+      <Card className="p-6">
+        <div className="flex gap-3">
+          <History className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div className="flex flex-1 flex-col gap-4">
+            <div className="content-tight">
+              <Label className="text-base font-medium">Publish History</Label>
+              <p className="text-muted-foreground text-sm">
+                Commits from the local Git repository.
+              </p>
             </div>
-          )}
+
+            {logQuery.isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : !entries.length ? (
+              <p className="text-sm text-muted-foreground">No publish history yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {entries.map((entry, idx) => {
+                  const isHead = page === 1 && idx === 0;
+                  return (
+                    <div key={entry.oid} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate">{entry.message.split("\n")[0]}</span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {!isHead && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            title="Revert to this version"
+                            onClick={() => setRevertTarget({ oid: entry.oid, message: entry.message.split("\n")[0] })}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {timeAgo(entry.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-muted-foreground">{total} total entries</span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="min-w-[3.5rem] text-center text-xs tabular-nums">
+                    {page} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+
+      <Dialog
+        open={!!revertTarget}
+        onOpenChange={(v) => { if (!revertMutation.isPending && !v) setRevertTarget(null); }}
+      >
+        <DialogContent showCloseButton={!revertMutation.isPending}>
+          <DialogHeader>
+            <DialogTitle>Revert to this version?</DialogTitle>
+            <DialogDescription>
+              This will restore all files to the state of the selected commit and create a new commit recording the revert.
+            </DialogDescription>
+          </DialogHeader>
+          {revertTarget && (
+            <p className="rounded-md bg-muted px-3 py-2 text-sm font-medium">
+              {revertTarget.message}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRevertTarget(null)}
+              disabled={revertMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={revertMutation.isPending}
+              onClick={() => {
+                if (!revertTarget) return;
+                revertMutation.mutate(revertTarget.oid, {
+                  onSuccess: () => setRevertTarget(null),
+                });
+              }}
+            >
+              {revertMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Revert
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

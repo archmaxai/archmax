@@ -79,11 +79,3 @@ The "Publish History" card SHALL display a list of recent commits from the local
 
 - **WHEN** the Git initialization is in progress
 - **THEN** the "Initialize Git" button shows a loading state and is not clickable
-
-## REMOVED Requirements
-
-### Requirement: GitHub OAuth Integration
-
-**Reason**: Replaced by direct PAT entry in project settings. The OAuth app flow (client ID/secret, authorize redirect, callback endpoint, repo listing) is no longer needed. The new GitHub card in Project Settings UI provides equivalent push/pull functionality with a simple PAT.
-
-**Migration**: Users must re-enter their GitHub credentials as a PAT in the new GitHub settings card. Existing encrypted OAuth tokens cannot be reused as PATs (different token format). The `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` env vars are removed.

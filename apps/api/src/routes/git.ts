@@ -5,6 +5,7 @@ import { connectDB } from "@archmax/core/infra/db";
 import { param, getGitService } from "../utils/params";
 import { getRemoteConfig } from "../utils/github";
 import { AppError } from "../utils/errors";
+import { finalizePublish } from "../utils/publish-flow";
 
 const app = new Hono()
   .get("/status", async (c) => {
@@ -55,13 +56,52 @@ const app = new Hono()
     await gitSvc.discardAllChanges();
     return c.json({ ok: true });
   })
-  .get("/log", async (c) => {
-    const projectId = param(c, "projectId");
-    const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
-    const gitSvc = getGitService(projectId);
-    const entries = await gitSvc.log(limit);
-    return c.json(entries);
-  })
+  .get(
+    "/log",
+    zValidator("query", z.object({
+      limit: z.string().optional(),
+      page: z.string().optional(),
+    })),
+    async (c) => {
+      const projectId = param(c, "projectId");
+      const q = c.req.valid("query");
+      const limit = Math.min(parseInt(q.limit ?? "10", 10) || 10, 100);
+      const page = Math.max(parseInt(q.page ?? "1", 10) || 1, 1);
+      const gitSvc = getGitService(projectId);
+      const result = await gitSvc.log({ limit, page });
+      return c.json(result);
+    },
+  )
+  .post(
+    "/revert-to-commit",
+    zValidator("json", z.object({ oid: z.string().min(1) })),
+    async (c) => {
+      const projectId = param(c, "projectId");
+      const { oid } = c.req.valid("json");
+      const gitSvc = getGitService(projectId);
+      try {
+        const result = await gitSvc.revertToCommit(oid);
+        if (!result) {
+          return c.json({ oid, message: "Already at this version" });
+        }
+
+        const { oid: revertOid, pushWarning } = await finalizePublish(projectId, gitSvc, {
+          publishMessage: result.message,
+        });
+
+        const response: Record<string, unknown> = {
+          oid: revertOid,
+          message: result.message,
+        };
+        if (pushWarning) response.pushWarning = pushWarning;
+
+        return c.json(response);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Revert failed";
+        throw AppError.badRequest(msg);
+      }
+    },
+  )
   .post("/sync", async (c) => {
     const projectId = param(c, "projectId");
     await connectDB();

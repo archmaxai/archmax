@@ -17,6 +17,13 @@ export interface GitLogEntry {
   timestamp: string;
 }
 
+export interface PaginatedLog {
+  entries: GitLogEntry[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export interface SyncResult {
   conflicts: boolean;
   conflictedFiles: string[];
@@ -237,30 +244,90 @@ export class GitService {
     return { conflicts: false, conflictedFiles: [], newCommits: 1, message: "Merged remote changes (unrelated histories)" };
   }
 
-  private async listTree(oid: string): Promise<Array<{ filepath: string; oid: string }>> {
+  private async listTree(commitOid: string): Promise<Array<{ filepath: string; oid: string }>> {
     const files: Array<{ filepath: string; oid: string }> = [];
-    await git.walk({
-      fs,
-      dir: this.dir,
-      trees: [git.TREE({ ref: oid })],
-      map: async (filepath, [entry]) => {
-        if (!entry || filepath === ".") return;
-        const type = await entry.type();
-        if (type === "blob") {
-          const entryOid = await entry.oid();
-          files.push({ filepath, oid: entryOid });
-        }
-        return;
-      },
-    });
+    const { commit } = await git.readCommit({ fs, dir: this.dir, oid: commitOid });
+    await this.walkTree(commit.tree, "", files);
     return files;
   }
 
-  async log(limit = 20): Promise<GitLogEntry[]> {
-    if (!(await this.isInitialized())) return [];
+  private async walkTree(
+    treeOid: string,
+    prefix: string,
+    acc: Array<{ filepath: string; oid: string }>,
+  ): Promise<void> {
+    const { tree } = await git.readTree({ fs, dir: this.dir, oid: treeOid });
+    for (const entry of tree) {
+      const entryPath = prefix ? `${prefix}/${entry.path}` : entry.path;
+      if (entry.type === "blob") {
+        acc.push({ filepath: entryPath, oid: entry.oid });
+      } else if (entry.type === "tree") {
+        await this.walkTree(entry.oid, entryPath, acc);
+      }
+    }
+  }
+
+  /**
+   * Restores the working tree to match the given commit's state without
+   * creating a commit. Returns a derived "Revert to: ..." message for the
+   * caller to use when it commits, or `null` when HEAD is already at `oid`.
+   *
+   * This keeps the revert a single commit once the caller runs the publish
+   * flow (reassemble → commit), instead of producing a separate restore
+   * commit followed by a build commit.
+   */
+  async revertToCommit(oid: string): Promise<{ message: string } | null> {
+    await this.ensureRepo();
+
+    let headOid: string;
     try {
-      const commits = await git.log({ fs, dir: this.dir, depth: limit });
-      return commits.map((c) => ({
+      headOid = await git.resolveRef({ fs, dir: this.dir, ref: "HEAD" });
+    } catch {
+      throw new Error("No commits yet — nothing to revert to");
+    }
+
+    if (headOid === oid) return null;
+
+    let sourceMessage: string;
+    try {
+      const { commit: commitData } = await git.readCommit({ fs, dir: this.dir, oid });
+      sourceMessage = commitData.message.trim();
+    } catch {
+      throw new Error(`Commit ${oid} not found`);
+    }
+
+    const targetFiles = await this.listTree(oid);
+    const currentFiles = await this.listTree(headOid);
+    const targetPaths = new Set(targetFiles.map((f) => f.filepath));
+
+    for (const { filepath } of currentFiles) {
+      if (!targetPaths.has(filepath)) {
+        await unlink(join(this.dir, filepath)).catch(() => {});
+      }
+    }
+
+    for (const { filepath, oid: blobOid } of targetFiles) {
+      const { blob } = await git.readBlob({ fs, dir: this.dir, oid: blobOid });
+      const fullPath = join(this.dir, filepath);
+      await mkdir(join(fullPath, ".."), { recursive: true });
+      await writeFile(fullPath, Buffer.from(blob));
+    }
+
+    return { message: `Revert to: ${sourceMessage.split("\n")[0]}` };
+  }
+
+  async log(opts?: { limit?: number; page?: number }): Promise<PaginatedLog> {
+    const limit = opts?.limit ?? 10;
+    const page = opts?.page ?? 1;
+    const empty: PaginatedLog = { entries: [], total: 0, page, limit };
+
+    if (!(await this.isInitialized())) return empty;
+    try {
+      const all = await git.log({ fs, dir: this.dir });
+      const total = all.length;
+      const start = (page - 1) * limit;
+      const slice = all.slice(start, start + limit);
+      const entries = slice.map((c) => ({
         oid: c.oid,
         message: c.commit.message,
         author: {
@@ -269,8 +336,9 @@ export class GitService {
         },
         timestamp: new Date(c.commit.author.timestamp * 1000).toISOString(),
       }));
+      return { entries, total, page, limit };
     } catch {
-      return [];
+      return empty;
     }
   }
 

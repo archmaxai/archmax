@@ -57,7 +57,19 @@ Any file change — YAML, Markdown, JSON, or otherwise — triggers the publish 
 
 ## Publish History
 
-The **Settings** page shows a publish history card with the last 10 publishes, including the commit message and timestamp for each. This gives you a quick changelog without leaving the UI.
+The **Settings** page shows a paginated publish history card with the commit message and timestamp for each publish. Use the chevron buttons at the bottom to browse older entries.
+
+### Reverting to a Previous Version
+
+Each history entry (except the most recent) shows an **undo icon**. Clicking it opens a confirmation dialog — after confirming, archmax:
+
+1. Restores all source files to the selected commit's state
+2. Reassembles the build output
+3. Creates a new commit recording the revert
+4. Pushes to GitHub (if configured)
+5. Records a new publish event so the content hash updates
+
+The revert preserves linear history — it doesn't rewrite commits, it creates a new one on top. Your publish history will show the revert as a new entry.
 
 ## Connecting GitHub
 

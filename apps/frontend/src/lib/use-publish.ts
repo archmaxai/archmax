@@ -37,11 +37,14 @@ export function usePublish() {
         const data = await res.json().catch(() => null);
         throw new Error((data as { error?: string } | null)?.error ?? "Publish failed");
       }
-      return res.json();
+      return res.json() as Promise<Record<string, unknown> & { pushWarning?: string }>;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["publish-status", project._id] });
       toast.success("Changes published");
+      if (data.pushWarning) {
+        toast.warning(`Published locally, but push to remote failed: ${data.pushWarning}`);
+      }
     },
     onError: (err) => toast.error(err.message),
   });

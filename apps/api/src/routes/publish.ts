@@ -6,10 +6,10 @@ import { getEnv } from "@archmax/core/config/env";
 import { connectDB } from "@archmax/core/infra/db";
 import { PublishEvent } from "@archmax/core/models/index";
 import { PublishService } from "@archmax/core/services/publish";
-import { invalidateScopedViews } from "@archmax/core/services/duckdb";
 import { param, getGitService } from "../utils/params";
 import { getRemoteConfig } from "../utils/github";
 import { AppError } from "../utils/errors";
+import { finalizePublish } from "../utils/publish-flow";
 
 function getPublishService(): PublishService {
   return new PublishService(getEnv().projectsDir);
@@ -24,7 +24,6 @@ const app = new Hono()
     async (c) => {
       const projectId = param(c, "projectId");
       const { message } = c.req.valid("json");
-      const svc = getPublishService();
       const gitSvc = getGitService(projectId);
 
       await gitSvc.ensureRepo();
@@ -40,28 +39,8 @@ const app = new Hono()
         }
       }
 
-      const modelNames = await svc.assemble(projectId);
-      const contentHash = await svc.computeSourceHash(projectId);
-
-      invalidateScopedViews(projectId);
-
-      const oid = await gitSvc.commit(message);
-
-      let pushWarning: string | undefined;
-      if (remote) {
-        try {
-          await gitSvc.push(remote);
-        } catch (err) {
-          pushWarning = err instanceof Error ? err.message : "Push to remote failed";
-          console.error("[publish] Push failed:", err);
-        }
-      }
-
-      const event = await PublishEvent.create({
-        project: projectId,
-        message,
-        modelNames,
-        contentHash,
+      const { oid, event, pushWarning } = await finalizePublish(projectId, gitSvc, {
+        publishMessage: message,
       });
 
       const response: Record<string, unknown> = { ...event.toJSON(), commitOid: oid };

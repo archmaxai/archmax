@@ -211,7 +211,8 @@ Optionally connect a GitHub remote in **Settings → GitHub** to keep an externa
 
 Key capabilities:
 - **Automatic change detection** — the Publish button appears when any file in the project changes
-- **Publish history** — see the last 10 publishes with messages and timestamps in Settings
+- **Publish history** — paginated list of publishes with messages and timestamps in Settings
+- **Revert** — restore your project to any previous publish with one click (creates a new commit, rebuilds, and pushes)
 - **Sync Now** — pull remote changes without publishing
 - **Conflict detection** — blocks publishing when merge conflicts exist and tells you which files need attention
 - **Re-init** — reset local Git history if needed (working files are preserved)

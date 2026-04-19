@@ -88,17 +88,65 @@ export function useGitSync() {
   });
 }
 
-export function useGitLog(limit = 10) {
+interface GitLogEntry {
+  oid: string;
+  message: string;
+  author: { name: string; email: string };
+  timestamp: string;
+}
+
+interface PaginatedLog {
+  entries: GitLogEntry[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export function useGitLog(opts: { limit?: number; page?: number } = {}) {
   const { project } = useProject();
+  const limit = opts.limit ?? 10;
+  const page = opts.page ?? 1;
   return useQuery({
-    queryKey: ["git-log", project._id],
+    queryKey: ["git-log", project._id, limit, page],
     queryFn: async () => {
       const res = await api.api.projects[":projectId"].git.log.$get({
         param: { projectId: project._id },
-        query: { limit: String(limit) },
+        query: { limit: String(limit), page: String(page) },
       });
-      if (!res.ok) return [];
-      return res.json();
+      if (!res.ok) return { entries: [], total: 0, page, limit } as PaginatedLog;
+      return res.json() as Promise<PaginatedLog>;
     },
+  });
+}
+
+export function useGitRevertToCommit() {
+  const { project } = useProject();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (oid: string) => {
+      const res = await api.api.projects[":projectId"].git["revert-to-commit"].$post({
+        param: { projectId: project._id },
+        json: { oid },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error((data as { error?: string } | null)?.error ?? "Revert failed");
+      }
+      return res.json() as Promise<{ oid: string; message: string; pushWarning?: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["git-log", project._id] });
+      queryClient.invalidateQueries({ queryKey: ["publish-status", project._id] });
+      queryClient.invalidateQueries({ queryKey: ["semantic-models"] });
+      if (data.message === "Already at this version") {
+        toast.success(data.message);
+      } else {
+        toast.success("Reverted");
+      }
+      if (data.pushWarning) {
+        toast.warning(`Reverted locally, but push to remote failed: ${data.pushWarning}`);
+      }
+    },
+    onError: (err) => toast.error(err.message),
   });
 }

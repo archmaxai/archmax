@@ -118,23 +118,26 @@ describe("GitService", () => {
   });
 
   describe("log", () => {
-    it("returns empty array for uninitialised repo", async () => {
-      expect(await svc.log()).toEqual([]);
+    it("returns empty entries for uninitialised repo", async () => {
+      const result = await svc.log();
+      expect(result.entries).toEqual([]);
+      expect(result.total).toBe(0);
     });
 
-    it("returns commits in reverse-chronological order", async () => {
+    it("returns commits in reverse-chronological order with total", async () => {
       await svc.ensureRepo();
       await writeFile(join(tmpDir, "a.txt"), "1", "utf-8");
       await svc.commit("first");
       await writeFile(join(tmpDir, "b.txt"), "2", "utf-8");
       await svc.commit("second");
 
-      const entries = await svc.log(10);
-      expect(entries.length).toBeGreaterThanOrEqual(2);
-      expect(entries[0].message.trim()).toBe("second");
-      expect(entries[1].message.trim()).toBe("first");
-      expect(entries[0].author.name).toBe("archmax");
-      expect(entries[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      const result = await svc.log({ limit: 10 });
+      expect(result.entries.length).toBeGreaterThanOrEqual(2);
+      expect(result.entries[0].message.trim()).toBe("second");
+      expect(result.entries[1].message.trim()).toBe("first");
+      expect(result.entries[0].author.name).toBe("archmax");
+      expect(result.entries[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(result.total).toBeGreaterThanOrEqual(3);
     });
 
     it("respects the limit parameter", async () => {
@@ -144,9 +147,29 @@ describe("GitService", () => {
       await writeFile(join(tmpDir, "b.txt"), "2", "utf-8");
       await svc.commit("c2");
 
-      const entries = await svc.log(1);
-      expect(entries).toHaveLength(1);
-      expect(entries[0].message.trim()).toBe("c2");
+      const result = await svc.log({ limit: 1 });
+      expect(result.entries).toHaveLength(1);
+      expect(result.entries[0].message.trim()).toBe("c2");
+    });
+
+    it("paginates correctly", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "a.txt"), "1", "utf-8");
+      await svc.commit("c1");
+      await writeFile(join(tmpDir, "b.txt"), "2", "utf-8");
+      await svc.commit("c2");
+      await writeFile(join(tmpDir, "c.txt"), "3", "utf-8");
+      await svc.commit("c3");
+
+      const page1 = await svc.log({ limit: 2, page: 1 });
+      expect(page1.entries).toHaveLength(2);
+      expect(page1.entries[0].message.trim()).toBe("c3");
+      expect(page1.page).toBe(1);
+
+      const page2 = await svc.log({ limit: 2, page: 2 });
+      expect(page2.entries.length).toBeGreaterThanOrEqual(1);
+      expect(page2.page).toBe(2);
+      expect(page2.total).toBe(page1.total);
     });
   });
 
@@ -305,6 +328,68 @@ describe("GitService", () => {
       expect(extra).toBe("bonus");
 
       await rm(remoteDir, { recursive: true, force: true });
+    });
+  });
+
+  describe("revertToCommit", () => {
+    it("restores working directory to target commit state", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "a.txt"), "v1", "utf-8");
+      const oid1 = await svc.commit("first");
+
+      await writeFile(join(tmpDir, "a.txt"), "v2", "utf-8");
+      await writeFile(join(tmpDir, "b.txt"), "new", "utf-8");
+      await svc.commit("second");
+
+      const result = await svc.revertToCommit(oid1);
+      expect(result).not.toBeNull();
+      expect(result!.message).toContain("Revert to: first");
+
+      const content = await readFile(join(tmpDir, "a.txt"), "utf-8");
+      expect(content).toBe("v1");
+      await expect(stat(join(tmpDir, "b.txt"))).rejects.toThrow();
+    });
+
+    it("returns null when target is HEAD (no-op)", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "a.txt"), "data", "utf-8");
+      const oid = await svc.commit("only commit");
+
+      const result = await svc.revertToCommit(oid);
+      expect(result).toBeNull();
+    });
+
+    it("throws for non-existent OID", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "a.txt"), "data", "utf-8");
+      await svc.commit("init");
+
+      await expect(svc.revertToCommit("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")).rejects.toThrow("not found");
+    });
+
+    it("throws when no commits exist", async () => {
+      const emptyDir = await mkdtemp(join(tmpdir(), "git-empty-"));
+      const emptySvc = new GitService(emptyDir);
+      await git.init({ fs, dir: emptyDir, defaultBranch: "main" });
+      await expect(emptySvc.revertToCommit("abc")).rejects.toThrow("No commits yet");
+      await rm(emptyDir, { recursive: true, force: true });
+    });
+
+    it("does not create a commit itself — caller is responsible for committing", async () => {
+      await svc.ensureRepo();
+      await writeFile(join(tmpDir, "a.txt"), "version-one-content", "utf-8");
+      const oid1 = await svc.commit("first");
+
+      await writeFile(join(tmpDir, "a.txt"), "version-two-content-different-size", "utf-8");
+      await svc.commit("second");
+
+      const before = await svc.log({ limit: 10 });
+      await svc.revertToCommit(oid1);
+      const after = await svc.log({ limit: 10 });
+
+      expect(after.entries).toHaveLength(before.entries.length);
+      const content = await readFile(join(tmpDir, "a.txt"), "utf-8");
+      expect(content).toBe("version-one-content");
     });
   });
 
