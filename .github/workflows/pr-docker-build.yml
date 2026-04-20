@@ -118,7 +118,7 @@ jobs:
           docker compose -f docker-compose.ci.yml --env-file /dev/null logs mssql
           exit 1
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v5
         with:
