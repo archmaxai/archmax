@@ -28,9 +28,9 @@ jobs:
           TAG=$(git tag -l 'v*' --sort=-v:refname | head -1)
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
