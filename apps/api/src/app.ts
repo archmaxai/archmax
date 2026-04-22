@@ -62,7 +62,7 @@ const app = new Hono()
       agentConfigured: !!env.AGENT_API_KEY,
     });
   })
-  .on(["POST", "GET"], "/api/auth/**", (c) => auth.handler(c.req.raw))
+  .on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   .route("/mcp/:slug/mcp", archmaxMcp)
   .route("/mcp/:slug/test/mcp", archmaxMcp)
   .use("/api/*", async (c, next) => {

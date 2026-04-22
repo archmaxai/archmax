@@ -8,6 +8,7 @@ import {
   Loader2,
   MoreVertical,
   Pencil,
+  RefreshCw,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -122,6 +123,28 @@ function ConnectionsPage() {
     },
   });
 
+  const reinitMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.api.projects[":projectId"].connections.reinit.$post({
+        param: { projectId: project._id },
+      });
+      const body = (await res.json()) as
+        | { ok: true; tableCount: number }
+        | { ok: false; error: string };
+      if (!res.ok || body.ok === false) {
+        throw new Error(body.ok === false ? body.error : "Schema re-init failed");
+      }
+      return body;
+    },
+    onSuccess: (body) => {
+      queryClient.invalidateQueries({ queryKey: ["connections", project._id] });
+      toast.success(`Schemas refreshed — ${body.tableCount} tables visible`);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Schema re-init failed");
+    },
+  });
+
   function openCreate() {
     setEditing(null);
     setFormOpen(true);
@@ -143,10 +166,27 @@ function ConnectionsPage() {
               Connected sources are queryable as a single unified catalog.
             </p>
           </div>
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            New Connection
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                reinitMutation.isPending || !connections || connections.length === 0
+              }
+              onClick={() => reinitMutation.mutate()}
+            >
+              {reinitMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Re-explore schemas
+            </Button>
+            <Button size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4" />
+              New Connection
+            </Button>
+          </div>
         </div>
       </header>
 

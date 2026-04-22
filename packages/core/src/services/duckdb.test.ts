@@ -5,7 +5,7 @@ vi.mock("../config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
 }));
 
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, buildColumnSelect, COMMUNITY_EXTENSIONS, getQueryTimeoutMs, withQueryTimeout, withProjectQuerySlot } from "./duckdb";
+import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, buildColumnSelect, COMMUNITY_EXTENSIONS, getQueryTimeoutMs, withQueryTimeout, withProjectQuerySlot, getProjectInstance, disposeProjectInstance } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
@@ -765,6 +765,33 @@ describe("hardenConnection", () => {
       expect(rows[0][0]).toBe("from_b");
     } finally {
       dbB.disconnectSync();
+    }
+  });
+});
+
+describe("disposeProjectInstance", () => {
+  it("returns a fresh instance on the next getProjectInstance call", async () => {
+    const projectId = "dispose-test-project";
+    const first = await getProjectInstance(projectId, []);
+    await disposeProjectInstance(projectId);
+    const second = await getProjectInstance(projectId, []);
+    expect(second).not.toBe(first);
+    await disposeProjectInstance(projectId);
+  });
+
+  it("is a no-op when no instance is cached", async () => {
+    await expect(disposeProjectInstance("dispose-test-missing")).resolves.toBeUndefined();
+  });
+
+  it("closes the underlying DuckDB instance", async () => {
+    const projectId = "dispose-test-close";
+    const instance = await getProjectInstance(projectId, []);
+    const closeSpy = vi.spyOn(instance, "closeSync");
+    try {
+      await disposeProjectInstance(projectId);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSpy.mockRestore();
     }
   });
 });
