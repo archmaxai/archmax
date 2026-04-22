@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
-import { testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
+import { disposeProjectInstance, getProjectInstance, testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
 import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
@@ -204,6 +204,36 @@ const app = new Hono()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Connection test failed";
       return c.json({ ok: false, error: message }, 400);
+    }
+  })
+  .post("/reinit", async (c) => {
+    await connectDB();
+    const projectId = c.req.param("projectId")!;
+    const project = await Project.findById(projectId).lean();
+    if (!project) throw AppError.notFound("Project not found");
+
+    try {
+      await disposeProjectInstance(projectId);
+      const connections = await Connection.find({ project: projectId, isActive: true }).lean();
+      const instance = await getProjectInstance(
+        projectId,
+        connections as unknown as IConnectionDocument[],
+        { readOnly: true },
+      );
+      const db = await instance.connect();
+      let tableCount = 0;
+      try {
+        const result = await withQueryTimeout(db, () => db.run("SHOW ALL TABLES"));
+        for await (const chunk of result) {
+          tableCount += chunk.rowCount;
+        }
+      } finally {
+        db.disconnectSync();
+      }
+      return c.json({ ok: true as const, tableCount });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Schema re-init failed";
+      return c.json({ ok: false as const, error: message }, 400);
     }
   });
 

@@ -89,3 +89,9 @@ Internally these VIEWs live in a `_scope_<modelName>` DuckDB schema, but agents 
 - **Deleted connections** are soft-deleted and fully detached
 
 DuckDB instances are created lazily per project and cached in memory for the lifetime of the server process.
+
+## Refreshing Schemas
+
+DuckDB reads upstream schema information at the time each connection is attached and keeps serving that snapshot from the cached instance. If a table is added, dropped, or altered in the underlying database, those changes are **not** visible until the project's DuckDB instance is rebuilt.
+
+Use the **Re-explore schemas** button in the Data Sources page header to force a refresh. It disposes the cached project DuckDB instance, re-attaches every active connection from scratch, and probes the result so the data browser, semantic-model agent, and MCP tools immediately see the current schema. The button reports the total number of tables visible after the refresh; if a connection is unreachable, an error toast surfaces the underlying message.

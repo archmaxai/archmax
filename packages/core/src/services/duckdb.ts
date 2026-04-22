@@ -169,6 +169,28 @@ export function buildAttachString(conn: IConnectionDocument): string {
   }
 }
 
+/**
+ * Dispose the cached DuckDB instance for a project, if any.
+ *
+ * Closes the underlying `DuckDBInstance` on a best-effort basis and removes
+ * the entry (including its attached-slug and loaded-extension bookkeeping)
+ * from the cache so the next `getProjectInstance` call rebuilds from scratch.
+ * Used to force re-reading of upstream schemas when they have changed.
+ */
+export async function disposeProjectInstance(projectId: string): Promise<void> {
+  while (setupLocks.has(projectId)) {
+    await setupLocks.get(projectId);
+  }
+  const entry = projectInstances.get(projectId);
+  if (!entry) return;
+  projectInstances.delete(projectId);
+  try {
+    entry.instance.closeSync();
+  } catch {
+    // best-effort — instance may already be closed
+  }
+}
+
 export async function getProjectInstance(
   projectId: string,
   connections: IConnectionDocument[],
