@@ -33,6 +33,13 @@ updates:
     commit-message:
       prefix: chore(ci)
       include: scope
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: docker
     directory: /
@@ -48,3 +55,10 @@ updates:
     commit-message:
       prefix: chore(docker)
       include: scope
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
