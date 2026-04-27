@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@archmax/core": "workspace:*",
-    "@hono/node-server": "^1.19.14",
+    "@hono/node-server": "^2.0.0",
     "@hono/zod-validator": "^0.7.6",
     "@langchain/core": "^1.1.40",
     "@langchain/openai": "^1.4.4",
