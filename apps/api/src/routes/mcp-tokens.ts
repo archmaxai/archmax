@@ -8,20 +8,38 @@ import { SemanticModelFileService } from "@archmax/core/services/semantic-model-
 import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
 
+const objectIdSchema = z
+  .string()
+  .regex(/^[0-9a-fA-F]{24}$/, "Must be a 24-character hex ObjectId");
+
 const createSchema = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(z.string().min(1).max(200)).min(1).max(50),
-  expiresAt: z.string().datetime().nullable().optional().default(null),
+  expiresAt: z.string().datetime({ offset: true }).nullable().optional().default(null),
 });
 
 function getFileService(): SemanticModelFileService {
   return new SemanticModelFileService(getEnv().projectsDir);
 }
 
+function parseProjectId(c: { req: { param: (k: string) => string | undefined } }): string {
+  const raw = c.req.param("projectId");
+  const parsed = objectIdSchema.safeParse(raw);
+  if (!parsed.success) throw AppError.badRequest("Invalid projectId");
+  return parsed.data;
+}
+
+function parseTokenId(c: { req: { param: (k: string) => string | undefined } }): string {
+  const raw = c.req.param("tokenId");
+  const parsed = objectIdSchema.safeParse(raw);
+  if (!parsed.success) throw AppError.badRequest("Invalid tokenId");
+  return parsed.data;
+}
+
 const app = new Hono()
   .get("/", async (c) => {
     await connectDB();
-    const projectId = c.req.param("projectId")!;
+    const projectId = parseProjectId(c);
 
     const tokens = await McpToken.find({ project: projectId })
       .select("name scopes expiresAt lastUsedAt createdAt")
@@ -56,7 +74,7 @@ const app = new Hono()
   })
   .post("/", zValidator("json", createSchema), async (c) => {
     await connectDB();
-    const projectId = c.req.param("projectId")!;
+    const projectId = parseProjectId(c);
 
     const project = await Project.findById(projectId).lean();
     if (!project) throw AppError.notFound("Project not found");
@@ -95,8 +113,8 @@ const app = new Hono()
   })
   .delete("/:tokenId", async (c) => {
     await connectDB();
-    const projectId = c.req.param("projectId")!;
-    const tokenId = c.req.param("tokenId")!;
+    const projectId = parseProjectId(c);
+    const tokenId = parseTokenId(c);
 
     const token = await McpToken.findOne({ _id: tokenId, project: projectId });
     if (!token) throw AppError.notFound("Token not found");

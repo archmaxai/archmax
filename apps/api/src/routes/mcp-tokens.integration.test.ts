@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   find: vi.fn(),
+  findOne: vi.fn(),
   aggregate: vi.fn(),
 }));
 
@@ -31,7 +32,7 @@ vi.mock("@archmax/core/config/env", () => ({
 vi.mock("@archmax/core/models/index", () => ({
   McpToken: {
     find: mocks.find,
-    findOne: vi.fn(),
+    findOne: mocks.findOne,
     create: vi.fn(),
   },
   McpCallLog: { aggregate: mocks.aggregate },
@@ -48,7 +49,9 @@ import { createTestApp, jsonBody } from "../test-utils/api-client";
 import mcpTokensRoute from "./mcp-tokens";
 
 const app = createTestApp("/api/projects/:projectId/mcp-tokens", mcpTokensRoute);
-const BASE = "/api/projects/proj1/mcp-tokens";
+const PROJECT_ID = "507f1f77bcf86cd799439011";
+const TOKEN_ID = "507f1f77bcf86cd799439012";
+const BASE = `/api/projects/${PROJECT_ID}/mcp-tokens`;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -101,5 +104,38 @@ describe("GET /mcp-tokens — eventCount30d", () => {
     const res = await app.request(BASE);
     const body = await jsonBody<unknown[]>(res);
     expect(body).toEqual([]);
+  });
+});
+
+describe("path param validation", () => {
+  it("GET / rejects invalid projectId with 400", async () => {
+    const res = await app.request("/api/projects/not-an-objectid/mcp-tokens");
+    expect(res.status).toBe(400);
+    const body = await jsonBody<{ error: string }>(res);
+    expect(body.error).toContain("projectId");
+    expect(mocks.find).not.toHaveBeenCalled();
+  });
+
+  it("DELETE /:tokenId rejects invalid projectId with 400", async () => {
+    const res = await app.request(`/api/projects/bogus/mcp-tokens/${TOKEN_ID}`, { method: "DELETE" });
+    expect(res.status).toBe(400);
+    expect(mocks.findOne).not.toHaveBeenCalled();
+  });
+
+  it("DELETE /:tokenId rejects invalid tokenId with 400", async () => {
+    const res = await app.request(`${BASE}/not-an-id`, { method: "DELETE" });
+    expect(res.status).toBe(400);
+    const body = await jsonBody<{ error: string }>(res);
+    expect(body.error).toContain("tokenId");
+    expect(mocks.findOne).not.toHaveBeenCalled();
+  });
+
+  it("POST / rejects invalid projectId with 400 before validating body", async () => {
+    const res = await app.request("/api/projects/bogus/mcp-tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "x", scopes: ["m1"] }),
+    });
+    expect(res.status).toBe(400);
   });
 });

@@ -28,7 +28,9 @@ import { createTestApp, jsonBody } from "../test-utils/api-client";
 import mcpLogsRoute from "./mcp-logs";
 
 const app = createTestApp("/api/projects/:projectId/mcp-logs", mcpLogsRoute);
-const BASE = "/api/projects/proj1/mcp-logs";
+const PROJECT_ID = "507f1f77bcf86cd799439011";
+const TOKEN_ID = "507f1f77bcf86cd799439012";
+const BASE = `/api/projects/${PROJECT_ID}/mcp-logs`;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,7 +50,7 @@ describe("GET /mcp-logs", () => {
     expect(body.limit).toBe(50);
     expect(body.data).toEqual(rows);
 
-    expect(mocks.find).toHaveBeenCalledWith({ project: "proj1" });
+    expect(mocks.find).toHaveBeenCalledWith({ project: PROJECT_ID });
   });
 
   it("forwards filter query params to the Mongo filter", async () => {
@@ -56,15 +58,15 @@ describe("GET /mcp-logs", () => {
     mocks.countDocuments.mockResolvedValue(0);
 
     const res = await app.request(
-      `${BASE}?toolName=execute_query&tokenId=t1&errorOnly=true&from=2026-04-01&to=2026-04-07`,
+      `${BASE}?toolName=execute_query&tokenId=${TOKEN_ID}&errorOnly=true&from=2026-04-01T00:00:00.000Z&to=2026-04-07T23:59:59.999Z`,
     );
     expect(res.status).toBe(200);
 
     const filter = mocks.find.mock.calls[0]![0] as Record<string, unknown>;
     expect(filter).toMatchObject({
-      project: "proj1",
+      project: PROJECT_ID,
       toolName: "execute_query",
-      tokenId: "t1",
+      tokenId: TOKEN_ID,
       isError: true,
     });
     const dateFilter = filter.createdAt as { $gte: Date; $lte: Date };
@@ -72,14 +74,36 @@ describe("GET /mcp-logs", () => {
     expect(dateFilter.$lte).toBeInstanceOf(Date);
   });
 
-  it("clamps limit to max 200", async () => {
-    mocks.find.mockReturnValue(mkChain([]));
-    mocks.countDocuments.mockResolvedValue(0);
-
+  it("clamps limit to max 200 by rejecting larger values", async () => {
     const res = await app.request(`${BASE}?limit=999`);
-    expect(res.status).toBe(200);
-    const body = await jsonBody<{ limit: number }>(res);
-    expect(body.limit).toBe(200);
+    expect(res.status).toBe(400);
+    expect(mocks.find).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-numeric page", async () => {
+    const res = await app.request(`${BASE}?page=abc`);
+    expect(res.status).toBe(400);
+    expect(mocks.find).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed date strings", async () => {
+    const res = await app.request(`${BASE}?from=not-a-date`);
+    expect(res.status).toBe(400);
+    expect(mocks.find).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed tokenId", async () => {
+    const res = await app.request(`${BASE}?tokenId=not-an-objectid`);
+    expect(res.status).toBe(400);
+    expect(mocks.find).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed projectId in path", async () => {
+    const res = await app.request("/api/projects/not-an-objectid/mcp-logs");
+    expect(res.status).toBe(400);
+    const body = await jsonBody<{ error: string }>(res);
+    expect(body.error).toContain("projectId");
+    expect(mocks.find).not.toHaveBeenCalled();
   });
 });
 
@@ -92,7 +116,7 @@ describe("GET /mcp-logs/tools", () => {
     const body = await jsonBody<string[]>(res);
     expect(body).toEqual(["execute_query", "execute_query", "get_semantic_model"]);
     expect(mocks.distinct).toHaveBeenCalledWith("toolName", {
-      project: "proj1",
+      project: PROJECT_ID,
       toolName: { $ne: null },
     });
   });
@@ -111,5 +135,11 @@ describe("GET /mcp-logs/tools", () => {
     expect(res.status).toBe(200);
     const body = await jsonBody<string[]>(res);
     expect(body).toEqual([]);
+  });
+
+  it("rejects malformed projectId in path", async () => {
+    const res = await app.request("/api/projects/bogus/mcp-logs/tools");
+    expect(res.status).toBe(400);
+    expect(mocks.distinct).not.toHaveBeenCalled();
   });
 });
