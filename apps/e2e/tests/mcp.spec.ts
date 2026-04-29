@@ -703,6 +703,78 @@ test.describe.serial("MCP Layer", () => {
     );
   });
 
+  // ── Token activity stats on MCP Access page ────────────────────
+
+  test("token row shows Events (30d) >= 1 and relative Last Used", async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+
+    await page.goto(`/${projectId}/mcp-access`);
+    await page.waitForLoadState("networkidle");
+
+    const tokenRow = page.getByRole("row").filter({ hasText: TOKEN_NAME });
+    await expect(tokenRow).toBeVisible({ timeout: 5_000 });
+
+    const eventsCell = tokenRow.locator("td").nth(4);
+    await expect(eventsCell).toBeVisible();
+    const eventsText = (await eventsCell.textContent())?.trim() ?? "";
+    const eventsCount = parseInt(eventsText, 10);
+    expect(Number.isFinite(eventsCount)).toBe(true);
+    expect(eventsCount).toBeGreaterThanOrEqual(1);
+
+    const lastUsedCell = tokenRow.locator("td").nth(3);
+    const lastUsedText = (await lastUsedCell.textContent())?.trim() ?? "";
+    expect(lastUsedText).not.toBe("—");
+    expect(lastUsedText.toLowerCase()).toMatch(/just now|min ago|hr ago|hour|day|sec/);
+
+    await context.close();
+  });
+
+  // ── Monitoring page filters ────────────────────────────────────
+
+  test("monitoring page filter by tool narrows the table", async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+
+    await page.goto(`/${projectId}/monitoring`);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByRole("row").filter({ hasText: "execute_query" }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("row").filter({ hasText: "get_semantic_model" }).first()).toBeVisible();
+
+    const toolTrigger = page.locator("[data-slot='select-trigger']").first();
+    await toolTrigger.click();
+    await page.getByRole("option", { name: "execute_query", exact: true }).click();
+
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByRole("row").filter({ hasText: "execute_query" }).first()).toBeVisible({ timeout: 10_000 });
+    expect(await page.getByRole("row").filter({ hasText: "get_semantic_model" }).count()).toBe(0);
+
+    await context.close();
+  });
+
+  test("monitoring page filter by status=Errors only narrows the table", async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+
+    await page.goto(`/${projectId}/monitoring`);
+    await page.waitForLoadState("networkidle");
+
+    const statusTrigger = page.locator("[data-slot='select-trigger']").nth(1);
+    await statusTrigger.click();
+    await page.getByRole("option", { name: "Errors only" }).click();
+
+    await page.waitForLoadState("networkidle");
+
+    const errorBadges = page.getByRole("row").locator("[data-slot='badge']").filter({ hasText: "Error" });
+    await expect(errorBadges.first()).toBeVisible({ timeout: 10_000 });
+
+    expect(await page.getByRole("row").locator("[data-slot='badge']").filter({ hasText: "OK" }).count()).toBe(0);
+
+    await context.close();
+  });
+
   // ── Token revocation via UI ────────────────────────────────────
 
   test("revoke MCP token via UI", async ({ browser }) => {

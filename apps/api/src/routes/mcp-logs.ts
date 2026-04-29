@@ -14,41 +14,57 @@ const listQuerySchema = z.object({
   to: z.string().optional(),
 });
 
-const app = new Hono().get("/", zValidator("query", listQuerySchema), async (c) => {
-  await connectDB();
-  const projectId = c.req.param("projectId")!;
+const app = new Hono()
+  .get("/", zValidator("query", listQuerySchema), async (c) => {
+    await connectDB();
+    const projectId = c.req.param("projectId")!;
 
-  const q = c.req.valid("query");
-  const page = Math.max(1, parseInt(q.page || "1", 10));
-  const limit = Math.min(200, Math.max(1, parseInt(q.limit || "50", 10)));
-  const toolName = q.toolName;
-  const tokenId = q.tokenId;
-  const errorOnly = q.errorOnly === "true";
-  const from = q.from;
-  const to = q.to;
+    const q = c.req.valid("query");
+    const page = Math.max(1, parseInt(q.page || "1", 10));
+    const limit = Math.min(200, Math.max(1, parseInt(q.limit || "50", 10)));
+    const toolName = q.toolName;
+    const tokenId = q.tokenId;
+    const errorOnly = q.errorOnly === "true";
+    const from = q.from;
+    const to = q.to;
 
-  const filter: Record<string, unknown> = { project: projectId };
+    const filter: Record<string, unknown> = { project: projectId };
 
-  if (toolName) filter.toolName = toolName;
-  if (tokenId) filter.tokenId = tokenId;
-  if (errorOnly) filter.isError = true;
-  if (from || to) {
-    const dateFilter: Record<string, Date> = {};
-    if (from) dateFilter.$gte = new Date(from);
-    if (to) dateFilter.$lte = new Date(to);
-    filter.createdAt = dateFilter;
-  }
+    if (toolName) filter.toolName = toolName;
+    if (tokenId) filter.tokenId = tokenId;
+    if (errorOnly) filter.isError = true;
+    if (from || to) {
+      const dateFilter: Record<string, Date> = {};
+      if (from) dateFilter.$gte = new Date(from);
+      if (to) dateFilter.$lte = new Date(to);
+      filter.createdAt = dateFilter;
+    }
 
-  const [data, total] = await Promise.all([
-    McpCallLog.find(filter)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean(),
-    McpCallLog.countDocuments(filter),
-  ]);
+    const [data, total] = await Promise.all([
+      McpCallLog.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      McpCallLog.countDocuments(filter),
+    ]);
 
-  return c.json({ data, total, page, limit });
-});
+    return c.json({ data, total, page, limit });
+  })
+  .get("/tools", async (c) => {
+    await connectDB();
+    const projectId = c.req.param("projectId")!;
+
+    const tools = await McpCallLog.distinct("toolName", {
+      project: projectId,
+      toolName: { $ne: null },
+    });
+
+    const sorted = (tools as (string | null)[])
+      .filter((t): t is string => typeof t === "string" && t.length > 0)
+      .sort();
+
+    return c.json(sorted);
+  });
 
 export default app;

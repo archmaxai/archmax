@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
+import mongoose from "mongoose";
 import { connectDB } from "@archmax/core/infra/db";
-import { McpToken, generateMcpToken, Project } from "@archmax/core/models/index";
+import { McpToken, McpCallLog, generateMcpToken, Project } from "@archmax/core/models/index";
 import { SemanticModelFileService } from "@archmax/core/services/semantic-model-files";
 import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
@@ -21,11 +22,37 @@ const app = new Hono()
   .get("/", async (c) => {
     await connectDB();
     const projectId = c.req.param("projectId")!;
+
     const tokens = await McpToken.find({ project: projectId })
       .select("name scopes expiresAt lastUsedAt createdAt")
       .sort({ createdAt: -1 })
       .lean();
-    return c.json(tokens);
+
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+
+    const counts = await McpCallLog.aggregate<{ _id: mongoose.Types.ObjectId | null; count: number }>([
+      {
+        $match: {
+          project: new mongoose.Types.ObjectId(projectId),
+          createdAt: { $gte: since },
+          tokenId: { $ne: null },
+        },
+      },
+      { $group: { _id: "$tokenId", count: { $sum: 1 } } },
+    ]);
+
+    const countByToken = new Map<string, number>();
+    for (const row of counts) {
+      if (row._id) countByToken.set(row._id.toString(), row.count);
+    }
+
+    const enriched = tokens.map((t) => ({
+      ...t,
+      eventCount30d: countByToken.get(String(t._id)) ?? 0,
+    }));
+
+    return c.json(enriched);
   })
   .post("/", zValidator("json", createSchema), async (c) => {
     await connectDB();
