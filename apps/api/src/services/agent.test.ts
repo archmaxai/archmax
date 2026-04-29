@@ -23,14 +23,6 @@ describe("validateReadOnlySQL", () => {
       expect(validateReadOnlySQL("DESCRIBE users")).toBeNull();
     });
 
-    it("allows SHOW", () => {
-      expect(validateReadOnlySQL("SHOW TABLES")).toBeNull();
-    });
-
-    it("allows PRAGMA", () => {
-      expect(validateReadOnlySQL("PRAGMA version")).toBeNull();
-    });
-
     it("is case insensitive", () => {
       expect(validateReadOnlySQL("select * from t")).toBeNull();
       expect(validateReadOnlySQL("Select * FROM t")).toBeNull();
@@ -76,6 +68,14 @@ describe("validateReadOnlySQL", () => {
 
     it("blocks ATTACH", () => {
       expect(validateReadOnlySQL("ATTACH '/tmp/other.db' AS other")).not.toBeNull();
+    });
+
+    it("blocks SHOW (DuckDB metadata)", () => {
+      expect(validateReadOnlySQL("SHOW TABLES")).not.toBeNull();
+    });
+
+    it("blocks PRAGMA (DuckDB metadata)", () => {
+      expect(validateReadOnlySQL("PRAGMA version")).not.toBeNull();
     });
   });
 

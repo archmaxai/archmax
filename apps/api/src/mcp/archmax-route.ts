@@ -23,9 +23,23 @@ setInterval(() => {
   }
 }, MCP_RATE_WINDOW_MS).unref();
 
-const UNAUTHORIZED = { error: "Invalid or missing authorization" } as const;
+// JSON-RPC error codes (server-defined range -32000 to -32099).
+const JSONRPC_UNAUTHORIZED = -32001;
+const JSONRPC_SESSION_NOT_FOUND = -32002;
 
-async function authenticateRequest(c: { req: { header: (name: string) => string | undefined; param: (name: string) => string | undefined } }, clientIp: string): Promise<McpAuthContext | null> {
+function jsonRpcError(status: number, code: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }),
+    { status, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+const UNAUTHORIZED_MSG = "Invalid or missing authorization";
+
+async function authenticateRequest(
+  c: { req: { header: (name: string) => string | undefined; param: (name: string) => string | undefined } },
+  clientIp: string,
+): Promise<McpAuthContext | null> {
   const authHeader = c.req.header("Authorization");
   const rawToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!rawToken) return null;
@@ -78,6 +92,8 @@ interface McpSession {
   transport: WebStandardStreamableHTTPServerTransport;
   createdAt: number;
   tokenId: string;
+  projectId: string;
+  slug: string;
 }
 
 const sessions = new Map<string, McpSession>();
@@ -109,26 +125,34 @@ app.all("/", async (c) => {
   if (sessionId) {
     const session = sessions.get(sessionId);
     if (!session) {
-      return new Response(
-        JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "Session not found" }, id: null }),
-        { status: 404, headers: { "Content-Type": "application/json" } },
-      );
+      return jsonRpcError(404, JSONRPC_SESSION_NOT_FOUND, "Session not found");
     }
 
-    await connectDB();
-    const token = await McpToken.findById(session.tokenId).lean();
-    if (!token || (token.expiresAt && token.expiresAt < new Date())) {
-      sessions.delete(sessionId);
-      session.server.close().catch(() => {});
-      return c.json(UNAUTHORIZED, 401);
+    // Bind every resumed request to the originating credential and slug:
+    // re-authenticate the bearer token, then verify it still resolves to the
+    // same token + project that opened this session and that the URL slug
+    // hasn't been swapped for a different project.
+    const authCtx = await authenticateRequest(c, clientIp);
+    if (!authCtx) {
+      return jsonRpcError(401, JSONRPC_UNAUTHORIZED, UNAUTHORIZED_MSG);
+    }
+    if (
+      authCtx.tokenId !== session.tokenId ||
+      authCtx.projectId !== session.projectId ||
+      c.req.param("slug") !== session.slug
+    ) {
+      return jsonRpcError(401, JSONRPC_UNAUTHORIZED, UNAUTHORIZED_MSG);
     }
 
     return session.transport.handleRequest(c.req.raw);
   }
 
   const authCtx = await authenticateRequest(c, clientIp);
-  if (!authCtx) return c.json(UNAUTHORIZED, 401);
+  if (!authCtx) {
+    return jsonRpcError(401, JSONRPC_UNAUTHORIZED, UNAUTHORIZED_MSG);
+  }
 
+  const slug = c.req.param("slug")!;
   const isTestRoute = c.req.path.includes("/test/");
   const projectsDir = getEnv().projectsDir;
   let fileSvc: SemanticModelFileService;
@@ -154,10 +178,18 @@ app.all("/", async (c) => {
 
   const capturedTempDir = tempDir;
   const capturedTokenId = authCtx.tokenId ?? "";
+  const capturedProjectId = authCtx.projectId;
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
     onsessioninitialized: (sid) => {
-      sessions.set(sid, { server: mcpServer, transport, createdAt: Date.now(), tokenId: capturedTokenId });
+      sessions.set(sid, {
+        server: mcpServer,
+        transport,
+        createdAt: Date.now(),
+        tokenId: capturedTokenId,
+        projectId: capturedProjectId,
+        slug,
+      });
     },
   });
 

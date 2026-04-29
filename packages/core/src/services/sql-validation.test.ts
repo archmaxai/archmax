@@ -18,12 +18,12 @@ describe("validateReadOnlySQL", () => {
     expect(validateReadOnlySQL("DESCRIBE t")).toBeNull();
   });
 
-  it("allows SHOW queries", () => {
-    expect(validateReadOnlySQL("SHOW TABLES")).toBeNull();
+  it("rejects SHOW queries", () => {
+    expect(validateReadOnlySQL("SHOW TABLES")).not.toBeNull();
   });
 
-  it("allows PRAGMA queries", () => {
-    expect(validateReadOnlySQL("PRAGMA table_info('t')")).toBeNull();
+  it("rejects PRAGMA queries", () => {
+    expect(validateReadOnlySQL("PRAGMA table_info('t')")).not.toBeNull();
   });
 
   it("rejects INSERT", () => {

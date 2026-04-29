@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 import { getEnv } from "@archmax/core/config/env";
 import { runHealthChecks } from "@archmax/core/infra/health";
 import { corsMiddleware } from "./middleware/cors";
+import { csrfMiddleware } from "./middleware/csrf";
 import { AppError } from "./utils/errors";
 import { auth } from "./lib/auth";
 
@@ -65,6 +66,7 @@ const app = new Hono()
   .on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   .route("/mcp/:slug/mcp", archmaxMcp)
   .route("/mcp/:slug/test/mcp", archmaxMcp)
+  .use("/api/*", csrfMiddleware)
   .use("/api/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return c.json({ error: "Unauthorized" }, 401);

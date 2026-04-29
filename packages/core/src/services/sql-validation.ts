@@ -1,4 +1,9 @@
-const ALLOWED_FIRST_KEYWORD = /^\s*(SELECT|WITH|EXPLAIN|DESCRIBE|SHOW|PRAGMA)\b/i;
+// SHOW and PRAGMA are intentionally excluded: the public MCP `execute_query`
+// contract is scoped to semantic-model views, and DuckDB metadata reads must
+// not be exposed through this surface. Internal callers that need metadata
+// (e.g. data-browser routes) execute those statements directly without going
+// through this validator.
+const ALLOWED_FIRST_KEYWORD = /^\s*(SELECT|WITH|EXPLAIN|DESCRIBE)\b/i;
 const SEMICOLON_FOLLOWED_BY_STATEMENT = /;\s*\S/;
 
 /** Strip leading single-line (`--`) and block SQL comments. */
