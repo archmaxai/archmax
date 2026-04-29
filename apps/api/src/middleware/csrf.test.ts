@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { csrfMiddleware } from "./csrf";
 
 beforeAll(() => {
+  process.env.APP_BASE_URL = "https://archmax.example.com";
   process.env.CORS_ORIGINS = "http://localhost:5173,https://app.example.com";
   process.env.MONGODB_URI = "mongodb://localhost:27017/test";
   process.env.BETTER_AUTH_SECRET = "test-secret-with-at-least-32-chars-long";
@@ -131,40 +132,20 @@ describe("csrfMiddleware", () => {
     expect(res.status).toBe(403);
   });
 
-  it("allows POST when Origin matches the proxied X-Forwarded-Host", async () => {
+  it("allows POST from APP_BASE_URL even when CORS_ORIGINS is explicit", async () => {
     const app = buildApp();
     const res = await app.request("/api/projects/x/mcp-tokens", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         origin: "https://archmax.example.com",
-        "x-forwarded-host": "archmax.example.com",
-        "x-forwarded-proto": "https",
-        host: "127.0.0.1:3000",
       },
       body: "{}",
     });
     expect(res.status).toBe(200);
   });
 
-  it("rejects POST when only Host (no X-Forwarded-Host) matches Origin", async () => {
-    // The bare Host header is not trusted: direct deployments are expected
-    // to set APP_BASE_URL (which populates corsOrigins). Only X-Forwarded-*
-    // headers from a reverse proxy unlock the same-origin shortcut.
-    const app = buildApp();
-    const res = await app.request("http://archmax.example.com/api/projects/x/mcp-tokens", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin: "http://archmax.example.com",
-        host: "archmax.example.com",
-      },
-      body: "{}",
-    });
-    expect(res.status).toBe(403);
-  });
-
-  it("rejects foreign Origin even when X-Forwarded-Host matches the foreign origin", async () => {
+  it("rejects foreign Origin even when proxy headers match it", async () => {
     const app = buildApp();
     const res = await app.request("/api/projects/x/mcp-tokens", {
       method: "POST",
