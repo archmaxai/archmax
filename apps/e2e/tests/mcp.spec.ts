@@ -653,7 +653,7 @@ test.describe.serial("MCP Layer", () => {
   // ── Scope enforcement ──────────────────────────────────────────
 
   test("scope enforcement: out-of-scope model access denied", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "get_semantic_model", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "get_semantic_model", {
       modelName: "nonexistent_model_xyz",
     });
     const result = (body as any).result;
@@ -698,12 +698,12 @@ test.describe.serial("MCP Layer", () => {
 
     const { sessionId: narrowSession } = await mcpInitialize(request, projectSlug, narrowToken);
 
-    const listBody = await mcpToolCall(request, projectSlug, narrowSession, "list_semantic_models");
+    const listBody = await mcpToolCall(request, projectSlug, narrowSession, narrowToken, "list_semantic_models");
     const listText: string = (listBody as any).result?.content?.[0]?.text ?? "";
     expect(listText).not.toContain(MODEL_NAME);
     expect(listText).toContain("e2e_scope_test");
 
-    const getBody = await mcpToolCall(request, projectSlug, narrowSession, "get_semantic_model", {
+    const getBody = await mcpToolCall(request, projectSlug, narrowSession, narrowToken, "get_semantic_model", {
       modelName: MODEL_NAME,
     });
     const getResult = (getBody as any).result;
