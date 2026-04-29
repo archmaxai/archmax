@@ -130,4 +130,52 @@ describe("csrfMiddleware", () => {
     });
     expect(res.status).toBe(403);
   });
+
+  it("allows POST when Origin matches the proxied X-Forwarded-Host", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/projects/x/mcp-tokens", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://archmax.example.com",
+        "x-forwarded-host": "archmax.example.com",
+        "x-forwarded-proto": "https",
+        host: "127.0.0.1:3000",
+      },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects POST when only Host (no X-Forwarded-Host) matches Origin", async () => {
+    // The bare Host header is not trusted: direct deployments are expected
+    // to set APP_BASE_URL (which populates corsOrigins). Only X-Forwarded-*
+    // headers from a reverse proxy unlock the same-origin shortcut.
+    const app = buildApp();
+    const res = await app.request("http://archmax.example.com/api/projects/x/mcp-tokens", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://archmax.example.com",
+        host: "archmax.example.com",
+      },
+      body: "{}",
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects foreign Origin even when X-Forwarded-Host matches the foreign origin", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/projects/x/mcp-tokens", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://evil.example.com",
+        "x-forwarded-host": "archmax.example.com",
+        "x-forwarded-proto": "https",
+      },
+      body: "{}",
+    });
+    expect(res.status).toBe(403);
+  });
 });
