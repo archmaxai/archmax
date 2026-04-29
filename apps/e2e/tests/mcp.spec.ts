@@ -127,7 +127,14 @@ async function createConnection(
 }
 
 function apiHeaders(cookie: string) {
-  return { Cookie: cookie, "Content-Type": "application/json" };
+  return {
+    Cookie: cookie,
+    "Content-Type": "application/json",
+    // CSRF middleware requires Origin to match corsOrigins for /api/*
+    // mutations. Playwright's APIRequestContext does not set Origin
+    // automatically the way a browser would.
+    Origin: BASE_URL,
+  };
 }
 
 async function getSessionCookie(context: BrowserContext): Promise<string> {
@@ -282,11 +289,16 @@ async function mcpInitialize(
 
 /**
  * Call an MCP tool within an existing session. Returns the parsed JSON-RPC response.
+ *
+ * Every resumed MCP request must re-authenticate with the same Bearer token
+ * that originally opened the session — see `authenticateRequest` in
+ * `apps/api/src/mcp/archmax-route.ts`. Sending only `mcp-session-id` returns 401.
  */
 async function mcpToolCall(
   request: APIRequestContext,
   slug: string,
   sessionId: string,
+  token: string,
   toolName: string,
   args: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
@@ -295,7 +307,10 @@ async function mcpToolCall(
     method: "tools/call",
     id: Date.now(),
     params: { name: toolName, arguments: args },
-  }, { "mcp-session-id": sessionId });
+  }, {
+    Authorization: `Bearer ${token}`,
+    "mcp-session-id": sessionId,
+  });
 
   expect(res.status()).toBe(200);
   return parseMcpResponse(res);
@@ -377,8 +392,11 @@ test.describe.serial("MCP Layer", () => {
       params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
     });
     expect(res.status()).toBe(401);
-    const body = await res.json();
-    expect(body.error).toContain("Invalid or missing authorization");
+    expect(await res.json()).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32001, message: "Invalid or missing authorization" },
+    });
   });
 
   test("MCP request with invalid token returns 401", async ({ request }) => {
@@ -387,8 +405,11 @@ test.describe.serial("MCP Layer", () => {
       params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
     }, { Authorization: "Bearer invalid_garbage_token_value" });
     expect(res.status()).toBe(401);
-    const body = await res.json();
-    expect(body.error).toContain("Invalid or missing authorization");
+    expect(await res.json()).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32001, message: "Invalid or missing authorization" },
+    });
   });
 
   // ── Token creation via UI ──────────────────────────────────────
@@ -459,13 +480,13 @@ test.describe.serial("MCP Layer", () => {
   // ── MCP tool tests ─────────────────────────────────────────────
 
   test("list_semantic_models returns e2e_federation", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "list_semantic_models");
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "list_semantic_models");
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
     expect(text).toContain(MODEL_NAME);
   });
 
   test("get_semantic_model returns model overview", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "get_semantic_model", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "get_semantic_model", {
       modelName: MODEL_NAME,
     });
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
@@ -476,7 +497,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("get_datasets returns field details", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "get_datasets", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "get_datasets", {
       modelName: MODEL_NAME,
       datasets: [
         { name: "products", page: 1 },
@@ -493,7 +514,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query returns data from Postgres", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" ORDER BY id LIMIT 10`,
     });
@@ -503,7 +524,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query cross-database join (Postgres + MySQL)", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: [
         `SELECT p.name AS product, o.quantity`,
@@ -518,7 +539,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query returns data from Iceberg", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "shipments" ORDER BY id LIMIT 10`,
     });
@@ -529,7 +550,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query cross-catalog join (Postgres + Iceberg)", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: [
         `SELECT p.name AS product, s.destination`,
@@ -545,7 +566,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query returns storedQueryId when store is true", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" WHERE name = $1 ORDER BY id LIMIT 5`,
       params: ["Widget A"],
@@ -559,7 +580,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query omits storedQueryId when store is false", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" ORDER BY id LIMIT 1`,
       store: false,
@@ -571,7 +592,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_stored_query re-runs a stored query", async ({ request }) => {
-    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" WHERE name = $1 ORDER BY id LIMIT 5`,
       params: ["Widget A"],
@@ -581,7 +602,7 @@ test.describe.serial("MCP Layer", () => {
     const { storedQueryId } = JSON.parse(storeText);
     expect(storedQueryId).toBeTruthy();
 
-    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_stored_query", {
       storedQueryId,
     });
     expect((rerunBody as any).result?.isError).toBeFalsy();
@@ -590,7 +611,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_stored_query with overridden params", async ({ request }) => {
-    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT name FROM "products" WHERE name = $1 LIMIT 5`,
       params: ["Widget A"],
@@ -599,7 +620,7 @@ test.describe.serial("MCP Layer", () => {
     const storeText: string = (storeBody as any).result?.content?.[0]?.text ?? "";
     const { storedQueryId } = JSON.parse(storeText);
 
-    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_stored_query", {
       storedQueryId,
       params: ["Widget B"],
     });
@@ -610,7 +631,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_stored_query with invalid ID returns error", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_stored_query", {
       storedQueryId: "000000000000000000000000",
     });
     const result = (body as any).result;
@@ -620,7 +641,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("request_improvement succeeds", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "request_improvement", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "request_improvement", {
       modelName: MODEL_NAME,
       title: "E2E test improvement",
       description: "This is an automated E2E test improvement request.",
@@ -632,7 +653,7 @@ test.describe.serial("MCP Layer", () => {
   // ── Scope enforcement ──────────────────────────────────────────
 
   test("scope enforcement: out-of-scope model access denied", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "get_semantic_model", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "get_semantic_model", {
       modelName: "nonexistent_model_xyz",
     });
     const result = (body as any).result;
@@ -677,12 +698,12 @@ test.describe.serial("MCP Layer", () => {
 
     const { sessionId: narrowSession } = await mcpInitialize(request, projectSlug, narrowToken);
 
-    const listBody = await mcpToolCall(request, projectSlug, narrowSession, "list_semantic_models");
+    const listBody = await mcpToolCall(request, projectSlug, narrowSession, narrowToken, "list_semantic_models");
     const listText: string = (listBody as any).result?.content?.[0]?.text ?? "";
     expect(listText).not.toContain(MODEL_NAME);
     expect(listText).toContain("e2e_scope_test");
 
-    const getBody = await mcpToolCall(request, projectSlug, narrowSession, "get_semantic_model", {
+    const getBody = await mcpToolCall(request, projectSlug, narrowSession, narrowToken, "get_semantic_model", {
       modelName: MODEL_NAME,
     });
     const getResult = (getBody as any).result;
@@ -701,6 +722,78 @@ test.describe.serial("MCP Layer", () => {
       `${BASE_URL}/api/projects/${projectId}/publish`,
       { headers: apiHeaders(sessionCookie), data: { message: "Scope test cleanup publish" } },
     );
+  });
+
+  // ── Token activity stats on MCP Access page ────────────────────
+
+  test("token row shows Events (30d) >= 1 and relative Last Used", async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+
+    await page.goto(`/${projectId}/mcp-access`);
+    await page.waitForLoadState("networkidle");
+
+    const tokenRow = page.getByRole("row").filter({ hasText: TOKEN_NAME });
+    await expect(tokenRow).toBeVisible({ timeout: 5_000 });
+
+    const eventsCell = tokenRow.locator("td").nth(4);
+    await expect(eventsCell).toBeVisible();
+    const eventsText = (await eventsCell.textContent())?.trim() ?? "";
+    const eventsCount = parseInt(eventsText, 10);
+    expect(Number.isFinite(eventsCount)).toBe(true);
+    expect(eventsCount).toBeGreaterThanOrEqual(1);
+
+    const lastUsedCell = tokenRow.locator("td").nth(3);
+    const lastUsedText = (await lastUsedCell.textContent())?.trim() ?? "";
+    expect(lastUsedText).not.toBe("—");
+    expect(lastUsedText.toLowerCase()).toMatch(/just now|min ago|hr ago|hour|day|sec/);
+
+    await context.close();
+  });
+
+  // ── Monitoring page filters ────────────────────────────────────
+
+  test("monitoring page filter by tool narrows the table", async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+
+    await page.goto(`/${projectId}/monitoring`);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByRole("row").filter({ hasText: "execute_query" }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("row").filter({ hasText: "get_semantic_model" }).first()).toBeVisible();
+
+    const toolTrigger = page.locator("[data-slot='select-trigger']").first();
+    await toolTrigger.click();
+    await page.getByRole("option", { name: "execute_query", exact: true }).click();
+
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByRole("row").filter({ hasText: "execute_query" }).first()).toBeVisible({ timeout: 10_000 });
+    expect(await page.getByRole("row").filter({ hasText: "get_semantic_model" }).count()).toBe(0);
+
+    await context.close();
+  });
+
+  test("monitoring page filter by status=Errors only narrows the table", async ({ browser }) => {
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+
+    await page.goto(`/${projectId}/monitoring`);
+    await page.waitForLoadState("networkidle");
+
+    const statusTrigger = page.locator("[data-slot='select-trigger']").nth(1);
+    await statusTrigger.click();
+    await page.getByRole("option", { name: "Errors only" }).click();
+
+    await page.waitForLoadState("networkidle");
+
+    const errorBadges = page.getByRole("row").locator("[data-slot='badge']").filter({ hasText: "Error" });
+    await expect(errorBadges.first()).toBeVisible({ timeout: 10_000 });
+
+    expect(await page.getByRole("row").locator("[data-slot='badge']").filter({ hasText: "OK" }).count()).toBe(0);
+
+    await context.close();
   });
 
   // ── Token revocation via UI ────────────────────────────────────

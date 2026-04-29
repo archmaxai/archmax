@@ -34,6 +34,20 @@ Tokens are created in the admin UI under **MCP Access**. Each token has:
 - **Scopes**: which semantic models the token can access
 - **Expiry**: optional expiration date
 
+The MCP Access table also surfaces per-token activity:
+- **Last Used**: relative time of the most recent call (hover for the absolute timestamp)
+- **Events (30d)**: number of MCP calls the token made in the last 30 days
+
+## Monitoring Calls
+
+The **MCP Log** page at `/<projectId>/monitoring` shows every `tools/call` made through the project's MCP endpoint. A filter bar above the table lets you narrow the view by:
+- **Tool** — pick one of the tools that have actually been called (e.g. `execute_query`)
+- **Status** — `All`, `Success only`, or `Errors only`
+- **Token** — restrict to calls from a specific token
+- **Date range** — pick a start and end date; both ends are inclusive
+
+Click any row to open a detail panel with the full input arguments and tool output. For `execute_query` errors and other tool calls that reference a semantic model, a **Refine** action opens the agent chat with a pre-filled prompt to improve the model.
+
 ## Available Tools
 
 | Tool | Description |

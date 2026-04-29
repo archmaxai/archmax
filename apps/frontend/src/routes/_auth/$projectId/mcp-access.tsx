@@ -32,6 +32,10 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
 } from "@archmax/ui";
 import { api } from "@/lib/api";
 import { useProject } from "@/lib/project-context";
@@ -47,6 +51,7 @@ interface McpTokenListItem {
   expiresAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;
+  eventCount30d: number;
 }
 
 interface SemanticModelSummary {
@@ -134,6 +139,32 @@ function McpAccessPage() {
     });
   }
 
+  function formatAbsolute(iso: string) {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function formatRelativeTime(iso: string): string {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const sec = Math.round(diffMs / 1000);
+    if (sec < 60) return "just now";
+    const min = Math.round(sec / 60);
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24) return `${hr} hr ago`;
+    const day = Math.round(hr / 24);
+    if (day < 30) return `${day} day${day === 1 ? "" : "s"} ago`;
+    const month = Math.round(day / 30);
+    if (month < 12) return `${month} mo ago`;
+    const yr = Math.round(month / 12);
+    return `${yr} yr ago`;
+  }
+
   function isExpired(expiresAt: string | null) {
     if (!expiresAt) return false;
     return new Date(expiresAt) < new Date();
@@ -219,6 +250,7 @@ function McpAccessPage() {
                   <TableHead>Semantic Models</TableHead>
                   <TableHead>Expires</TableHead>
                   <TableHead>Last Used</TableHead>
+                  <TableHead className="text-right">Events (30d)</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
@@ -244,8 +276,28 @@ function McpAccessPage() {
                         <span className="text-muted-foreground">Never</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(t.lastUsedAt)}
+                    <TableCell>
+                      {t.lastUsedAt ? (
+                        <TooltipProvider delayDuration={200}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-muted-foreground cursor-default">
+                                {formatRelativeTime(t.lastUsedAt)}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>{formatAbsolute(t.lastUsedAt)}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell
+                      className={`text-right tabular-nums ${
+                        t.eventCount30d === 0 ? "text-muted-foreground" : ""
+                      }`}
+                    >
+                      {t.eventCount30d}
                     </TableCell>
                     <TableCell>
                       <Button

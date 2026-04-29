@@ -15,6 +15,13 @@ import {
   Badge,
   Button,
   Card,
+  DateRangePicker,
+  type DateRange,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -38,6 +45,7 @@ export const Route = createFileRoute("/_auth/$projectId/monitoring")({
 
 interface McpLogEntry {
   _id: string;
+  tokenId: string | null;
   tokenName: string;
   method: string;
   toolName: string | null;
@@ -57,7 +65,14 @@ interface McpLogsResponse {
   limit: number;
 }
 
+interface McpTokenOption {
+  _id: string;
+  name: string;
+}
+
 const PAGE_SIZE = 50;
+const ALL_FILTER = "__all__";
+type StatusFilter = "all" | "success" | "error";
 
 function getModelName(log: McpLogEntry): string | null {
   const name = log.inputArgs?.modelName ?? log.inputArgs?.model_name;
@@ -89,18 +104,104 @@ function buildLogRefinePrompt(log: McpLogEntry, modelName: string): string {
   return prompt;
 }
 
+function startOfDayIso(d: Date): string {
+  const c = new Date(d);
+  c.setHours(0, 0, 0, 0);
+  return c.toISOString();
+}
+
+function endOfDayIso(d: Date): string {
+  const c = new Date(d);
+  c.setHours(23, 59, 59, 999);
+  return c.toISOString();
+}
+
 function MonitoringPage() {
   const { project } = useProject();
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [selectedLog, setSelectedLog] = useState<McpLogEntry | null>(null);
 
-  const { data, isLoading, refetch, isFetching } = useQuery<McpLogsResponse>({
-    queryKey: ["mcp-logs", project._id, page],
+  const [filterTool, setFilterTool] = useState<string>(ALL_FILTER);
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>("all");
+  const [filterToken, setFilterToken] = useState<string>(ALL_FILTER);
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
+
+  const hasFilters =
+    filterTool !== ALL_FILTER ||
+    filterStatus !== "all" ||
+    filterToken !== ALL_FILTER ||
+    !!dateRange?.from;
+
+  function resetPageOnChange<T>(setter: (v: T) => void) {
+    return (v: T) => {
+      setPage(1);
+      setter(v);
+    };
+  }
+
+  function clearFilters() {
+    setFilterTool(ALL_FILTER);
+    setFilterStatus("all");
+    setFilterToken(ALL_FILTER);
+    setDateRange(undefined);
+    setPage(1);
+  }
+
+  const { data: tools = [] } = useQuery<string[]>({
+    queryKey: ["mcp-log-tools", project._id],
     queryFn: async () => {
+      const res = await api.api.projects[":projectId"]["mcp-logs"].tools.$get({
+        param: { projectId: project._id },
+      });
+      if (!res.ok) throw new Error("Failed to load tools");
+      return res.json() as unknown as Promise<string[]>;
+    },
+  });
+
+  const { data: tokens = [] } = useQuery<McpTokenOption[]>({
+    queryKey: ["mcp-tokens", project._id],
+    queryFn: async () => {
+      const res = await api.api.projects[":projectId"]["mcp-tokens"].$get({
+        param: { projectId: project._id },
+      });
+      if (!res.ok) throw new Error("Failed to load tokens");
+      return res.json() as unknown as Promise<McpTokenOption[]>;
+    },
+  });
+
+  const fromIso = dateRange?.from ? startOfDayIso(dateRange.from) : undefined;
+  const toIso = dateRange?.to
+    ? endOfDayIso(dateRange.to)
+    : dateRange?.from
+      ? endOfDayIso(dateRange.from)
+      : undefined;
+
+  const { data, isLoading, refetch, isFetching } = useQuery<McpLogsResponse>({
+    queryKey: [
+      "mcp-logs",
+      project._id,
+      page,
+      filterTool,
+      filterStatus,
+      filterToken,
+      fromIso ?? null,
+      toIso ?? null,
+    ],
+    queryFn: async () => {
+      const query: Record<string, string> = {
+        page: String(page),
+        limit: String(PAGE_SIZE),
+      };
+      if (filterTool !== ALL_FILTER) query.toolName = filterTool;
+      if (filterToken !== ALL_FILTER) query.tokenId = filterToken;
+      if (filterStatus === "error") query.errorOnly = "true";
+      if (fromIso) query.from = fromIso;
+      if (toIso) query.to = toIso;
+
       const res = await api.api.projects[":projectId"]["mcp-logs"].$get({
         param: { projectId: project._id },
-        query: { page: String(page), limit: String(PAGE_SIZE) },
+        query,
       });
       if (!res.ok) throw new Error("Failed to load MCP logs");
       return res.json() as unknown as Promise<McpLogsResponse>;
@@ -112,7 +213,11 @@ function MonitoringPage() {
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const filteredLogs = logs.filter((l) => l.method !== "tools/list");
+  const filteredLogs = logs.filter((l) => {
+    if (l.method === "tools/list") return false;
+    if (filterStatus === "success" && l.isError) return false;
+    return true;
+  });
 
   function formatTimestamp(iso: string) {
     const d = new Date(iso);
@@ -157,16 +262,84 @@ function MonitoringPage() {
       <div className="divider-subtle mx-8" />
 
       <div className="flex-1 overflow-y-auto p-8 space-y-4">
+        <div className="flex items-center gap-1.5">
+          <Select value={filterTool} onValueChange={resetPageOnChange(setFilterTool)}>
+            <SelectTrigger className="filter-trigger">
+              <SelectValue placeholder="All tools" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER}>All tools</SelectItem>
+              {tools.map((t) => (
+                <SelectItem key={t} value={t}>{t}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filterStatus}
+            onValueChange={resetPageOnChange((v) => setFilterStatus(v as StatusFilter))}
+          >
+            <SelectTrigger className="filter-trigger">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="success">Success only</SelectItem>
+              <SelectItem value="error">Errors only</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={filterToken} onValueChange={resetPageOnChange(setFilterToken)}>
+            <SelectTrigger className="filter-trigger">
+              <SelectValue placeholder="All tokens" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER}>All tokens</SelectItem>
+              {tokens.map((t) => (
+                <SelectItem key={t._id} value={t._id}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <DateRangePicker
+            value={dateRange}
+            onChange={resetPageOnChange(setDateRange)}
+          />
+
+          {hasFilters && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={clearFilters}
+              title="Clear filters"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+
         {isLoading ? (
           <Card className="flex items-center justify-center p-12">
             <p className="text-sm text-muted-foreground">Loading logs...</p>
           </Card>
         ) : filteredLogs.length === 0 ? (
-          <Card className="flex flex-col items-center justify-center p-12 text-center">
-            <Activity className="h-8 w-8 text-muted-foreground mb-3" />
-            <p className="text-sm text-muted-foreground">
-              No MCP calls recorded yet. Logs appear here when AI agents use this project's MCP endpoint.
-            </p>
+          <Card className="flex flex-col items-center justify-center p-12 text-center gap-3">
+            <Activity className="h-8 w-8 text-muted-foreground" />
+            {hasFilters ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  No logs match the current filters.
+                </p>
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No MCP calls recorded yet. Logs appear here when AI agents use this project's MCP endpoint.
+              </p>
+            )}
           </Card>
         ) : (
           <>
