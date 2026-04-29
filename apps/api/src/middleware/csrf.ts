@@ -16,15 +16,18 @@ function originFromHeader(value: string): string | null {
 /**
  * CSRF / origin enforcement for cookie-authenticated mutation routes.
  *
- * Real browsers always attach an `Origin` (or at minimum `Referer`) header on
- * cross-origin POST/PUT/PATCH/DELETE requests with credentials, so requiring
- * those headers to match `corsOrigins` blocks browser-driven CSRF without
- * needing a separate token round-trip. Server-to-server callers (CI, MCP
- * clients, tests using fetch from Node) typically omit both headers and are
- * not a CSRF vector — they authenticate via bearer tokens, not cookies.
+ * Every state-changing `/api/*` request (POST/PUT/PATCH/DELETE) is required
+ * to carry an `Origin` (or `Referer`) header that resolves to one of
+ * `corsOrigins`. Real browsers always attach `Origin` on credentialed
+ * non-GET requests, so this stops browser-driven CSRF without needing a
+ * separate token round-trip. Missing both headers is *also* rejected: the
+ * routes below this middleware are session-cookie authenticated, so a
+ * caller that suppresses Origin/Referer would otherwise drive cookie
+ * mutations unprotected. Non-browser API clients should authenticate via
+ * the dedicated bearer-token MCP surface (`/mcp/:slug/mcp`) instead.
  *
- * `/api/auth/*` is exempted because Better Auth applies its own protections
- * and runs before this middleware in app.ts.
+ * `/api/auth/*` is exempted because Better Auth runs before this middleware
+ * in app.ts and applies its own CSRF protection.
  */
 export async function csrfMiddleware(c: Context, next: Next) {
   if (SAFE_METHODS.has(c.req.method)) return next();
@@ -34,11 +37,13 @@ export async function csrfMiddleware(c: Context, next: Next) {
   const refererHeader = c.req.header("referer");
 
   if (!originHeader && !refererHeader) {
-    return next();
+    return c.json(
+      { error: "Forbidden: missing Origin/Referer header" },
+      403,
+    );
   }
 
   const trusted = new Set(getEnv().corsOrigins);
-
   const candidate = originHeader ?? refererHeader!;
   const origin = originFromHeader(candidate);
 

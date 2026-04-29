@@ -26,6 +26,33 @@ describe("validateReadOnlySQL", () => {
     expect(validateReadOnlySQL("PRAGMA table_info('t')")).not.toBeNull();
   });
 
+  it("rejects EXPLAIN ANALYZE (which executes the wrapped statement)", () => {
+    const r = validateReadOnlySQL("EXPLAIN ANALYZE SELECT * FROM t");
+    expect(r).toMatch(/EXPLAIN ANALYZE/i);
+  });
+
+  it("rejects EXPLAIN ANALYZE wrapping a write", () => {
+    expect(
+      validateReadOnlySQL("EXPLAIN ANALYZE CREATE TABLE leak AS SELECT * FROM orders"),
+    ).not.toBeNull();
+  });
+
+  it("rejects EXPLAIN wrapping non-read statements", () => {
+    expect(validateReadOnlySQL("EXPLAIN INSERT INTO t VALUES (1)")).not.toBeNull();
+    expect(validateReadOnlySQL("EXPLAIN DROP TABLE t")).not.toBeNull();
+    expect(validateReadOnlySQL("EXPLAIN UPDATE t SET x = 1")).not.toBeNull();
+  });
+
+  it("allows EXPLAIN wrapping SELECT", () => {
+    expect(validateReadOnlySQL("EXPLAIN SELECT * FROM t")).toBeNull();
+  });
+
+  it("allows EXPLAIN wrapping WITH (CTE)", () => {
+    expect(
+      validateReadOnlySQL("EXPLAIN WITH cte AS (SELECT 1) SELECT * FROM cte"),
+    ).toBeNull();
+  });
+
   it("rejects INSERT", () => {
     expect(validateReadOnlySQL("INSERT INTO t VALUES (1)")).not.toBeNull();
   });
@@ -148,6 +175,62 @@ describe("validateScopedSQL", () => {
       catalogs,
     );
     expect(result).toContain("information_schema");
+  });
+
+  it("rejects DuckDB metadata table functions", () => {
+    expect(validateScopedSQL("SELECT * FROM duckdb_tables()", catalogs)).toMatch(
+      /duckdb/i,
+    );
+    expect(
+      validateScopedSQL("SELECT * FROM duckdb_columns()", catalogs),
+    ).not.toBeNull();
+    expect(
+      validateScopedSQL("SELECT * FROM duckdb_secrets()", catalogs),
+    ).not.toBeNull();
+    expect(
+      validateScopedSQL("SELECT * FROM duckdb_settings()", catalogs),
+    ).not.toBeNull();
+  });
+
+  it("rejects pg_catalog and sqlite_master", () => {
+    expect(
+      validateScopedSQL("SELECT * FROM pg_catalog.pg_class", catalogs),
+    ).not.toBeNull();
+    expect(
+      validateScopedSQL("SELECT * FROM sqlite_master", catalogs),
+    ).not.toBeNull();
+  });
+
+  it("rejects main./temp./system. schema references", () => {
+    expect(validateScopedSQL("SELECT * FROM main.foo", catalogs)).not.toBeNull();
+    expect(validateScopedSQL("SELECT * FROM temp.foo", catalogs)).not.toBeNull();
+    expect(validateScopedSQL("SELECT * FROM system.foo", catalogs)).not.toBeNull();
+  });
+
+  it("rejects external file readers (read_*)", () => {
+    expect(
+      validateScopedSQL("SELECT * FROM read_csv('/etc/passwd')", catalogs),
+    ).not.toBeNull();
+    expect(
+      validateScopedSQL("SELECT * FROM read_parquet('s3://bucket/x')", catalogs),
+    ).not.toBeNull();
+    expect(
+      validateScopedSQL("SELECT * FROM read_json('/x.json')", catalogs),
+    ).not.toBeNull();
+    expect(
+      validateScopedSQL("SELECT * FROM read_blob('/x.bin')", catalogs),
+    ).not.toBeNull();
+  });
+
+  it("does not block legitimate identifiers that contain forbidden substrings", () => {
+    // "main" / "duckdb" appearing inside compound identifiers must not be
+    // confused with system schemas / metadata functions.
+    expect(
+      validateScopedSQL("SELECT order_main.id FROM order_main", catalogs),
+    ).toBeNull();
+    expect(
+      validateScopedSQL("SELECT duckdb_user.name FROM duckdb_user", catalogs),
+    ).toBeNull();
   });
 
   it("rejects _scope_ prefix usage", () => {

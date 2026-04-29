@@ -77,6 +77,18 @@ describe("validateReadOnlySQL", () => {
     it("blocks PRAGMA (DuckDB metadata)", () => {
       expect(validateReadOnlySQL("PRAGMA version")).not.toBeNull();
     });
+
+    it("blocks EXPLAIN ANALYZE (executes wrapped statement)", () => {
+      expect(
+        validateReadOnlySQL("EXPLAIN ANALYZE SELECT * FROM t"),
+      ).not.toBeNull();
+    });
+
+    it("blocks EXPLAIN of write statements", () => {
+      expect(
+        validateReadOnlySQL("EXPLAIN INSERT INTO t VALUES (1)"),
+      ).not.toBeNull();
+    });
   });
 
   describe("multi-statement prevention", () => {

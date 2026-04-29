@@ -127,7 +127,14 @@ async function createConnection(
 }
 
 function apiHeaders(cookie: string) {
-  return { Cookie: cookie, "Content-Type": "application/json" };
+  return {
+    Cookie: cookie,
+    "Content-Type": "application/json",
+    // CSRF middleware requires Origin to match corsOrigins for /api/*
+    // mutations. Playwright's APIRequestContext does not set Origin
+    // automatically the way a browser would.
+    Origin: BASE_URL,
+  };
 }
 
 async function getSessionCookie(context: BrowserContext): Promise<string> {
@@ -282,11 +289,16 @@ async function mcpInitialize(
 
 /**
  * Call an MCP tool within an existing session. Returns the parsed JSON-RPC response.
+ *
+ * Every resumed MCP request must re-authenticate with the same Bearer token
+ * that originally opened the session — see `authenticateRequest` in
+ * `apps/api/src/mcp/archmax-route.ts`. Sending only `mcp-session-id` returns 401.
  */
 async function mcpToolCall(
   request: APIRequestContext,
   slug: string,
   sessionId: string,
+  token: string,
   toolName: string,
   args: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
@@ -295,7 +307,10 @@ async function mcpToolCall(
     method: "tools/call",
     id: Date.now(),
     params: { name: toolName, arguments: args },
-  }, { "mcp-session-id": sessionId });
+  }, {
+    Authorization: `Bearer ${token}`,
+    "mcp-session-id": sessionId,
+  });
 
   expect(res.status()).toBe(200);
   return parseMcpResponse(res);
@@ -465,13 +480,13 @@ test.describe.serial("MCP Layer", () => {
   // ── MCP tool tests ─────────────────────────────────────────────
 
   test("list_semantic_models returns e2e_federation", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "list_semantic_models");
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "list_semantic_models");
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
     expect(text).toContain(MODEL_NAME);
   });
 
   test("get_semantic_model returns model overview", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "get_semantic_model", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "get_semantic_model", {
       modelName: MODEL_NAME,
     });
     const text: string = (body as any).result?.content?.[0]?.text ?? "";
@@ -482,7 +497,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("get_datasets returns field details", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "get_datasets", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "get_datasets", {
       modelName: MODEL_NAME,
       datasets: [
         { name: "products", page: 1 },
@@ -499,7 +514,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query returns data from Postgres", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" ORDER BY id LIMIT 10`,
     });
@@ -509,7 +524,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query cross-database join (Postgres + MySQL)", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: [
         `SELECT p.name AS product, o.quantity`,
@@ -524,7 +539,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query returns data from Iceberg", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "shipments" ORDER BY id LIMIT 10`,
     });
@@ -535,7 +550,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query cross-catalog join (Postgres + Iceberg)", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: [
         `SELECT p.name AS product, s.destination`,
@@ -551,7 +566,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query returns storedQueryId when store is true", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" WHERE name = $1 ORDER BY id LIMIT 5`,
       params: ["Widget A"],
@@ -565,7 +580,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_query omits storedQueryId when store is false", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" ORDER BY id LIMIT 1`,
       store: false,
@@ -577,7 +592,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_stored_query re-runs a stored query", async ({ request }) => {
-    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT * FROM "products" WHERE name = $1 ORDER BY id LIMIT 5`,
       params: ["Widget A"],
@@ -587,7 +602,7 @@ test.describe.serial("MCP Layer", () => {
     const { storedQueryId } = JSON.parse(storeText);
     expect(storedQueryId).toBeTruthy();
 
-    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_stored_query", {
       storedQueryId,
     });
     expect((rerunBody as any).result?.isError).toBeFalsy();
@@ -596,7 +611,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_stored_query with overridden params", async ({ request }) => {
-    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_query", {
+    const storeBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_query", {
       modelName: MODEL_NAME,
       sql: `SELECT name FROM "products" WHERE name = $1 LIMIT 5`,
       params: ["Widget A"],
@@ -605,7 +620,7 @@ test.describe.serial("MCP Layer", () => {
     const storeText: string = (storeBody as any).result?.content?.[0]?.text ?? "";
     const { storedQueryId } = JSON.parse(storeText);
 
-    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+    const rerunBody = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_stored_query", {
       storedQueryId,
       params: ["Widget B"],
     });
@@ -616,7 +631,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("execute_stored_query with invalid ID returns error", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "execute_stored_query", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "execute_stored_query", {
       storedQueryId: "000000000000000000000000",
     });
     const result = (body as any).result;
@@ -626,7 +641,7 @@ test.describe.serial("MCP Layer", () => {
   });
 
   test("request_improvement succeeds", async ({ request }) => {
-    const body = await mcpToolCall(request, projectSlug, mcpSessionId, "request_improvement", {
+    const body = await mcpToolCall(request, projectSlug, mcpSessionId, mcpToken, "request_improvement", {
       modelName: MODEL_NAME,
       title: "E2E test improvement",
       description: "This is an automated E2E test improvement request.",

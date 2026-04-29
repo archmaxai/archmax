@@ -26,14 +26,24 @@ describe("csrfMiddleware", () => {
     expect(res.status).toBe(200);
   });
 
-  it("allows POST without Origin or Referer (server-to-server)", async () => {
+  it("rejects POST when both Origin and Referer are absent", async () => {
     const app = buildApp();
     const res = await app.request("/api/projects/x/mcp-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/missing Origin/i);
+  });
+
+  it("rejects DELETE when both Origin and Referer are absent", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/projects/x/mcp-tokens/y", {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(403);
   });
 
   it("allows POST from trusted Origin", async () => {
