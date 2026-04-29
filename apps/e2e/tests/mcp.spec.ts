@@ -377,8 +377,11 @@ test.describe.serial("MCP Layer", () => {
       params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
     });
     expect(res.status()).toBe(401);
-    const body = await res.json();
-    expect(body.error).toContain("Invalid or missing authorization");
+    expect(await res.json()).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32001, message: "Invalid or missing authorization" },
+    });
   });
 
   test("MCP request with invalid token returns 401", async ({ request }) => {
@@ -387,8 +390,11 @@ test.describe.serial("MCP Layer", () => {
       params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
     }, { Authorization: "Bearer invalid_garbage_token_value" });
     expect(res.status()).toBe(401);
-    const body = await res.json();
-    expect(body.error).toContain("Invalid or missing authorization");
+    expect(await res.json()).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32001, message: "Invalid or missing authorization" },
+    });
   });
 
   // ── Token creation via UI ──────────────────────────────────────

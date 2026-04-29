@@ -86,15 +86,24 @@ test.describe("MCP Bearer token protection", () => {
     id: 1,
   };
 
+  function expectJsonRpcUnauthorized(body: unknown) {
+    expect(body).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32001,
+        message: "Invalid or missing authorization",
+      },
+    });
+  }
+
   test("rejects request with no Authorization header", async ({ request }) => {
     const res = await request.post(MCP_ENDPOINT, {
       headers: { "Content-Type": "application/json" },
       data: JSON_RPC_BODY,
     });
     expect(res.status()).toBe(401);
-
-    const body = await res.json();
-    expect(body.error).toBe("Invalid or missing authorization");
+    expectJsonRpcUnauthorized(await res.json());
   });
 
   test("rejects request with invalid Bearer token", async ({ request }) => {
@@ -106,9 +115,7 @@ test.describe("MCP Bearer token protection", () => {
       data: JSON_RPC_BODY,
     });
     expect(res.status()).toBe(401);
-
-    const body = await res.json();
-    expect(body.error).toBe("Invalid or missing authorization");
+    expectJsonRpcUnauthorized(await res.json());
   });
 
   test("rejects request with non-Bearer auth scheme", async ({ request }) => {
@@ -120,8 +127,6 @@ test.describe("MCP Bearer token protection", () => {
       data: JSON_RPC_BODY,
     });
     expect(res.status()).toBe(401);
-
-    const body = await res.json();
-    expect(body.error).toBe("Invalid or missing authorization");
+    expectJsonRpcUnauthorized(await res.json());
   });
 });
