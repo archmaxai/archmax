@@ -17,20 +17,20 @@
   },
   "dependencies": {
     "@archmax/core": "workspace:*",
-    "@hono/node-server": "^2.0.0",
+    "@hono/node-server": "^2.0.1",
     "@hono/zod-validator": "^0.7.6",
-    "@langchain/core": "^1.1.42",
+    "@langchain/core": "^1.1.44",
     "@langchain/openai": "^1.4.5",
     "@modelcontextprotocol/hono": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "better-auth": "^1.6.9",
     "deepagents": "^1.9.0",
     "dotenv": "^17.4.2",
-    "hono": "^4.12.15",
+    "hono": "^4.12.16",
     "js-yaml": "^4.1.1",
     "mongodb": "^7.2.0",
-    "mongoose": "^9.5.0",
-    "zod": "^4.3.6"
+    "mongoose": "^9.6.1",
+    "zod": "^4.4.2"
   },
   "devDependencies": {
     "@types/node": "^25",
