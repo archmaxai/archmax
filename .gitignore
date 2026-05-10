@@ -165,3 +165,7 @@ apps/docs/.astro/
 apps/e2e/test-results/
 apps/e2e/playwright-report/
 apps/e2e/tests/.auth-state.json
+
+# Railway CLI link/state (railway.toml / railway.json deployment configs are kept)
+.railway/
+.railwayrc

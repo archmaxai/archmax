@@ -34,15 +34,23 @@ const SYSTEM_SCHEMA_EXCLUSION = [
   .map((s) => `'${s}'`)
   .join(", ");
 
-const INTERNAL_DATABASES = new Set(["memory", "system", "temp"]);
+interface ProjectDuckDBContext {
+  instance: ProjectInstance;
+  /** Slugs of attached, active connections — the only databases the browser exposes. */
+  connectionSlugs: Set<string>;
+}
 
-async function getProjectDuckDB(projectId: string): Promise<ProjectInstance> {
+async function getProjectDuckDB(projectId: string): Promise<ProjectDuckDBContext> {
   await connectDB();
   const project = await Project.findById(projectId).lean();
   if (!project) throw AppError.notFound("Project not found");
 
   const connections = await Connection.find({ project: projectId, isActive: true }).lean();
-  return getProjectInstance(projectId, connections, { readOnly: true });
+  const instance = await getProjectInstance(projectId, connections, { readOnly: true });
+  return {
+    instance,
+    connectionSlugs: new Set(connections.map((c) => c.slug)),
+  };
 }
 
 async function collectRows(instance: ProjectInstance, sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
@@ -66,11 +74,18 @@ async function collectRows(instance: ProjectInstance, sql: string): Promise<{ co
   }
 }
 
-async function getValidDatabases(instance: ProjectInstance): Promise<string[]> {
-  const { rows } = await collectRows(instance, "SHOW DATABASES");
+/**
+ * Return the databases the data browser is allowed to expose: those whose
+ * catalog name matches an active connection slug. This intentionally hides
+ * the project's persistent DuckDB file catalog (typically `duckdb`, which
+ * only contains internal `_scope_*` view schemas) along with built-in
+ * `memory`/`system`/`temp` catalogs.
+ */
+async function getValidDatabases(ctx: ProjectDuckDBContext): Promise<string[]> {
+  const { rows } = await collectRows(ctx.instance, "SHOW DATABASES");
   return rows
     .map((r) => String(r.database_name))
-    .filter((n) => !INTERNAL_DATABASES.has(n));
+    .filter((n) => ctx.connectionSlugs.has(n));
 }
 
 function assertValidIdentifier(value: string): void {
@@ -80,8 +95,8 @@ function assertValidIdentifier(value: string): void {
 const app = new Hono()
   .get("/databases", async (c) => {
     const projectId = c.req.param("projectId") as string;
-    const instance = await getProjectDuckDB(projectId);
-    const databases = await getValidDatabases(instance);
+    const ctx = await getProjectDuckDB(projectId);
+    const databases = await getValidDatabases(ctx);
     return safeJson(c, databases.map((name) => ({ name })));
   })
 
@@ -90,8 +105,8 @@ const app = new Hono()
     const database = c.req.param("database");
     assertValidIdentifier(database);
 
-    const instance = await getProjectDuckDB(projectId);
-    const validDatabases = await getValidDatabases(instance);
+    const ctx = await getProjectDuckDB(projectId);
+    const validDatabases = await getValidDatabases(ctx);
     if (!validDatabases.includes(database)) {
       throw AppError.notFound("Database not found");
     }
@@ -108,7 +123,7 @@ const app = new Hono()
     }
     sql += ` ORDER BY table_schema, table_name`;
 
-    const { rows } = await collectRows(instance, sql);
+    const { rows } = await collectRows(ctx.instance, sql);
 
     return safeJson(
       c,
@@ -130,12 +145,15 @@ const app = new Hono()
 
     const { page, pageSize } = c.req.valid("query");
 
-    const instance = await getProjectDuckDB(projectId);
+    const ctx = await getProjectDuckDB(projectId);
+    if (!ctx.connectionSlugs.has(database)) {
+      throw AppError.notFound("Database not found");
+    }
 
     const fqTable = `${database}.${schema}.${table}`;
     const offset = (page - 1) * pageSize;
 
-    const db = await instance.connect();
+    const db = await ctx.instance.connect();
     try {
       const existsResult = await withQueryTimeout(
         db,
