@@ -78,9 +78,9 @@ This is used internally by:
 
 ## Scoped VIEWs
 
-When AI agents use `execute_query`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs that expose only the fields defined in the model, acting as a curated and safe access layer.
+When AI agents use `execute_query` or `runModelQuery`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs whose SELECT bodies are **authored explicitly by the modeller** in each dataset's `view_query` custom extension. This is the curated and safe access layer.
 
-Internally these VIEWs live in a `_scope_<modelName>` DuckDB schema, but agents never need to know this. The `search_path` is set automatically per query so agents write bare dataset names (e.g. `FROM "orders"`) and the correct VIEW resolves transparently.
+Per-model VIEWs are **(re-)materialised on every model-scoped query** with `CREATE OR REPLACE VIEW`; there is no in-memory cache. Editing a dataset's `view_query` takes effect on the very next call. Agents reference datasets by their bare name (e.g. `FROM "orders"`) — the platform resolves the name to the right VIEW automatically. A dataset without `view_query` is unqueryable, and the tools return a clear error identifying the offending datasets.
 
 ## Connection Lifecycle
 
@@ -88,7 +88,20 @@ Internally these VIEWs live in a `_scope_<modelName>` DuckDB schema, but agents 
 - **Inactive connections** are detached from DuckDB but their configuration is preserved
 - **Deleted connections** are soft-deleted and fully detached
 
-DuckDB instances are created lazily per project and cached in memory for the lifetime of the server process.
+Each project's DuckDB state lives in a persistent `duckdb.db` file under `<ARCHMAX_DATA_DIR>/projects/<projectId>/`. The instance is opened lazily on first use and closed on graceful shutdown so the file lock is released cleanly. Materialised VIEWs survive restarts because they are stored in that file. The file MUST NOT be committed to a project's Git repo (it is in the default project `.gitignore`) and it is safe to delete when the project is offline.
+
+## Persistent DuckDB File (Operations)
+
+Each project's DuckDB instance is backed by a single file at `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db` (plus its `.wal` and `.tmp` siblings during writes). Materialised VIEWs survive process restarts because they are stored in this file.
+
+Operational notes:
+
+- **Where it lives** — `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db`. `ARCHMAX_DATA_DIR` defaults to `./data` in development.
+- **Resetting it** — call `POST /api/projects/<projectId>/connections/reinit?reset=true`. The API disposes the cached instance, deletes the file, and rebuilds from scratch on the next query. Without `?reset=true`, the file is preserved across `reinit`.
+- **Backups** — the file is a regular DuckDB database. Stop the process, copy the file (and its `.wal`/`.tmp` siblings if present), and restart. There is no online-backup contract.
+- **Git** — `duckdb.db`, `duckdb.db.wal`, and `duckdb.db.tmp` are excluded from every project's `.gitignore` and from the repository-level `.gitignore`. Do **not** commit them — they leak transient state, are noisy, and may contain catalog metadata.
+- **Graceful shutdown** — the API closes every cached instance on SIGTERM/SIGINT before exit so the file lock is released cleanly. Force-killing the process may leave the lock held; the next start opens the file fine, but you may briefly see a recovery message in the logs.
+- **Disk pressure** — the file grows roughly with the count and complexity of attached catalogs and materialised VIEWs. There is no automatic compaction; reset via `?reset=true` if a project's file grows unexpectedly large.
 
 ## Refreshing Schemas
 

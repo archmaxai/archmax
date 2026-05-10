@@ -1,9 +1,35 @@
-import { createHash } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
 import { getEnv } from "../config/env";
+import { validateReadOnlySQL } from "./sql-validation";
+
+const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+/**
+ * Resolve the persistent DuckDB file path for a project, validating
+ * `projectId` against the same regex `SemanticModelFileService` uses so we
+ * never end up writing outside `<ARCHMAX_DATA_DIR>/projects/`.
+ */
+export function duckdbFilePath(projectId: string): string {
+  if (!projectId || !SAFE_PROJECT_ID.test(projectId)) {
+    throw new Error(`Invalid projectId: must be alphanumeric (with ._-), got "${projectId}"`);
+  }
+  return join(getEnv().projectsDir, projectId, "duckdb.db");
+}
+
+async function ensureDuckdbFileDir(path: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+}
+
+async function deleteDuckdbFiles(path: string): Promise<void> {
+  await rm(path, { force: true });
+  await rm(`${path}.wal`, { force: true });
+  await rm(`${path}.tmp`, { force: true, recursive: true });
+}
 
 // ── Query timeout helper ─────────────────────────────────────────────
 
@@ -176,6 +202,11 @@ export function buildAttachString(conn: IConnectionDocument): string {
  * the entry (including its attached-slug and loaded-extension bookkeeping)
  * from the cache so the next `getProjectInstance` call rebuilds from scratch.
  * Used to force re-reading of upstream schemas when they have changed.
+ *
+ * The on-disk `duckdb.db` file is NOT deleted here — the file lock is simply
+ * released so a subsequent `getProjectInstance(projectId, …)` reopens the
+ * same file with all previously persisted scoped VIEWs intact. Callers that
+ * want a clean slate must additionally call `deleteProjectDuckdbFile`.
  */
 export async function disposeProjectInstance(projectId: string): Promise<void> {
   while (setupLocks.has(projectId)) {
@@ -189,6 +220,26 @@ export async function disposeProjectInstance(projectId: string): Promise<void> {
   } catch {
     // best-effort — instance may already be closed
   }
+}
+
+/**
+ * Dispose every cached `DuckDBInstance` and wait for in-flight setup locks
+ * to drain. Intended for graceful shutdown handlers (SIGTERM/SIGINT) so the
+ * file lock on every project's `duckdb.db` is released before exit.
+ */
+export async function disposeAllProjectInstances(): Promise<void> {
+  const ids = Array.from(projectInstances.keys());
+  await Promise.all(ids.map((id) => disposeProjectInstance(id)));
+}
+
+/**
+ * Delete the on-disk `duckdb.db` (and its WAL/temp side files) for a project.
+ * Used by the `connections/reinit?reset=true` flow when an operator wants a
+ * clean slate. Safe to call when the file does not exist; safe to call after
+ * `disposeProjectInstance` has released the file lock.
+ */
+export async function deleteProjectDuckdbFile(projectId: string): Promise<void> {
+  await deleteDuckdbFiles(duckdbFilePath(projectId));
 }
 
 export async function getProjectInstance(
@@ -257,7 +308,9 @@ async function setupProjectInstance(
   }
 
   if (!entry) {
-    const instance = await DuckDBInstance.create();
+    const path = duckdbFilePath(projectId);
+    await ensureDuckdbFileDir(path);
+    const instance = await DuckDBInstance.create(path);
     entry = { instance, attachedSlugs: new Set(), loadedExtensions: new Set(), readOnly };
     projectInstances.set(projectId, entry);
   }
@@ -348,7 +401,11 @@ async function attachIcebergCatalog(entry: ProjectDuckDB, conn: IConnectionDocum
 
   const db = await entry.instance.connect();
   try {
-    await db.run(`CREATE SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
+    // `TEMPORARY` keeps the bearer token in process memory only — without it
+    // DuckDB persists the secret to `~/.duckdb/stored_secrets/` *and* to the
+    // project's persistent `duckdb.db` file, both of which are unacceptable
+    // exposure surfaces for an iceberg credential.
+    await db.run(`CREATE TEMPORARY SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
     await withQueryTimeout(
       db,
       () => db.run(
@@ -420,7 +477,7 @@ async function testIcebergConnection(conn: IConnectionDocument): Promise<DuckDBI
 
   const db = await instance.connect();
   try {
-    await db.run(`CREATE SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
+    await db.run(`CREATE TEMPORARY SECRET ${secretName} (TYPE iceberg, TOKEN '${token}')`);
     await db.run(
       `ATTACH '${warehouse}' AS ${conn.slug} (TYPE iceberg, ENDPOINT '${endpoint}', SECRET '${secretName}')`,
     );
@@ -433,22 +490,6 @@ async function testIcebergConnection(conn: IConnectionDocument): Promise<DuckDBI
 
 // ── Scoped VIEWs for MCP ──────────────────────────────────────────────
 
-const SIMPLE_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-/**
- * Build the SELECT column fragment for a field.
- * Simple identifiers are always quoted for safety with foreign data scanners
- * (e.g., Postgres scanner where unquoted identifiers undergo case folding).
- * Computed expressions (containing operators, parens, spaces) are left as-is.
- */
-export function buildColumnSelect(expr: string, name: string): string {
-  if (expr === name) return `"${name}"`;
-  if (SIMPLE_IDENT_RE.test(expr)) return `"${expr}" AS "${name}"`;
-  return `${expr} AS "${name}"`;
-}
-
-const scopeViewCache = new Map<string, { hash: string }>();
-
 export function scopeSchemaName(modelName: string): string {
   return `_scope_${modelName}`;
 }
@@ -457,84 +498,136 @@ export function scopedViewName(modelName: string, datasetName: string): string {
   return `${scopeSchemaName(modelName)}."${datasetName}"`;
 }
 
-export function computeModelHash(model: SemanticModel): string {
-  const h = createHash("sha256");
-  for (const ds of model.datasets) {
-    h.update(ds.name);
-    h.update(ds.source);
-    for (const f of ds.fields) {
-      h.update(f.name);
-      h.update(f.expression.dialects[0]?.expression ?? f.name);
-    }
-  }
-  return h.digest("hex").slice(0, 16);
+export interface MaterialiseViewsResult {
+  /** Datasets whose `view_query` was successfully (re-)materialised. */
+  materialised: string[];
+  /**
+   * Datasets that were skipped because their `view_query` is missing/empty.
+   * Callers (MCP `execute_query`, agent `runModelQuery`) translate this into
+   * an `isError: true` response that names the offending datasets.
+   */
+  missingViewQuery: string[];
+  /**
+   * Datasets whose `view_query` was rejected by the SQL validator or failed
+   * at `CREATE OR REPLACE VIEW` time. The previous VIEW (if any) is left in
+   * place; a warning has already been logged.
+   */
+  failed: Array<{ dataset: string; error: string }>;
 }
 
-export async function createScopedViews(
-  instance: DuckDBInstance,
-  projectId: string,
-  model: SemanticModel,
-): Promise<void> {
-  const cacheKey = `${projectId}:${model.name}`;
-  const hash = computeModelHash(model);
-  const cached = scopeViewCache.get(cacheKey);
-  if (cached && cached.hash === hash) return;
+/**
+ * Validate a single dataset's `view_query` body before passing it to DuckDB.
+ *
+ * We apply the read-only contract (`SELECT`/`WITH`/`EXPLAIN`/`DESCRIBE`,
+ * single statement, no `EXPLAIN ANALYZE`) — that is sufficient to reject
+ * the most dangerous authoring mistakes (`DROP TABLE`, `CREATE SECRET`,
+ * multi-statement payloads). Forbidden-table-function rules are not
+ * applied here because the body legitimately references the project's
+ * attached catalogs (e.g. `FROM shop.public.orders`); those are the only
+ * thing it should reference. The structural validator landing in
+ * `add-structural-sql-safety` will tighten this further once it ships.
+ */
+function validateViewQuery(viewQuery: string): string | null {
+  return validateReadOnlySQL(viewQuery);
+}
 
+/**
+ * (Re-)materialise every per-model scoped VIEW for `model` against the
+ * project's persistent DuckDB instance.
+ *
+ * - Stateless: called on every model-scoped query (`execute_query`,
+ *   `runModelQuery`). Idempotency is provided by `CREATE OR REPLACE VIEW`,
+ *   not by an in-memory hash cache.
+ * - Validator-gated: `view_query` is rejected by the read-only validator
+ *   before being wrapped — a malformed body never reaches DuckDB.
+ * - Error-isolated: validator or DuckDB failures on one dataset never
+ *   abort the materialisation of the rest. The previous VIEW (if any) is
+ *   left in place and a warning is logged.
+ */
+export async function materialiseModelViews(
+  instance: DuckDBInstance,
+  _projectId: string,
+  model: SemanticModel,
+): Promise<MaterialiseViewsResult> {
+  const result: MaterialiseViewsResult = { materialised: [], missingViewQuery: [], failed: [] };
   const schema = scopeSchemaName(model.name);
+  const perViewTimeout = Math.min(getQueryTimeoutMs(), 10_000);
+
   const db = await instance.connect();
-  const viewErrors: Array<{ dataset: string; field: string; error: string }> = [];
-  const perFieldTimeout = Math.min(getQueryTimeoutMs(), 10_000);
   try {
     await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000);
     for (const ds of model.datasets) {
-      if (ds.fields.length === 0) continue;
-
-      const validColumns: string[] = [];
-      for (const f of ds.fields) {
-        const expr = f.expression.dialects[0]?.expression ?? f.name;
-        const col = buildColumnSelect(expr, f.name);
-        try {
-          await withQueryTimeout(db, () => db.run(`SELECT ${col} FROM ${ds.source} LIMIT 0`), perFieldTimeout);
-          validColumns.push(col);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          viewErrors.push({ dataset: ds.name, field: f.name, error: msg });
-        }
+      const viewQuery = extractViewQueryFromExtensions(ds);
+      if (!viewQuery) {
+        result.missingViewQuery.push(ds.name);
+        continue;
       }
 
-      if (validColumns.length === 0) continue;
+      const validatorError = validateViewQuery(viewQuery);
+      if (validatorError) {
+        const msg = `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": validator rejected view_query (${validatorError})`;
+        console.warn(msg);
+        result.failed.push({ dataset: ds.name, error: validatorError });
+        continue;
+      }
+
       const viewName = scopedViewName(model.name, ds.name);
-      await withQueryTimeout(
-        db,
-        () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS SELECT ${validColumns.join(", ")} FROM ${ds.source}`),
-        perFieldTimeout,
-      );
+      try {
+        await withQueryTimeout(
+          db,
+          () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
+          perViewTimeout,
+        );
+        result.materialised.push(ds.name);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": DuckDB error during CREATE OR REPLACE VIEW (${errMsg})`,
+        );
+        result.failed.push({ dataset: ds.name, error: errMsg });
+      }
     }
-    scopeViewCache.set(cacheKey, { hash });
   } finally {
     db.disconnectSync();
   }
 
-  if (viewErrors.length > 0) {
-    const summary = viewErrors
-      .map((e) => `  ${e.dataset}.${e.field}: ${e.error}`)
-      .join("\n");
-    console.warn(
-      `[createScopedViews] Skipped ${viewErrors.length} invalid field expression(s) in model "${model.name}":\n${summary}`,
-    );
-  }
+  return result;
 }
 
-export function invalidateScopedViews(projectId: string, modelName?: string): void {
-  if (modelName) {
-    scopeViewCache.delete(`${projectId}:${modelName}`);
-  } else {
-    for (const key of scopeViewCache.keys()) {
-      if (key.startsWith(`${projectId}:`)) {
-        scopeViewCache.delete(key);
-      }
-    }
+/**
+ * Strip any `_scope_<modelName>.` qualifier from a DuckDB error message
+ * before it is surfaced to an agent or MCP client. The internal schema
+ * name is platform-private; tooling on the consumer side reasons about
+ * datasets by their bare name.
+ */
+export function stripScopedSchemaQualifier(message: string, modelName: string): string {
+  // Match both unquoted and quoted forms, e.g. `_scope_ecommerce.orders` or
+  // `"_scope_ecommerce"."orders"` and replace with the bare dataset ref.
+  const safe = modelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const unquoted = new RegExp(`_scope_${safe}\\.`, "g");
+  const quoted = new RegExp(`"_scope_${safe}"\\.`, "g");
+  return message.replace(unquoted, "").replace(quoted, "");
+}
+
+function extractViewQueryFromExtensions(dataset: SemanticModel["datasets"][number] & { viewQuery?: string | null }): string | null {
+  // Prefer the decorated `viewQuery` populated by SemanticModelFileService.
+  // Fall back to parsing the COMMON extension JSON for callers that pass a
+  // hand-built model (tests, future scripts) without going through the
+  // file service.
+  if (typeof dataset.viewQuery === "string" && dataset.viewQuery.length > 0) {
+    return dataset.viewQuery;
   }
+  const ext = dataset.custom_extensions?.find((e) => e.vendor_name === "COMMON");
+  if (!ext) return null;
+  try {
+    const parsed = JSON.parse(ext.data) as { view_query?: unknown };
+    if (typeof parsed.view_query === "string" && parsed.view_query.length > 0) {
+      return parsed.view_query;
+    }
+  } catch {
+    // ignore — return null below
+  }
+  return null;
 }
 
 export function getAttachedCatalogSlugs(

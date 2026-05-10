@@ -3,10 +3,20 @@ import { z } from "zod/v4";
 import { getEnv } from "../config/env";
 import { Connection, TestAgent, TestCase, type IConnectionDocument } from "../models/index";
 import { connectDB } from "../infra/db";
-import { getProjectInstance, hardenConnection, withQueryTimeout, withProjectQuerySlot } from "./duckdb";
-import { validateReadOnlySQL } from "./sql-validation";
+import {
+  getAttachedCatalogSlugs,
+  getProjectInstance,
+  hardenConnection,
+  materialiseModelViews,
+  scopeSchemaName,
+  stripScopedSchemaQualifier,
+  withProjectQuerySlot,
+  withQueryTimeout,
+} from "./duckdb";
+import { validateReadOnlySQL, validateScopedSQL } from "./sql-validation";
 import { DocumentFileService } from "./document-files";
 import { GitService } from "./git";
+import { SemanticModelFileService } from "./semantic-model-files";
 import { SEMANTIC_MODEL_AGENT_PROMPT } from "../prompts/index";
 import type { ValidatingFilesystemBackend } from "./agent-filesystem";
 
@@ -80,7 +90,9 @@ export function makeExecuteQueryTool(projectId: string) {
     {
       name: "executeQuery",
       description:
-        "Run a read-only SQL query against the project's DuckDB instance. " +
+        "Run a read-only SQL query against the project's catalogs for **schema exploration** — " +
+        "use this for `information_schema`, sampling raw source tables, and validating join " +
+        "cardinalities. Do NOT use it to test scoped views — use `runModelQuery` for that. " +
         "The SQL engine is DuckDB — use DuckDB SQL syntax, NOT PostgreSQL or MySQL. " +
         "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed. " +
         "All database connections are attached as named catalogs — you MUST fully qualify every table as catalog.schema.table (e.g. Shopify.public.shopify_orders). " +
@@ -90,6 +102,145 @@ export function makeExecuteQueryTool(projectId: string) {
       schema: z.object({
         sql: z.string().describe("SQL query with $1, $2, ... placeholders"),
         params: z.array(z.unknown()).describe("Parameter values for placeholders").default([]),
+      }),
+    },
+  );
+}
+
+/**
+ * Agent tool for testing a model's authored views.
+ *
+ * Counterpart to MCP `execute_query`: queries reference datasets by their
+ * **bare name** (resolved via `search_path = _scope_<modelName>`). The agent
+ * never sees the internal `_scope_*` schema — error messages are rewritten
+ * to drop that qualifier before being returned.
+ *
+ * On every call, this tool re-runs `materialiseModelViews` so the latest
+ * `view_query` from disk is reflected. There is no in-memory cache.
+ */
+export function makeRunModelQueryTool(projectId: string) {
+  return tool(
+    async ({
+      modelName,
+      sql,
+      params,
+    }: {
+      modelName: string;
+      sql: string;
+      params: unknown[];
+    }) => {
+      const fileSvc = new SemanticModelFileService(getEnv().projectsDir);
+
+      const readOnlyError = validateReadOnlySQL(sql);
+      if (readOnlyError) {
+        return JSON.stringify({ error: readOnlyError });
+      }
+
+      await connectDB();
+      const connections = (await Connection.find({
+        project: projectId,
+        isActive: true,
+      }).lean()) as IConnectionDocument[];
+
+      const catalogSlugs = getAttachedCatalogSlugs(connections);
+      const scopedError = validateScopedSQL(sql, catalogSlugs);
+      if (scopedError) {
+        return JSON.stringify({ error: scopedError });
+      }
+
+      const model = await fileSvc.get(projectId, modelName);
+      if (!model) {
+        return JSON.stringify({
+          error: `Semantic model "${modelName}" not found. Use list_dir or fs to inspect what models exist.`,
+        });
+      }
+
+      const instance = await getProjectInstance(projectId, connections, { readOnly: true });
+      const materialisation = await materialiseModelViews(instance, projectId, model);
+
+      if (materialisation.missingViewQuery.length > 0) {
+        const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+        return JSON.stringify({
+          error:
+            `Model "${modelName}" cannot be queried yet: dataset(s) ${names} are missing a \`view_query\`. ` +
+            `Add a non-empty \`view_query\` to each dataset's COMMON custom extension before testing.`,
+        });
+      }
+
+      if (materialisation.failed.length > 0) {
+        const failures = materialisation.failed.map((f) => ({
+          dataset: f.dataset,
+          error: stripScopedSchemaQualifier(f.error, modelName),
+        }));
+        return JSON.stringify({
+          error:
+            `One or more datasets in "${modelName}" failed to materialise. ` +
+            `Fix their \`view_query\` and retry.`,
+          failures,
+        });
+      }
+
+      return withProjectQuerySlot(projectId, async () => {
+        const db = await instance.connect();
+        try {
+          const hasIceberg = connections.some((c) => c.type === "iceberg");
+          await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
+
+          const prepared = await db.prepare(sql);
+          if (params.length > 0) {
+            for (let i = 0; i < params.length; i++) {
+              prepared.bindVarchar(i + 1, String(params[i]));
+            }
+          }
+
+          const result = await withQueryTimeout(db, () => prepared.run());
+
+          const rows: Record<string, unknown>[] = [];
+          const columns = result.columnNames();
+          for await (const chunk of result) {
+            const chunkRows = chunk.getRows();
+            for (const row of chunkRows) {
+              const obj: Record<string, unknown> = {};
+              for (let i = 0; i < columns.length; i++) {
+                obj[columns[i]] = row[i];
+              }
+              rows.push(obj);
+              if (rows.length >= MAX_ROWS) break;
+            }
+            if (rows.length >= MAX_ROWS) break;
+          }
+
+          return safeStringify({
+            columns,
+            rows,
+            rowCount: rows.length,
+            truncated: rows.length >= MAX_ROWS,
+          });
+        } catch (err) {
+          console.error("[runModelQuery] Query error:", err);
+          const raw = err instanceof Error ? err.message : "Query execution failed.";
+          const msg = stripScopedSchemaQualifier(raw, modelName);
+          return JSON.stringify({ error: msg });
+        } finally {
+          db.disconnectSync();
+        }
+      });
+    },
+    {
+      name: "runModelQuery",
+      description:
+        "Run a query against a model you have authored. Reference datasets by their bare name " +
+        "(e.g. `SELECT * FROM \"orders\" LIMIT 5`). Use this to confirm a `view_query` you just " +
+        "wrote materialises and returns the rows you expected. Filtering and projection are the " +
+        "responsibility of `view_query`, not of this query. " +
+        "The SQL engine is DuckDB — use DuckDB SQL syntax, NOT PostgreSQL or MySQL. " +
+        "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed. " +
+        "Use $1, $2, ... placeholders and provide values in the params array. " +
+        "Results are limited to 1000 rows.",
+      schema: z.object({
+        modelName: z.string().describe("Name of the semantic model whose datasets you want to query"),
+        sql: z.string().describe("SQL query referencing datasets by bare name (e.g. FROM orders)"),
+        params: z.array(z.unknown()).describe("Parameter values for $1, $2, ... placeholders").default([]),
       }),
     },
   );
@@ -476,6 +627,8 @@ export function buildConnectionContext(connections: IConnectionDocument[]): stri
     "NEVER query a table without its catalog prefix — unqualified names will fail.",
     "",
     "**READ-ONLY**: All queries are read-only. INSERT, UPDATE, DELETE, CREATE, DROP, and ALTER statements are forbidden and will be rejected.",
+    "",
+    "When testing a model you have authored, call `runModelQuery` with the model name and reference datasets by bare name.",
   ].join("\n");
 }
 

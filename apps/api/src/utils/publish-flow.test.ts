@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockAssemble = vi.fn();
 const mockComputeSourceHash = vi.fn();
-const mockInvalidateScopedViews = vi.fn();
 const mockConnectDB = vi.fn();
 const mockGetRemoteConfig = vi.fn();
 const mockPublishEventSave = vi.fn();
@@ -19,10 +18,6 @@ vi.mock("@archmax/core/services/publish", () => {
   }
   return { PublishService };
 });
-
-vi.mock("@archmax/core/services/duckdb", () => ({
-  invalidateScopedViews: (...args: unknown[]) => mockInvalidateScopedViews(...args),
-}));
 
 vi.mock("@archmax/core/infra/db", () => ({
   connectDB: (...args: unknown[]) => mockConnectDB(...args),
@@ -68,7 +63,6 @@ describe("finalizePublish", () => {
 
     expect(mockAssemble).toHaveBeenCalledWith("proj-1");
     expect(mockComputeSourceHash).toHaveBeenCalledWith("proj-1");
-    expect(mockInvalidateScopedViews).toHaveBeenCalledWith("proj-1");
     expect(gitSvc.commit).toHaveBeenCalledWith("ship it");
     expect(mockConnectDB).toHaveBeenCalled();
     expect(mockPublishEventCtor).toHaveBeenCalledWith({

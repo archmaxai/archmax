@@ -74,6 +74,8 @@ LIMIT 100
 
 Agents should **not** add schema or catalog prefixes. The `search_path` ensures that `"orders"` resolves to the correct scoped VIEW for the requested model.
 
+The VIEW that backs each dataset comes from the dataset's `view_query` custom extension — authored by the modeller, not auto-generated. The platform re-materialises the VIEWs on every `execute_query` call (`CREATE OR REPLACE VIEW`), so changes to `view_query` take effect on the very next call. If a dataset has no `view_query`, `execute_query` returns a clear error identifying the offending datasets and the model is unqueryable until the modeller adds one.
+
 ### Security
 
 - Queries are validated to only allow `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements

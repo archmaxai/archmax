@@ -5,8 +5,9 @@ import { SemanticModelDigest, buildSourceMap, type OverviewScope } from "./seman
 import type { Dataset } from "./semantic-model-schema";
 import {
   getProjectInstance,
-  createScopedViews,
+  materialiseModelViews,
   scopeSchemaName,
+  stripScopedSchemaQualifier,
   getAttachedCatalogSlugs,
   hardenConnection,
   withQueryTimeout,
@@ -253,7 +254,17 @@ export async function executeScopedQuery(
   }
 
   const instance = await getProjectInstance(projectId, connections, { readOnly: true });
-  await createScopedViews(instance, projectId, model);
+  const materialisation = await materialiseModelViews(instance, projectId, model);
+
+  if (materialisation.missingViewQuery.length > 0) {
+    const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+    return {
+      text:
+        `Semantic model "${modelName}" cannot be queried: dataset(s) ${names} have no \`view_query\`. ` +
+        `Each dataset's COMMON custom extension must define a non-empty \`view_query\` SELECT body before \`execute_query\` will materialise its view.`,
+      isError: true,
+    };
+  }
 
   return withProjectQuerySlot(projectId, async () => {
     const db = await instance.connect();
@@ -295,7 +306,8 @@ export async function executeScopedQuery(
       return { text: payload, columns, rows, rowCount: rows.length, truncated: rows.length >= MAX_ROWS };
     } catch (err) {
       console.error("[executeScopedQuery] Query error:", err);
-      const msg = err instanceof Error ? err.message : "Query execution failed.";
+      const raw = err instanceof Error ? err.message : "Query execution failed.";
+      const msg = stripScopedSchemaQualifier(raw, modelName);
       const hint = buildColumnHint(msg, model.datasets);
       return {
         text: hint ? `${msg}\n\n${hint}` : msg,

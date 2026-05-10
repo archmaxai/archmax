@@ -173,8 +173,8 @@ A connection represents a database connection (Postgres, MySQL, MSSQL, SQLite, D
 
 Semantic models are stored as YAML files on disk, one file per model, in a per-project directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`). Semantic models are project-scoped (not connection-scoped) and follow the [OSI (Open Semantic Interchange)](https://github.com/open-semantic-interchange/OSI) spec with snake_case naming. Each YAML file is self-contained:
 
-- **Datasets** — logical representations of tables/views with source references (`<connection>.<schema>.<table>`), `primary_key`, `unique_keys`, and inline fields
-- **Fields** — row-level attributes within a dataset, with an OSI `expression` object (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), optional `dimension` (`{ is_time: true }` for temporal fields), and `custom_extensions` for project-specific metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`)
+- **Datasets** — logical representations of tables/views with source references (`<connection>.<schema>.<table>`), `primary_key`, `unique_keys`, an inline field list, and a **`view_query` SELECT body** (stored in the dataset's COMMON `custom_extension`) that the platform wraps as the dataset's per-model DuckDB VIEW. The platform never auto-derives a view from `fields` — `view_query` is the canonical view-definition surface and a dataset without one is unqueryable.
+- **Fields** — row-level attributes within a dataset, with an OSI `expression` object (`{ dialects: [{ dialect: ANSI_SQL, expression: "..." }] }`), optional `dimension` (`{ is_time: true }` for temporal fields), and `custom_extensions` for project-specific metadata (`data_type`, `example_data`, `distinct_values` under `vendor_name: COMMON`). `expression` is the documented semantic mapping consumed by downstream MCP clients; the actual view body is `view_query`.
 - **Relationships** — foreign-key relationships between datasets with `from_columns`/`to_columns` mappings
 - **Metrics** — quantitative measures with OSI expression objects spanning datasets
 

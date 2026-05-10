@@ -1,0 +1,87 @@
+---
+title: Migrations
+description: One-time data migrations the operator runs against ARCHMAX_DATA_DIR.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+archmax ships migrations for one-time, on-disk data shape changes that
+cannot be performed automatically at runtime. Each migration is idempotent
+and writes a `.yaml.bak` of every file it changes, so you can roll back by
+restoring the backup.
+
+## `migrate:view-query`
+
+Backfills the `view_query` extension on every dataset YAML in
+`<ARCHMAX_DATA_DIR>/projects/<projectId>/src/<modelName>/<datasetName>.yaml`.
+
+### Why
+
+Older versions of archmax auto-derived the per-model scoped DuckDB VIEW body
+from each dataset's `fields` array. The current contract is that the
+dataset's `view_query` (a string inside its COMMON custom extension) IS the
+view body — the platform never auto-derives. This migration writes the
+legacy mechanical SELECT into every dataset's COMMON extension so existing
+models keep working after the auto-derivation code path is removed.
+
+### When to run
+
+Run this migration once after upgrading from any version that pre-dated the
+agent-managed views change. Re-running on a fully-migrated tree is safe — it
+will report every dataset as `skipped (already migrated)`.
+
+### How
+
+```sh
+pnpm --filter @archmax/api migrate:view-query
+```
+
+The script honours `ARCHMAX_DATA_DIR` and defaults to `./data` when unset.
+
+### What it does
+
+For each dataset YAML it visits:
+
+1. Skips datasets whose COMMON extension already has a non-empty
+   `view_query` (idempotency).
+2. Builds a SELECT body using the same column-quoting and aliasing rules
+   the legacy auto-derivation used (simple identifiers double-quoted;
+   `expression AS "name"` when expression differs from name; computed
+   expressions left verbatim).
+3. Writes a `.yaml.bak` of the original file alongside it. A pre-existing
+   `.yaml.bak` from a previous partial run is **never** overwritten — the
+   dataset is skipped with a `WARN` and counted under
+   `skipped (existing backup)`. Resolve manually before re-running.
+4. Writes the updated YAML with the new `view_query` folded into the
+   dataset's COMMON extension.
+
+### No-fields datasets
+
+A dataset with an empty `fields` array cannot have a meaningful view body
+auto-derived for it. The migration emits a loud `WARN` line for every such
+dataset and counts them under `errored` so a CI run of the script exits
+non-zero.
+
+You must fix these by hand: either declare the dataset's fields, or write
+an explicit `view_query` into its COMMON extension. The migration does not
+modify these datasets in any way (no `.yaml.bak`, no `view_query`).
+
+### Rollback
+
+Each migrated dataset has a sibling `<datasetName>.yaml.bak`. To revert:
+
+```sh
+mv <projectDir>/src/<modelName>/<datasetName>.yaml.bak \
+   <projectDir>/src/<modelName>/<datasetName>.yaml
+```
+
+Once you are satisfied with the migrated state, you may delete the
+`.yaml.bak` files to keep the project tree clean. They are safe to delete —
+the migration only checks for their presence to prevent accidental
+overwrites on partial re-runs.
+
+### Exit code
+
+The script exits `0` when every dataset was either successfully migrated
+or successfully skipped, and `1` when at least one dataset is counted under
+`errored`.

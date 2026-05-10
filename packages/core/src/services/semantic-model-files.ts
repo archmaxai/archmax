@@ -6,6 +6,8 @@ import {
   semanticModelSchema,
   semanticModelRootSchema,
   datasetFileSchema,
+  extractViewQuery,
+  setViewQueryOnExtensions,
   type SemanticModel,
   type Dataset,
   type CustomExtension,
@@ -15,6 +17,9 @@ const YAML_OPTS = { lineWidth: 120, noRefs: true };
 
 function stripEmptyExtensions<T extends Record<string, unknown>>(obj: T): T {
   const result: Record<string, unknown> = { ...obj };
+  // The derived `viewQuery` mirror is never serialised — its truth lives
+  // inside the COMMON entry of `custom_extensions`.
+  delete result.viewQuery;
   if (Array.isArray(result.custom_extensions) && result.custom_extensions.length === 0) {
     delete result.custom_extensions;
   }
@@ -31,6 +36,29 @@ function stripEmptyExtensions<T extends Record<string, unknown>>(obj: T): T {
     result.metrics = (result.metrics as Record<string, unknown>[]).map(stripEmptyExtensions);
   }
   return result as T;
+}
+
+/**
+ * Decorate a parsed dataset with the derived `viewQuery` mirror without
+ * mutating its `custom_extensions` array. Keeps the on-disk representation
+ * authoritative while letting downstream code skip the JSON-parse dance.
+ */
+function decorateDataset(dataset: Dataset): Dataset {
+  return { ...dataset, viewQuery: extractViewQuery(dataset) };
+}
+
+/**
+ * Reconcile a caller-supplied `viewQuery` (if any) back into the dataset's
+ * `custom_extensions` array. If the caller never set `viewQuery` we keep
+ * `custom_extensions` exactly as supplied (no implicit clearing) — the COMMON
+ * extension is the source of truth and explicit-only writes prevent a bare
+ * `dataset.write()` from accidentally erasing a `view_query` declared on
+ * disk.
+ */
+function reconcileDatasetForWrite(dataset: Dataset): Dataset {
+  if (!Object.prototype.hasOwnProperty.call(dataset, "viewQuery")) return dataset;
+  const next = setViewQueryOnExtensions(dataset.custom_extensions, dataset.viewQuery ?? null);
+  return { ...dataset, custom_extensions: next };
 }
 
 const CONFLICT_MARKER = "<<<<<<<";
@@ -203,7 +231,8 @@ export class SemanticModelFileService {
       return { ...root, datasets };
     }
 
-    return semanticModelSchema.parse(parsed);
+    const model = semanticModelSchema.parse(parsed);
+    return { ...model, datasets: model.datasets.map(decorateDataset) };
   }
 
   async getDataset(projectId: string, modelName: string, datasetName: string): Promise<Dataset | null> {
@@ -214,7 +243,7 @@ export class SemanticModelFileService {
     try {
       const raw = await readFile(filePath, "utf-8");
       const parsed = yaml.load(raw);
-      return datasetFileSchema.parse(parsed).dataset;
+      return decorateDataset(datasetFileSchema.parse(parsed).dataset);
     } catch {
       return null;
     }
@@ -248,9 +277,10 @@ export class SemanticModelFileService {
     const currentNames = new Set(datasets.map((d) => d.name));
 
     for (const dataset of datasets) {
+      const reconciled = reconcileDatasetForWrite(dataset);
       await this.atomicWrite(
         this.datasetPath(projectId, model.name, dataset.name),
-        yaml.dump({ dataset: stripEmptyExtensions(dataset) }, YAML_OPTS),
+        yaml.dump({ dataset: stripEmptyExtensions(reconciled) }, YAML_OPTS),
       );
     }
 
@@ -298,7 +328,7 @@ export class SemanticModelFileService {
       try {
         const raw = await readFile(join(dsDir, file), "utf-8");
         const parsed = yaml.load(raw);
-        datasets.push(datasetFileSchema.parse(parsed).dataset);
+        datasets.push(decorateDataset(datasetFileSchema.parse(parsed).dataset));
       } catch {
         // skip invalid dataset files
       }

@@ -8,6 +8,9 @@ const AUTHOR = { name: "archmax", email: "archmax@localhost" };
 
 const DEFAULT_GITIGNORE = `large_tool_results/
 .*tmp
+duckdb.db
+duckdb.db.wal
+duckdb.db.tmp
 `;
 
 export interface GitLogEntry {

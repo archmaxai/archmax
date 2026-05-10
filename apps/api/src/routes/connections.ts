@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
-import { disposeProjectInstance, getProjectInstance, testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
+import { deleteProjectDuckdbFile, disposeProjectInstance, getProjectInstance, testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
 import { getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
@@ -212,8 +212,13 @@ const app = new Hono()
     const project = await Project.findById(projectId).lean();
     if (!project) throw AppError.notFound("Project not found");
 
+    const reset = c.req.query("reset") === "true";
+
     try {
       await disposeProjectInstance(projectId);
+      if (reset) {
+        await deleteProjectDuckdbFile(projectId);
+      }
       const connections = await Connection.find({ project: projectId, isActive: true }).lean();
       const instance = await getProjectInstance(
         projectId,

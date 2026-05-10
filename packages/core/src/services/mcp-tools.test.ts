@@ -14,14 +14,14 @@ vi.mock("../models/index", () => ({
 
 const mockHardenConnection = vi.fn();
 const mockGetProjectInstance = vi.fn();
-const mockCreateScopedViews = vi.fn();
+const mockMaterialiseModelViews = vi.fn();
 
 vi.mock("./duckdb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./duckdb")>();
   return {
     ...actual,
     getProjectInstance: (...args: unknown[]) => mockGetProjectInstance(...args),
-    createScopedViews: (...args: unknown[]) => mockCreateScopedViews(...args),
+    materialiseModelViews: (...args: unknown[]) => mockMaterialiseModelViews(...args),
     getAttachedCatalogSlugs: vi.fn(() => []),
     hardenConnection: (...args: unknown[]) => mockHardenConnection(...args),
   };
@@ -62,7 +62,11 @@ function makeField(name: string) {
   };
 }
 
-function makeDataset(name: string, fields: string[]) {
+function makeDataset(name: string, fields: string[], opts?: { withViewQuery?: boolean }) {
+  const withViewQuery = opts?.withViewQuery ?? true;
+  const viewQuery = withViewQuery
+    ? `SELECT ${fields.map((f) => `"${f}"`).join(", ")} FROM catalog.public.${name}`
+    : null;
   return {
     name,
     source: `catalog.public.${name}`,
@@ -70,7 +74,10 @@ function makeDataset(name: string, fields: string[]) {
     unique_keys: [] as string[][],
     description: "",
     fields: fields.map(makeField),
-    custom_extensions: [],
+    custom_extensions: viewQuery
+      ? [{ vendor_name: "COMMON", data: JSON.stringify({ view_query: viewQuery }) }]
+      : [],
+    viewQuery,
   };
 }
 
@@ -216,7 +223,8 @@ describe("executeScopedQuery", () => {
   beforeEach(() => {
     mockHardenConnection.mockReset();
     mockGetProjectInstance.mockReset();
-    mockCreateScopedViews.mockReset();
+    mockMaterialiseModelViews.mockReset();
+    mockMaterialiseModelViews.mockResolvedValue({ materialised: [], missingViewQuery: [], failed: [] });
   });
 
   it("returns access denied for out-of-scope model", async () => {
@@ -307,6 +315,59 @@ describe("executeScopedQuery", () => {
     expect(result.text).toContain("customers: id, email");
   });
 
+  it("returns isError when any dataset has no view_query", async () => {
+    const datasets = [
+      makeDataset("orders", ["id", "total"]),
+      makeDataset("customers", ["id", "email"], { withViewQuery: false }),
+    ];
+    const model = makeModel("ecommerce", datasets);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    mockGetProjectInstance.mockResolvedValue({ connect: vi.fn() });
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: ["orders"],
+      missingViewQuery: ["customers"],
+      failed: [],
+    });
+
+    const result = await executeScopedQuery(
+      fileSvc,
+      "proj1",
+      ["ecommerce"],
+      "ecommerce",
+      'SELECT * FROM "orders"',
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('"customers"');
+    expect(result.text).toContain("view_query");
+    // The internal _scope_ schema name MUST NOT leak through to the agent.
+    expect(result.text).not.toContain("_scope_");
+  });
+
+  it("re-runs materialisation on every call (no cache to invalidate)", async () => {
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id", "total"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const mockDb = {
+      prepare: vi.fn().mockResolvedValue({
+        bindVarchar: vi.fn(),
+        run: vi.fn().mockResolvedValue({
+          columnNames: () => ["id", "total"],
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
+        }),
+      }),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", 'SELECT * FROM "orders"');
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", 'SELECT * FROM "orders"');
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", 'SELECT * FROM "orders"');
+
+    expect(mockMaterialiseModelViews).toHaveBeenCalledTimes(3);
+  });
+
   it("returns table-not-found error with bare dataset name hints", async () => {
     const model = makeModel("shop", [makeDataset("orders", ["id"])]);
     const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
@@ -366,7 +427,8 @@ describe("executeStoredQuery", () => {
     mockStoredQueryFindOne.mockReset();
     mockHardenConnection.mockReset();
     mockGetProjectInstance.mockReset();
-    mockCreateScopedViews.mockReset();
+    mockMaterialiseModelViews.mockReset();
+    mockMaterialiseModelViews.mockResolvedValue({ materialised: [], missingViewQuery: [], failed: [] });
   });
 
   it("returns not found when stored query does not exist", async () => {

@@ -1,11 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 
+const TMP_PROJECTS_DIR = mkdtempSync(join(tmpdir(), "archmax-duckdb-test-"));
+
 vi.mock("../config/env", () => ({
-  getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
+  getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "", projectsDir: TMP_PROJECTS_DIR })),
 }));
 
-import { createScopedViews, hardenConnection, scopedViewName, scopeSchemaName, computeModelHash, invalidateScopedViews, buildAttachString, buildColumnSelect, COMMUNITY_EXTENSIONS, getQueryTimeoutMs, withQueryTimeout, withProjectQuerySlot, getProjectInstance, disposeProjectInstance } from "./duckdb";
+import {
+  hardenConnection,
+  scopedViewName,
+  scopeSchemaName,
+  buildAttachString,
+  COMMUNITY_EXTENSIONS,
+  getQueryTimeoutMs,
+  withQueryTimeout,
+  withProjectQuerySlot,
+  getProjectInstance,
+  disposeProjectInstance,
+  materialiseModelViews,
+  stripScopedSchemaQualifier,
+  duckdbFilePath,
+  deleteProjectDuckdbFile,
+} from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 
@@ -24,7 +44,11 @@ function makeDataset(
   name: string,
   source: string,
   fields: Array<{ name: string; expression?: string }>,
+  viewQuery?: string,
 ) {
+  const custom_extensions = viewQuery
+    ? [{ vendor_name: "COMMON", data: JSON.stringify({ view_query: viewQuery }) }]
+    : [];
   return {
     name,
     source,
@@ -39,7 +63,8 @@ function makeDataset(
       description: "",
       custom_extensions: [],
     })),
-    custom_extensions: [],
+    custom_extensions,
+    viewQuery: viewQuery ?? null,
   };
 }
 
@@ -59,12 +84,11 @@ describe("scopedViewName", () => {
   });
 });
 
-describe("createScopedViews", () => {
+describe("materialiseModelViews", () => {
   let instance: DuckDBInstance;
   const projectId = "test-project";
 
   beforeEach(async () => {
-    invalidateScopedViews(projectId);
     instance = await DuckDBInstance.create();
     const db = await instance.connect();
     try {
@@ -75,112 +99,111 @@ describe("createScopedViews", () => {
     }
   });
 
-  it("creates VIEWs in per-model schema", async () => {
+  it("issues CREATE OR REPLACE VIEW for every dataset with view_query", async () => {
     const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [
-        { name: "id" },
-        { name: "name" },
-      ]),
+      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }], "SELECT id, name FROM test_source"),
     ]);
 
-    await createScopedViews(instance, projectId, model);
+    const result = await materialiseModelViews(instance, projectId, model);
+    expect(result.materialised).toEqual(["orders"]);
+    expect(result.missingViewQuery).toEqual([]);
+    expect(result.failed).toEqual([]);
 
     const db = await instance.connect();
     try {
-      const result = await db.run('SELECT * FROM _scope_shop."orders"');
-      const columns = result.columnNames();
+      const queryResult = await db.run('SELECT * FROM _scope_shop."orders"');
       const rows: unknown[][] = [];
-      for await (const chunk of result) {
-        rows.push(...chunk.getRows());
-      }
-
-      expect(columns).toEqual(["id", "name"]);
+      for await (const chunk of queryResult) rows.push(...chunk.getRows());
       expect(rows).toHaveLength(2);
     } finally {
       db.disconnectSync();
     }
   });
 
-  it("excludes amount column not in model fields", async () => {
+  it("supports view_query bodies that filter or compute columns beyond the source mirror", async () => {
     const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }]),
+      makeDataset(
+        "high_value_orders",
+        "test_source",
+        [{ name: "id" }, { name: "total" }],
+        "SELECT id, amount * 1.1 AS total FROM test_source WHERE amount >= 75",
+      ),
     ]);
 
-    await createScopedViews(instance, projectId, model);
-
+    await materialiseModelViews(instance, projectId, model);
     const db = await instance.connect();
     try {
-      const result = await db.run('SELECT * FROM _scope_shop."orders"');
-      const columns = result.columnNames();
-      expect(columns).toEqual(["id"]);
-      expect(columns).not.toContain("amount");
-      expect(columns).not.toContain("name");
-    } finally {
-      db.disconnectSync();
-    }
-  });
-
-  it("handles computed expressions", async () => {
-    const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [
-        { name: "order_id", expression: "id" },
-        { name: "total", expression: "amount * 1.1" },
-      ]),
-    ]);
-
-    await createScopedViews(instance, projectId, model);
-
-    const db = await instance.connect();
-    try {
-      const result = await db.run('SELECT order_id, total FROM _scope_shop."orders" ORDER BY order_id');
-      const columns = result.columnNames();
-      expect(columns).toEqual(["order_id", "total"]);
-
+      const queryResult = await db.run('SELECT * FROM _scope_shop."high_value_orders" ORDER BY id');
       const rows: unknown[][] = [];
-      for await (const chunk of result) {
-        rows.push(...chunk.getRows());
-      }
+      for await (const chunk of queryResult) rows.push(...chunk.getRows());
+      expect(rows).toHaveLength(1);
       expect(rows[0][0]).toBe(1);
     } finally {
       db.disconnectSync();
     }
   });
 
-  it("skips datasets with zero fields", async () => {
+  it("returns missingViewQuery for datasets without a view_query and skips them", async () => {
     const model = makeModel("shop", [
-      makeDataset("empty", "test_source", []),
       makeDataset("orders", "test_source", [{ name: "id" }]),
+      makeDataset("with_query", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
     ]);
 
-    await createScopedViews(instance, projectId, model);
+    const result = await materialiseModelViews(instance, projectId, model);
+    expect(result.missingViewQuery).toEqual(["orders"]);
+    expect(result.materialised).toEqual(["with_query"]);
 
     const db = await instance.connect();
     try {
-      const result = await db.run('SELECT * FROM _scope_shop."orders"');
-      expect(result.columnNames()).toEqual(["id"]);
-
-      await expect(db.run('SELECT * FROM _scope_shop."empty"')).rejects.toThrow();
+      await expect(db.run('SELECT * FROM _scope_shop."orders"')).rejects.toThrow();
     } finally {
       db.disconnectSync();
     }
   });
 
-  it("isolates models in separate schemas", async () => {
-    const modelA = makeModel("model_a", [
-      makeDataset("ds", "test_source", [{ name: "id" }]),
-    ]);
-    const modelB = makeModel("model_b", [
-      makeDataset("ds", "test_source", [{ name: "name" }]),
+  it("rejects forbidden view_query bodies via the validator and warns", async () => {
+    const model = makeModel("shop", [
+      makeDataset("ok", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+      makeDataset("bad", "test_source", [{ name: "id" }], "DROP TABLE test_source"),
     ]);
 
-    await createScopedViews(instance, projectId, modelA);
-    await createScopedViews(instance, projectId, modelB);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await materialiseModelViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    expect(result.materialised).toEqual(["ok"]);
+    expect(result.failed.map((f) => f.dataset)).toEqual(["bad"]);
+  });
+
+  it("warns and skips a dataset whose view_query fails at CREATE OR REPLACE time but materialises the rest", async () => {
+    const model = makeModel("shop", [
+      makeDataset("ok", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+      makeDataset("broken", "test_source", [{ name: "id" }], "SELECT nonexistent_column FROM test_source"),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await materialiseModelViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    expect(result.materialised).toEqual(["ok"]);
+    expect(result.failed.map((f) => f.dataset)).toEqual(["broken"]);
+  });
+
+  it("isolates models in separate schemas with the same dataset name", async () => {
+    const modelA = makeModel("model_a", [
+      makeDataset("ds", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+    ]);
+    const modelB = makeModel("model_b", [
+      makeDataset("ds", "test_source", [{ name: "name" }], "SELECT name FROM test_source"),
+    ]);
+
+    await materialiseModelViews(instance, projectId, modelA);
+    await materialiseModelViews(instance, projectId, modelB);
 
     const db = await instance.connect();
     try {
       const resultA = await db.run('SELECT * FROM _scope_model_a."ds"');
       expect(resultA.columnNames()).toEqual(["id"]);
-
       const resultB = await db.run('SELECT * FROM _scope_model_b."ds"');
       expect(resultB.columnNames()).toEqual(["name"]);
     } finally {
@@ -188,148 +211,16 @@ describe("createScopedViews", () => {
     }
   });
 
-  it("skips view recreation when model hash unchanged", async () => {
-    const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }]),
+  it("re-issues CREATE OR REPLACE on every call with no in-memory cache", async () => {
+    const v1 = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+    ]);
+    const v2 = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }], "SELECT id, name FROM test_source"),
     ]);
 
-    await createScopedViews(instance, projectId, model);
-    await createScopedViews(instance, projectId, model);
-
-    const db = await instance.connect();
-    try {
-      const result = await db.run('SELECT * FROM _scope_shop."orders"');
-      expect(result.columnNames()).toEqual(["id"]);
-    } finally {
-      db.disconnectSync();
-    }
-  });
-
-  it("aliases renamed fields so they are queryable by logical name", async () => {
-    const db = await instance.connect();
-    try {
-      await db.run("CREATE TABLE staff (personnelnumber VARCHAR, personid VARCHAR, firstname VARCHAR)");
-      await db.run("INSERT INTO staff VALUES ('E001', 'P100', 'Alice')");
-    } finally {
-      db.disconnectSync();
-    }
-
-    const model = makeModel("hr", [
-      makeDataset("stammdaten", "staff", [
-        { name: "personnelnumber" },
-        { name: "person_id", expression: "personid" },
-        { name: "first_name", expression: "firstname" },
-      ]),
-    ]);
-
-    await createScopedViews(instance, projectId, model);
-
-    const conn = await instance.connect();
-    try {
-      const result = await conn.run('SELECT person_id, first_name FROM _scope_hr."stammdaten"');
-      const columns = result.columnNames();
-      expect(columns).toEqual(["person_id", "first_name"]);
-
-      const rows: unknown[][] = [];
-      for await (const chunk of result) {
-        rows.push(...chunk.getRows());
-      }
-      expect(rows[0][0]).toBe("P100");
-      expect(rows[0][1]).toBe("Alice");
-    } finally {
-      conn.disconnectSync();
-    }
-  });
-
-  it("exposes aliased fields via search_path", async () => {
-    const db = await instance.connect();
-    try {
-      await db.run("CREATE TABLE staff2 (personid VARCHAR, name VARCHAR)");
-      await db.run("INSERT INTO staff2 VALUES ('P1', 'Bob')");
-    } finally {
-      db.disconnectSync();
-    }
-
-    const model = makeModel("mymodel", [
-      makeDataset("employees", "staff2", [
-        { name: "person_id", expression: "personid" },
-        { name: "employee_name", expression: "name" },
-      ]),
-    ]);
-
-    await createScopedViews(instance, projectId, model);
-
-    const conn = await instance.connect();
-    try {
-      await conn.run("SET search_path = '_scope_mymodel'");
-      const result = await conn.run('SELECT person_id, employee_name FROM "employees"');
-      const columns = result.columnNames();
-      expect(columns).toEqual(["person_id", "employee_name"]);
-
-      const rows: unknown[][] = [];
-      for await (const chunk of result) {
-        rows.push(...chunk.getRows());
-      }
-      expect(rows[0][0]).toBe("P1");
-      expect(rows[0][1]).toBe("Bob");
-    } finally {
-      conn.disconnectSync();
-    }
-  });
-
-  it("skips invalid field expressions and keeps valid ones", async () => {
-    const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [
-        { name: "id" },
-        { name: "bad_field", expression: "json_extract_string(elem, '$.foo')" },
-        { name: "name" },
-      ]),
-    ]);
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await createScopedViews(instance, projectId, model);
-    warnSpy.mockRestore();
-
-    const db = await instance.connect();
-    try {
-      const result = await db.run('SELECT * FROM _scope_shop."orders"');
-      const columns = result.columnNames();
-      expect(columns).toEqual(["id", "name"]);
-      expect(columns).not.toContain("bad_field");
-    } finally {
-      db.disconnectSync();
-    }
-  });
-
-  it("logs a warning for skipped field expressions", async () => {
-    const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [
-        { name: "id" },
-        { name: "broken", expression: "nonexistent_column + 1" },
-      ]),
-    ]);
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await createScopedViews(instance, projectId, model);
-
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("Skipped 1 invalid field expression");
-    expect(warnSpy.mock.calls[0][0]).toContain("orders.broken");
-    warnSpy.mockRestore();
-  });
-
-  it("recreates views after cache invalidation", async () => {
-    const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }]),
-    ]);
-
-    await createScopedViews(instance, projectId, model);
-    invalidateScopedViews(projectId, "shop");
-
-    const modelV2 = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
-    ]);
-    await createScopedViews(instance, projectId, modelV2);
+    await materialiseModelViews(instance, projectId, v1);
+    await materialiseModelViews(instance, projectId, v2);
 
     const db = await instance.connect();
     try {
@@ -341,54 +232,107 @@ describe("createScopedViews", () => {
   });
 });
 
-describe("buildColumnSelect", () => {
-  it("quotes passthrough columns", () => {
-    expect(buildColumnSelect("id", "id")).toBe('"id"');
+describe("stripScopedSchemaQualifier", () => {
+  it("removes unquoted _scope_<modelName>. qualifiers", () => {
+    const msg = `Catalog Error: Table with name "orders" does not exist! Did you mean "_scope_ecommerce.orders"?`;
+    expect(stripScopedSchemaQualifier(msg, "ecommerce")).not.toContain("_scope_");
+    expect(stripScopedSchemaQualifier(msg, "ecommerce")).toContain('"orders"');
   });
 
-  it("quotes simple identifier expressions with alias", () => {
-    expect(buildColumnSelect("personid", "person_id")).toBe('"personid" AS "person_id"');
+  it("removes quoted _scope_<modelName>. qualifiers", () => {
+    const msg = `Catalog Error: Table with name "_scope_ecommerce"."orders" does not exist!`;
+    expect(stripScopedSchemaQualifier(msg, "ecommerce")).not.toContain("_scope_");
   });
 
-  it("leaves computed expressions unquoted", () => {
-    expect(buildColumnSelect("amount * 1.1", "total")).toBe('amount * 1.1 AS "total"');
+  it("does not modify other models' scope references", () => {
+    const msg = "Some error mentioning _scope_finance.tables";
+    expect(stripScopedSchemaQualifier(msg, "ecommerce")).toContain("_scope_finance");
   });
 
-  it("leaves expressions with function calls unquoted", () => {
-    expect(buildColumnSelect("UPPER(name)", "upper_name")).toBe('UPPER(name) AS "upper_name"');
-  });
-
-  it("leaves concatenation expressions unquoted", () => {
-    expect(buildColumnSelect("a || ' ' || b", "full_name")).toBe('a || \' \' || b AS "full_name"');
+  it("is a no-op when no qualifier is present", () => {
+    expect(stripScopedSchemaQualifier("plain error", "x")).toBe("plain error");
   });
 });
 
-describe("computeModelHash", () => {
-  it("returns same hash for identical models", () => {
-    const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }]),
-    ]);
-    expect(computeModelHash(model)).toBe(computeModelHash(model));
+describe("duckdbFilePath", () => {
+  it("rejects unsafe project ids", () => {
+    expect(() => duckdbFilePath("../etc")).toThrow(/Invalid projectId/);
+    expect(() => duckdbFilePath("")).toThrow(/Invalid projectId/);
+    expect(() => duckdbFilePath("a/b")).toThrow(/Invalid projectId/);
   });
 
-  it("returns different hash when fields change", () => {
-    const a = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }]),
-    ]);
-    const b = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
-    ]);
-    expect(computeModelHash(a)).not.toBe(computeModelHash(b));
+  it("returns the duckdb.db path under the configured projectsDir", () => {
+    const path = duckdbFilePath("proj1");
+    expect(path.endsWith("/proj1/duckdb.db")).toBe(true);
+  });
+});
+
+describe("deleteProjectDuckdbFile", () => {
+  it("does not throw when the file does not exist", async () => {
+    await expect(deleteProjectDuckdbFile("nonexistent-project")).resolves.toBeUndefined();
+  });
+});
+
+describe("file-backed project instance", () => {
+  it("creates the duckdb.db file on disk", async () => {
+    const fs = await import("node:fs/promises");
+    const projectId = "file-backed-test-create";
+    await getProjectInstance(projectId, []);
+    const path = duckdbFilePath(projectId);
+    const stat = await fs.stat(path);
+    expect(stat.isFile()).toBe(true);
+    await disposeProjectInstance(projectId);
+    await deleteProjectDuckdbFile(projectId);
   });
 
-  it("returns different hash when expression differs from name", () => {
-    const a = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "person_id" }]),
+  it("releases the file lock on dispose so a fresh instance can re-open the same file", async () => {
+    const projectId = "file-backed-test-lock";
+    await getProjectInstance(projectId, []);
+    await disposeProjectInstance(projectId);
+    const fresh = await DuckDBInstance.create(duckdbFilePath(projectId));
+    fresh.closeSync();
+    await deleteProjectDuckdbFile(projectId);
+  });
+
+  it("persists materialised views across re-opens of the same duckdb.db file", async () => {
+    const projectId = "file-backed-test-persist";
+    const instance = await getProjectInstance(projectId, []);
+    const setup = await instance.connect();
+    try {
+      await setup.run("CREATE TABLE raw (id INTEGER)");
+      await setup.run("INSERT INTO raw VALUES (1), (2)");
+    } finally {
+      setup.disconnectSync();
+    }
+    const model = makeModel("persist", [
+      makeDataset("orders", "raw", [{ name: "id" }], "SELECT id FROM raw"),
     ]);
-    const b = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "person_id", expression: "personid" }]),
-    ]);
-    expect(computeModelHash(a)).not.toBe(computeModelHash(b));
+    const result = await materialiseModelViews(instance, projectId, model);
+    expect(result.materialised).toEqual(["orders"]);
+
+    await disposeProjectInstance(projectId);
+    const reopened = await getProjectInstance(projectId, []);
+    const db = await reopened.connect();
+    try {
+      const out = await db.run('SELECT * FROM _scope_persist."orders"');
+      const rows: unknown[][] = [];
+      for await (const chunk of out) rows.push(...chunk.getRows());
+      expect(rows).toHaveLength(2);
+    } finally {
+      db.disconnectSync();
+    }
+    await disposeProjectInstance(projectId);
+    await deleteProjectDuckdbFile(projectId);
+  });
+
+  it("deleteProjectDuckdbFile removes the file (clean slate)", async () => {
+    const fs = await import("node:fs/promises");
+    const projectId = "file-backed-test-delete";
+    await getProjectInstance(projectId, []);
+    await disposeProjectInstance(projectId);
+    const path = duckdbFilePath(projectId);
+    await deleteProjectDuckdbFile(projectId);
+    await expect(fs.stat(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

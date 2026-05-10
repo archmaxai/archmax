@@ -13,7 +13,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrate:db-rename": "node --import tsx src/scripts/migrate-db-rename.ts"
+    "migrate:db-rename": "node --import tsx src/scripts/migrate-db-rename.ts",
+    "migrate:view-query": "node --import tsx src/scripts/migrate-view-query.ts"
   },
   "dependencies": {
     "@archmax/core": "workspace:*",
@@ -33,6 +34,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^25",
     "tsx": "^4.19.2",
     "typescript": "6.0.3"
