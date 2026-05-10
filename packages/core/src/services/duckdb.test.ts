@@ -25,6 +25,7 @@ import {
   stripScopedSchemaQualifier,
   duckdbFilePath,
   deleteProjectDuckdbFile,
+  inferDefaultViewQuery,
 } from "./duckdb";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
@@ -74,6 +75,71 @@ describe("scopeSchemaName", () => {
   });
 });
 
+describe("inferDefaultViewQuery", () => {
+  // The helper that synthesises a "mirror" view body for datasets that
+  // didn't author a `view_query`. Column-quoting rules mirror the
+  // migration script's `buildLegacyViewQuery` so behaviour is the same
+  // as a one-shot backfill would produce.
+
+  function ds(opts: {
+    source?: string;
+    fields?: Array<{ name: string; expression?: string }>;
+  }) {
+    return {
+      name: "x",
+      source: opts.source ?? "shop.public.orders",
+      primary_key: [] as string[],
+      unique_keys: [] as string[][],
+      description: "",
+      fields: (opts.fields ?? []).map((f) => ({
+        name: f.name,
+        expression: {
+          dialects: [{ dialect: "ANSI_SQL" as const, expression: f.expression ?? f.name }],
+        },
+        description: "",
+        custom_extensions: [],
+      })),
+      custom_extensions: [],
+    };
+  }
+
+  it("returns null when fields are missing", () => {
+    expect(inferDefaultViewQuery(ds({ fields: [] }))).toBeNull();
+  });
+
+  it("returns null when source is missing or blank", () => {
+    expect(inferDefaultViewQuery(ds({ source: "", fields: [{ name: "id" }] }))).toBeNull();
+    expect(inferDefaultViewQuery(ds({ source: "   ", fields: [{ name: "id" }] }))).toBeNull();
+  });
+
+  it("emits a SELECT with one quoted column per field, projecting from the source", () => {
+    const body = inferDefaultViewQuery(
+      ds({ source: "shop.public.orders", fields: [{ name: "id" }, { name: "total_amount" }] }),
+    );
+    expect(body).toBe(`SELECT\n  "id",\n  "total_amount"\nFROM shop.public.orders`);
+  });
+
+  it("aliases when the field expression is a different simple identifier", () => {
+    const body = inferDefaultViewQuery(
+      ds({
+        source: "shop.public.orders",
+        fields: [{ name: "person_id", expression: "personid" }],
+      }),
+    );
+    expect(body).toContain('"personid" AS "person_id"');
+  });
+
+  it("preserves a non-identifier expression verbatim with AS aliasing", () => {
+    const body = inferDefaultViewQuery(
+      ds({
+        source: "shop.public.people",
+        fields: [{ name: "full_name", expression: "first_name || ' ' || last_name" }],
+      }),
+    );
+    expect(body).toContain(`first_name || ' ' || last_name AS "full_name"`);
+  });
+});
+
 describe("scopedViewName", () => {
   it('produces _scope_<modelName>."dataset" format', () => {
     expect(scopedViewName("ecommerce", "orders")).toBe('_scope_ecommerce."orders"');
@@ -81,6 +147,15 @@ describe("scopedViewName", () => {
 
   it("handles dataset names with hyphens", () => {
     expect(scopedViewName("shop", "my-dataset")).toBe('_scope_shop."my-dataset"');
+  });
+
+  it("doubles embedded double-quotes so a dataset name cannot break out of the identifier", () => {
+    // Standard SQL escape: a `"` inside a `"..."`-quoted identifier is
+    // doubled to `""`. Without this, an authored dataset name like
+    // `weird"; DROP SCHEMA _scope_x CASCADE; --` would break out of
+    // the wrapper `CREATE OR REPLACE VIEW ...` despite the SQL body
+    // validator clearing the view_query body itself.
+    expect(scopedViewName("shop", `weird"name`)).toBe(`_scope_shop."weird""name"`);
   });
 });
 
@@ -143,22 +218,103 @@ describe("materialiseModelViews", () => {
     }
   });
 
-  it("returns missingViewQuery for datasets without a view_query and skips them", async () => {
+  it("infers a default mirror view when view_query is missing but source + fields are populated", async () => {
     const model = makeModel("shop", [
-      makeDataset("orders", "test_source", [{ name: "id" }]),
+      makeDataset("orders", "test_source", [{ name: "id" }, { name: "name" }]),
       makeDataset("with_query", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
     ]);
 
     const result = await materialiseModelViews(instance, projectId, model);
-    expect(result.missingViewQuery).toEqual(["orders"]);
-    expect(result.materialised).toEqual(["with_query"]);
+    // Both datasets are materialised — `orders` via inference, `with_query`
+    // via its authored body. `inferred` is the strict subset that used the
+    // platform-synthesised default.
+    expect(new Set(result.materialised)).toEqual(new Set(["orders", "with_query"]));
+    expect(result.inferred).toEqual(["orders"]);
+    expect(result.missingViewQuery).toEqual([]);
+    expect(result.failed).toEqual([]);
 
     const db = await instance.connect();
     try {
-      await expect(db.run('SELECT * FROM _scope_shop."orders"')).rejects.toThrow();
+      const queryResult = await db.run('SELECT * FROM _scope_shop."orders" ORDER BY id');
+      const rows: unknown[][] = [];
+      for await (const chunk of queryResult) rows.push(...chunk.getRows());
+      // The inferred view projects every declared field straight from the
+      // source — so we expect both seeded rows and exactly the columns
+      // declared on the dataset, in declared order.
+      expect(rows).toHaveLength(2);
+      expect(queryResult.columnNames()).toEqual(["id", "name"]);
     } finally {
       db.disconnectSync();
     }
+  });
+
+  it("authored view_query wins over inference when both are possible", async () => {
+    // Dataset has fields/source (so inference WOULD work) AND an authored
+    // view_query that filters rows. The authored body must take precedence;
+    // inferred[] must NOT include this dataset.
+    const model = makeModel("shop", [
+      makeDataset(
+        "filtered",
+        "test_source",
+        [{ name: "id" }, { name: "name" }],
+        "SELECT id, name FROM test_source WHERE id = 1",
+      ),
+    ]);
+
+    const result = await materialiseModelViews(instance, projectId, model);
+    expect(result.materialised).toEqual(["filtered"]);
+    expect(result.inferred).toEqual([]);
+
+    const db = await instance.connect();
+    try {
+      const queryResult = await db.run('SELECT * FROM _scope_shop."filtered"');
+      const rows: unknown[][] = [];
+      for await (const chunk of queryResult) rows.push(...chunk.getRows());
+      expect(rows).toHaveLength(1);
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("returns missingViewQuery only when the dataset has neither view_query nor enough info to infer", async () => {
+    // No `fields` array → cannot infer a mirror view (we refuse to
+    // synthesise a degenerate `SELECT *` because that would expose
+    // physical columns the agent never declared).
+    const model = makeModel("shop", [
+      makeDataset("no_fields_no_query", "test_source", []),
+      makeDataset("with_query", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+    ]);
+
+    const result = await materialiseModelViews(instance, projectId, model);
+    expect(result.missingViewQuery).toEqual(["no_fields_no_query"]);
+    expect(result.materialised).toEqual(["with_query"]);
+    expect(result.inferred).toEqual([]);
+
+    const db = await instance.connect();
+    try {
+      await expect(db.run('SELECT * FROM _scope_shop."no_fields_no_query"')).rejects.toThrow();
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("inferred view bodies pass through the same SQL validator as authored bodies", async () => {
+    // A dataset whose `source` is a forbidden `_scope_*` schema would
+    // produce an inferred body of the form `... FROM _scope_X.t`. The
+    // agent-mode AST validator denies the universal `_scope_*` prefix,
+    // so the inferred body MUST be rejected — never created blindly.
+    const model = makeModel("shop", [
+      makeDataset("leaky", "_scope_other.t", [{ name: "id" }]),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await materialiseModelViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    expect(result.materialised).toEqual([]);
+    expect(result.inferred).toEqual([]);
+    expect(result.failed.map((f) => f.dataset)).toEqual(["leaky"]);
+    expect(result.failed[0].error).toMatch(/_scope_/);
   });
 
   it("rejects forbidden view_query bodies via the validator and warns", async () => {
@@ -209,6 +365,39 @@ describe("materialiseModelViews", () => {
     } finally {
       db.disconnectSync();
     }
+  });
+
+  it("fails closed when model.name is not a valid SQL identifier", async () => {
+    // `_scope_<modelName>` is interpolated UNQUOTED into CREATE SCHEMA
+    // and `SET search_path = '...'`, so a model name with a quote, dot,
+    // or semicolon could break out of the wrapper DDL. The schema-level
+    // YAML validation only requires `name: z.string().min(1)`, which is
+    // too permissive — gate it again at materialisation time.
+    const model = makeModel("evil; DROP SCHEMA _scope_other CASCADE; --", [
+      makeDataset("orders", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await materialiseModelViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    expect(result.materialised).toEqual([]);
+    expect(result.failed.map((f) => f.dataset)).toEqual(["orders"]);
+    expect(result.failed[0].error).toMatch(/valid SQL identifier/);
+  });
+
+  it("rejects a dataset name containing a control character", async () => {
+    const model = makeModel("shop", [
+      makeDataset("orders\u0000evil", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await materialiseModelViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    expect(result.materialised).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toMatch(/control character/);
   });
 
   it("re-issues CREATE OR REPLACE on every call with no in-memory cache", async () => {

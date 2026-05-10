@@ -494,45 +494,112 @@ export function scopeSchemaName(modelName: string): string {
   return `_scope_${modelName}`;
 }
 
+/**
+ * Double any embedded `"` inside a quoted SQL identifier. The standard
+ * SQL escape for a `"` inside a `"..."`-quoted identifier is `""`.
+ * Used by `scopedViewName` so that a dataset name like `weird"name`
+ * cannot break out of `_scope_<model>."<dataset>"` and inject DDL.
+ */
+function quoteIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
 export function scopedViewName(modelName: string, datasetName: string): string {
-  return `${scopeSchemaName(modelName)}."${datasetName}"`;
+  return `${scopeSchemaName(modelName)}.${quoteIdentifier(datasetName)}`;
 }
 
 export interface MaterialiseViewsResult {
-  /** Datasets whose `view_query` was successfully (re-)materialised. */
+  /**
+   * Datasets whose view was successfully (re-)materialised. Includes both
+   * datasets that authored their own `view_query` and datasets where the
+   * platform inferred a default mirror view from `dataset.source` and
+   * `dataset.fields` (see `inferred` below).
+   */
   materialised: string[];
   /**
-   * Datasets that were skipped because their `view_query` is missing/empty.
-   * Callers (MCP `execute_query`, agent `runModelQuery`) translate this into
-   * an `isError: true` response that names the offending datasets.
+   * Strict subset of `materialised`: datasets whose view body was inferred
+   * by the platform because no `view_query` was authored. Inference is a
+   * best-effort fallback for the simplest case (mirror every declared field
+   * straight from `dataset.source`); authored `view_query` always wins when
+   * present.
+   */
+  inferred: string[];
+  /**
+   * Datasets that were skipped because they have neither an authored
+   * `view_query` nor enough information to infer one (no `fields`, or a
+   * blank/missing `source`). Callers (MCP `execute_query`, agent
+   * `runModelQuery`) translate this into an `isError: true` response.
    */
   missingViewQuery: string[];
   /**
-   * Datasets whose `view_query` was rejected by the SQL validator or failed
-   * at `CREATE OR REPLACE VIEW` time. The previous VIEW (if any) is left in
-   * place; a warning has already been logged.
+   * Datasets whose view body (authored or inferred) was rejected by the
+   * SQL validator or failed at `CREATE OR REPLACE VIEW` time. The previous
+   * VIEW (if any) is left in place; a warning has already been logged.
    */
   failed: Array<{ dataset: string; error: string }>;
+}
+
+const SIMPLE_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/**
+ * Synthesise a "mirror" view body for a dataset that has not authored
+ * its own `view_query`. The inferred body projects every declared
+ * `field.name` straight from `dataset.source` (using `<expression> AS
+ * "<name>"` when the physical column expression differs from the
+ * field's logical name).
+ *
+ * Returns `null` when inference is impossible — i.e. when the dataset
+ * has no `fields` or no `source`. Callers MUST surface the missing-
+ * view_query error in that case rather than synthesising a degenerate
+ * `SELECT *` (which would expose every physical column the engine can
+ * see, including ones not declared in the model).
+ *
+ * Authored `view_query` always wins over the inferred body. Inference
+ * is a fallback for the simplest authoring shape only — anything that
+ * needs row filters, denormalising joins, or computed columns must be
+ * authored explicitly.
+ *
+ * The body returned here is fed into `validateViewQuery` and through
+ * the same `CREATE OR REPLACE VIEW` path as authored bodies, so the
+ * structural SQL validator gates inferred bodies just as strictly as
+ * authored ones (no `_scope_*` / `duckdb_*` references, no forbidden
+ * scalar/table functions, etc.).
+ */
+export function inferDefaultViewQuery(
+  dataset: SemanticModel["datasets"][number],
+): string | null {
+  if (!dataset.source || dataset.source.trim().length === 0) return null;
+  if (!dataset.fields || dataset.fields.length === 0) return null;
+  const columns = dataset.fields.map((f) => {
+    const expr = f.expression?.dialects?.[0]?.expression ?? f.name;
+    if (expr === f.name) return `"${f.name}"`;
+    if (SIMPLE_IDENT_RE.test(expr)) return `"${expr}" AS "${f.name}"`;
+    return `${expr} AS "${f.name}"`;
+  });
+  return `SELECT\n  ${columns.join(",\n  ")}\nFROM ${dataset.source}`;
 }
 
 /**
  * Validate a single dataset's `view_query` body before wrapping it in
  * `CREATE OR REPLACE VIEW ... AS <view_query>`.
  *
- * Uses the same structural validator the agent's `executeQuery` tool
- * uses (`mode: "agent"`), which permits `catalog.schema.table`
- * references for attached connections — the legitimate shape of a
- * view body — while still rejecting:
+ * Uses the dedicated `view_query` validation mode, which permits
+ * `catalog.schema.table` references for attached connections — the
+ * legitimate shape of a view body — while still rejecting:
  *   - non-SELECT/WITH/EXPLAIN/DESCRIBE statements (DROP, CREATE,
  *     INSERT, multi-statement payloads, EXPLAIN ANALYZE, …)
  *   - external file readers (`read_csv`, `read_parquet`, …)
  *   - DuckDB metadata (`duckdb_*` table or function form)
  *   - `_scope_*` cross-references between models
+ *   - system catalogs (`information_schema`, `pg_catalog`,
+ *     `sqlite_master`, `main`, `temp`, `system`) — closes a privilege-
+ *     escalation hole where a view body could expose raw catalog
+ *     metadata to any MCP token scoped to the model
  *   - sequence side effects (`nextval`, `currval`)
  *   - file/directory readers (`pg_read_file`, `pg_ls_dir`, …)
  */
 async function validateViewQuery(viewQuery: string): Promise<string | null> {
-  return validateSqlAst(viewQuery, { mode: "agent" });
+  return validateSqlAst(viewQuery, { mode: "view_query" });
 }
 
 /**
@@ -542,8 +609,14 @@ async function validateViewQuery(viewQuery: string): Promise<string | null> {
  * - Stateless: called on every model-scoped query (`execute_query`,
  *   `runModelQuery`). Idempotency is provided by `CREATE OR REPLACE VIEW`,
  *   not by an in-memory hash cache.
- * - Validator-gated: `view_query` is rejected by the read-only validator
- *   before being wrapped — a malformed body never reaches DuckDB.
+ * - Authored-then-inferred: a dataset's authored `view_query` (in its
+ *   COMMON custom extension) is preferred. When absent, a default mirror
+ *   body is inferred from `dataset.source` and `dataset.fields` (see
+ *   `inferDefaultViewQuery`). Datasets where inference is impossible
+ *   (no fields, no source) land in `missingViewQuery`.
+ * - Validator-gated: every view body — authored or inferred — is rejected
+ *   by the structural SQL validator before being wrapped, so a malformed
+ *   body never reaches DuckDB.
  * - Error-isolated: validator or DuckDB failures on one dataset never
  *   abort the materialisation of the rest. The previous VIEW (if any) is
  *   left in place and a warning is logged.
@@ -553,7 +626,31 @@ export async function materialiseModelViews(
   _projectId: string,
   model: SemanticModel,
 ): Promise<MaterialiseViewsResult> {
-  const result: MaterialiseViewsResult = { materialised: [], missingViewQuery: [], failed: [] };
+  const result: MaterialiseViewsResult = {
+    materialised: [],
+    inferred: [],
+    missingViewQuery: [],
+    failed: [],
+  };
+
+  // Identifier-safety gate. `model.name` is interpolated UNQUOTED into
+  // `_scope_<model>` (CREATE SCHEMA, hardenConnection's search_path,
+  // stripScopedSchemaQualifier's regex), so it must match a strict
+  // SQL identifier rule — `name: z.string().min(1)` in the YAML schema
+  // is too permissive to gate DDL interpolation. Fail closed and mark
+  // every dataset as failed so callers (`execute_query`, `runModelQuery`)
+  // refuse to reuse any pre-existing scoped views with the same prefix.
+  if (!SIMPLE_IDENT_RE.test(model.name)) {
+    const errMsg =
+      `Model name "${model.name}" is not a valid SQL identifier ` +
+      `(must match [a-zA-Z_][a-zA-Z0-9_]*); refusing to materialise views.`;
+    console.warn(`[materialiseModelViews] ${errMsg}`);
+    for (const ds of model.datasets) {
+      result.failed.push({ dataset: ds.name, error: errMsg });
+    }
+    return result;
+  }
+
   const schema = scopeSchemaName(model.name);
   const perViewTimeout = Math.min(getQueryTimeoutMs(), 10_000);
 
@@ -561,7 +658,25 @@ export async function materialiseModelViews(
   try {
     await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000);
     for (const ds of model.datasets) {
-      const viewQuery = extractViewQueryFromExtensions(ds);
+      // Reject embedded NULs / control characters that would corrupt
+      // the resulting `CREATE OR REPLACE VIEW` even after quote
+      // doubling. Any other character is safely handled by
+      // `quoteIdentifier`'s `"` doubling — including hyphens, dots,
+      // and embedded `"` — so we don't gate on SIMPLE_IDENT_RE here.
+      if (/[\u0000-\u001F]/.test(ds.name)) {
+        const errMsg = `Dataset name contains a control character; refusing to materialise.`;
+        console.warn(`[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": ${errMsg}`);
+        result.failed.push({ dataset: ds.name, error: errMsg });
+        continue;
+      }
+
+      const authored = extractViewQueryFromExtensions(ds);
+      let viewQuery: string | null = authored;
+      let wasInferred = false;
+      if (!viewQuery) {
+        viewQuery = inferDefaultViewQuery(ds);
+        wasInferred = viewQuery !== null;
+      }
       if (!viewQuery) {
         result.missingViewQuery.push(ds.name);
         continue;
@@ -569,7 +684,7 @@ export async function materialiseModelViews(
 
       const validatorError = await validateViewQuery(viewQuery);
       if (validatorError) {
-        const msg = `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": validator rejected view_query (${validatorError})`;
+        const msg = `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": validator rejected ${wasInferred ? "inferred default" : "view_query"} (${validatorError})`;
         console.warn(msg);
         result.failed.push({ dataset: ds.name, error: validatorError });
         continue;
@@ -583,6 +698,7 @@ export async function materialiseModelViews(
           perViewTimeout,
         );
         result.materialised.push(ds.name);
+        if (wasInferred) result.inferred.push(ds.name);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.warn(

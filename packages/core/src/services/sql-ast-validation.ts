@@ -23,7 +23,7 @@ import { withQueryTimeout } from "./duckdb";
  */
 
 /** Validation modes. */
-export type SqlAstValidationMode = "mcp" | "agent";
+export type SqlAstValidationMode = "mcp" | "agent" | "view_query";
 
 export interface SqlAstValidationOpts {
   /**
@@ -38,6 +38,13 @@ export interface SqlAstValidationOpts {
    *   `catalog.schema.table` references for schema exploration. The
    *   single-statement, statement-type allowlist, table-function
    *   allowlist, and scalar-function denylist still apply.
+   * - `'view_query'`: gate for persistent `view_query` bodies. Allows
+   *   attached `catalog.schema.table` source references (the legitimate
+   *   shape of a view body), but still rejects system catalogs
+   *   (`information_schema`, `pg_catalog`, `sqlite_master`, `main`,
+   *   `temp`, `system`), `_scope_*`, and `duckdb_*`. This closes a
+   *   privilege-escalation hole where an authored dataset could expose
+   *   raw catalog metadata to any MCP token scoped to the model.
    */
   mode: SqlAstValidationMode;
   /** Project's active connection slugs. Only consulted in 'mcp' mode. */
@@ -309,13 +316,19 @@ function walk(node: unknown, opts: SqlAstValidationOpts): string | null {
 
   if (type === "BASE_TABLE") {
     // Universal denies — platform-internal namespaces that no caller
-    // (MCP or agent) is ever allowed to reach directly.
+    // (MCP, agent, or view_query) is ever allowed to reach directly.
     const universalErr = checkBaseTableUniversalDeny(node);
     if (universalErr) return universalErr;
-    // MCP-only denies — system catalogs, catalog/schema-qualified refs.
+    // MCP-only denies — system catalogs AND catalog/schema-qualified refs.
     if (opts.mode === "mcp") {
       const mcpErr = checkBaseTableMcpOnly(node, opts);
       if (mcpErr) return mcpErr;
+    }
+    // view_query — system catalogs only (catalog/schema refs allowed,
+    // since view bodies legitimately attach to `catalog.schema.table`).
+    if (opts.mode === "view_query") {
+      const sysErr = checkBaseTableSystemNamespace(node);
+      if (sysErr) return sysErr;
     }
   }
 
@@ -408,14 +421,13 @@ function checkBaseTableUniversalDeny(node: AstNode): string | null {
 }
 
 /**
- * MCP-only BASE_TABLE checks: forbids system catalogs/schemas
- * (`information_schema`, `pg_catalog`, `sqlite_master`, `main`,
- * `temp`, `system`) and any catalog/schema-qualified table reference.
- * The agent path skips this gate because schema exploration via
- * `information_schema.tables` and `catalog.schema.table` references
- * is part of the agent's documented workflow.
+ * Reject BASE_TABLE references whose any name segment hits the
+ * `FORBIDDEN_TABLE_NAMESPACES` set (`information_schema`, `pg_catalog`,
+ * `sqlite_master`, `main`, `temp`, `system`). Shared by `mcp` and
+ * `view_query` modes; the agent path explicitly skips this gate
+ * because `information_schema` exploration is part of its workflow.
  */
-function checkBaseTableMcpOnly(node: AstNode, opts: SqlAstValidationOpts): string | null {
+function checkBaseTableSystemNamespace(node: AstNode): string | null {
   const tableName = lc(node["table_name"]);
   const schemaName = lc(node["schema_name"]);
   const catalogName = lc(node["catalog_name"]);
@@ -429,6 +441,23 @@ function checkBaseTableMcpOnly(node: AstNode, opts: SqlAstValidationOpts): strin
       );
     }
   }
+  return null;
+}
+
+/**
+ * MCP-only BASE_TABLE checks: forbids system catalogs/schemas
+ * (`information_schema`, `pg_catalog`, `sqlite_master`, `main`,
+ * `temp`, `system`) and any catalog/schema-qualified table reference.
+ * The agent path skips this gate because schema exploration via
+ * `information_schema.tables` and `catalog.schema.table` references
+ * is part of the agent's documented workflow.
+ */
+function checkBaseTableMcpOnly(node: AstNode, opts: SqlAstValidationOpts): string | null {
+  const sysErr = checkBaseTableSystemNamespace(node);
+  if (sysErr) return sysErr;
+
+  const schemaName = lc(node["schema_name"]);
+  const catalogName = lc(node["catalog_name"]);
 
   if (catalogName) {
     // Phrasing differs depending on whether the catalog is one of

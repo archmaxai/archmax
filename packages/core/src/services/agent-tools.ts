@@ -167,17 +167,24 @@ export function makeRunModelQueryTool(projectId: string) {
 
       if (materialisation.missingViewQuery.length > 0) {
         const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
-        // This error reaches the *authoring agent*, not an end-user
-        // consumer. Phrase it as a self-correction prompt so the agent
-        // re-enters the authoring loop (workflow step 4f) instead of
+        // This error fires only when the dataset has neither an authored
+        // `view_query` nor enough metadata to infer a default mirror view
+        // (no `source`, or no `fields`). The inferred-fallback path
+        // already covers the simple "I just declared fields and a source"
+        // shape automatically; landing here means the dataset YAML
+        // itself is incomplete. Phrase it as a self-correction prompt
+        // so the agent re-enters the authoring loop instead of
         // surfacing the gap to the human.
         return JSON.stringify({
           error:
-            `Cannot test model "${modelName}" yet — dataset(s) ${names} have no \`view_query\` ` +
-            `authored. This is your job, not the operator's: open each affected dataset's YAML, ` +
-            `add a \`view_query\` to its COMMON custom extension (a single SELECT body referencing ` +
-            `the source table — see workflow step 4f for the mirror / row-filtered / denormalising ` +
-            `shapes), then call \`runModelQuery\` again to confirm it materialises.`,
+            `Cannot test model "${modelName}" yet — dataset(s) ${names} are incomplete: the YAML ` +
+            `has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` pair ` +
+            `the platform could infer a default mirror view from. This is your job, not the ` +
+            `operator's: open each affected dataset's YAML and either (a) add the missing ` +
+            `\`fields\` / \`source\`, which lets the platform auto-derive a default mirror view, ` +
+            `or (b) author an explicit \`view_query\` in its COMMON custom extension when you ` +
+            `need filters / joins / computed columns (see workflow step 4f for the three concrete ` +
+            `shapes), then call \`runModelQuery\` again.`,
         });
       }
 
@@ -354,7 +361,10 @@ export function makeReadDocumentTool(projectId: string) {
       description:
         "Read an uploaded document and return its content as markdown. " +
         "Pass a filename to read a specific document, or pass an empty string to list all available documents. " +
-        "Supports PDF, DOCX, XLSX, CSV, TXT, MD, HTML, and more.",
+        "Supports PDF, DOCX, XLSX, CSV, TXT, MD, HTML, and more. " +
+        "Users may upload data dictionaries, ERDs, business glossaries, or mapping spreadsheets that provide " +
+        "context for building semantic models. When the user mentions a document or asks you to use " +
+        "supplementary documentation, use this tool to access it.",
       schema: z.object({
         filename: z
           .string()
@@ -428,7 +438,9 @@ export function makeListTestCasesTool(projectId: string) {
       name: "list_test_cases",
       description:
         "List existing test cases for the current project. Optionally filter by semantic model name. " +
-        "Use this to see what test coverage already exists before creating new test cases.",
+        "Returns each case's id, title, semantic model, input message, expected facts count, tags, " +
+        "and assigned test agent. Use this to review existing coverage before creating new test cases " +
+        "and to avoid creating duplicates.",
       schema: z.object({
         semanticModel: z
           .string()
@@ -526,7 +538,10 @@ export function makeCreateTestCaseTool(projectId: string) {
       description:
         "Create a test case for the current project. The test case captures a natural-language " +
         "question and the expected factual assertions that a test agent's response must satisfy. " +
-        "Use this after completing a semantic model to generate a starter test suite. " +
+        "**Only use this tool when the user explicitly provides ground-truth facts or expected " +
+        "answers.** Do NOT invent expected facts from your own data exploration — the user is the " +
+        "source of truth, because query results can change over time and only the user knows the " +
+        "true expected answers. " +
         "The 'auto-generated' tag is added automatically. Optionally assign a test agent by ID " +
         "(use list_test_agents first to find available agents).",
       schema: z.object({
@@ -589,7 +604,9 @@ export function makeDiscardAllChangesTool(projectDir: string) {
       description:
         "Restore the entire working directory to the state at the last Git commit (HEAD). " +
         "All uncommitted modifications, additions, and deletions are reverted. " +
-        "Use with caution — this removes all unsaved work.",
+        "Use with caution — this removes all unsaved work. " +
+        "**Always confirm with the user before calling this tool**, since it cannot be undone " +
+        "from within the agent.",
       schema: z.object({}),
     },
   );

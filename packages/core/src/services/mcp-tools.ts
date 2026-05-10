@@ -258,19 +258,43 @@ export async function executeScopedQuery(
 
   if (materialisation.missingViewQuery.length > 0) {
     const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
-    // This error is read by downstream MCP-client LLMs that have no
-    // ability to author the semantic model. We tell them clearly that
-    // the gap is in the model definition (so they don't hallucinate a
-    // workaround or surface it as a transient runtime error), and we
-    // route the fix request to the *authoring agent / model owner* —
-    // never to a "data team" the end user does not have.
+    // This error fires only when the dataset has neither an authored
+    // `view_query` nor enough metadata to infer a default mirror view
+    // (no `source`, or no `fields`). The inferred-fallback path covers
+    // the simple cases automatically; landing here means the dataset
+    // definition itself is incomplete. The error is read by downstream
+    // MCP-client LLMs that have no ability to author the semantic
+    // model — we route the fix request to the *authoring agent / model
+    // owner*, never to a "data team" the end user does not have.
     return {
       text:
-        `Dataset(s) ${names} in semantic model "${modelName}" are not yet queryable: their authored ` +
-        `\`view_query\` SELECT body is missing. This is an authoring gap in the model itself, not a ` +
-        `transient error and not a user-correctable configuration. Ask the agent (or maintainer) that ` +
-        `owns this semantic model to add a \`view_query\` to each affected dataset and republish; ` +
-        `\`execute_query\` cannot run against the model until then.`,
+        `Dataset(s) ${names} in semantic model "${modelName}" are not queryable: the dataset ` +
+        `definition has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` ` +
+        `pair the platform could infer a default view from. This is an authoring gap in the model ` +
+        `itself, not a transient error and not a user-correctable configuration. Ask the agent (or ` +
+        `maintainer) that owns this semantic model to fill in the missing fields/source — or to ` +
+        `author an explicit \`view_query\` — and republish.`,
+      isError: true,
+    };
+  }
+
+  if (materialisation.failed.length > 0) {
+    // `materialiseModelViews()` leaves the previous VIEW in place when
+    // the new body is rejected by the validator or fails at CREATE OR
+    // REPLACE time. Refusing to execute the caller's SQL on this path
+    // closes a stale-VIEW exposure: an MCP token holder cannot keep
+    // querying yesterday's looser body after the maintainer tightened
+    // the `view_query` but the rematerialisation failed. Mirror the
+    // agent-side `runModelQuery` handling: surface the per-dataset
+    // failures with the internal scoped-schema qualifier stripped.
+    const failures = materialisation.failed
+      .map((f) => `  - ${f.dataset}: ${stripScopedSchemaQualifier(f.error, modelName)}`)
+      .join("\n");
+    return {
+      text:
+        `Dataset(s) in semantic model "${modelName}" failed to materialise. ` +
+        `The previous view definitions are not used; ask the model maintainer to ` +
+        `fix the affected \`view_query\` bodies and republish.\n${failures}`,
       isError: true,
     };
   }

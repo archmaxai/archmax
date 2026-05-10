@@ -226,7 +226,12 @@ describe("executeScopedQuery", () => {
     mockHardenConnection.mockReset();
     mockGetProjectInstance.mockReset();
     mockMaterialiseModelViews.mockReset();
-    mockMaterialiseModelViews.mockResolvedValue({ materialised: [], missingViewQuery: [], failed: [] });
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: [],
+      inferred: [],
+      missingViewQuery: [],
+      failed: [],
+    });
     mockValidateSqlAst.mockReset();
     mockValidateSqlAst.mockResolvedValue(null);
   });
@@ -380,6 +385,7 @@ describe("executeScopedQuery", () => {
     mockGetProjectInstance.mockResolvedValue({ connect: vi.fn() });
     mockMaterialiseModelViews.mockResolvedValue({
       materialised: ["orders"],
+      inferred: [],
       missingViewQuery: ["customers"],
       failed: [],
     });
@@ -394,7 +400,15 @@ describe("executeScopedQuery", () => {
 
     expect(result.isError).toBe(true);
     expect(result.text).toContain('"customers"');
-    expect(result.text).toContain("view_query");
+    // After the inferred-fallback landed, this error fires only when the
+    // dataset is genuinely incomplete (no fields/source AND no
+    // `view_query`). The message must call out BOTH paths the maintainer
+    // can take — fix the metadata to enable inference, OR author an
+    // explicit body — so the agent knows it has a choice.
+    expect(result.text).toMatch(/view_query/);
+    expect(result.text).toMatch(/fields/);
+    expect(result.text).toMatch(/source/);
+    expect(result.text).toMatch(/infer/i);
     // The internal _scope_ schema name MUST NOT leak through to the agent.
     expect(result.text).not.toContain("_scope_");
     // The error is read by downstream LLM consumers that cannot author the
@@ -405,6 +419,45 @@ describe("executeScopedQuery", () => {
     // It MUST NOT use the legacy "data team" framing that previously caused
     // downstream LLMs to bounce the issue back at the human user.
     expect(result.text).not.toMatch(/data team/i);
+  });
+
+  it("returns isError when any dataset failed to materialise (does not query stale views)", async () => {
+    // `materialiseModelViews()` leaves the previous VIEW in place when
+    // a new view body is rejected by the validator or fails at CREATE
+    // OR REPLACE time. If the MCP path quietly proceeded, an MCP token
+    // holder could keep querying yesterday's looser body after the
+    // maintainer tightened the `view_query`. The MCP path MUST refuse
+    // to execute on this signal.
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    mockGetProjectInstance.mockResolvedValue({ connect: vi.fn() });
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: [],
+      inferred: [],
+      missingViewQuery: [],
+      failed: [
+        {
+          dataset: "orders",
+          // Include the internal scope qualifier in the simulated DuckDB
+          // error to assert the MCP path strips it before responding.
+          error: 'Catalog Error: Table with name "_scope_ecommerce"."orders" does not exist',
+        },
+      ],
+    });
+
+    const result = await executeScopedQuery(
+      fileSvc,
+      "proj1",
+      ["ecommerce"],
+      "ecommerce",
+      'SELECT * FROM "orders"',
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("orders");
+    expect(result.text).toMatch(/failed to materialise/i);
+    expect(result.text).not.toContain("_scope_");
   });
 
   it("re-runs materialisation on every call (no cache to invalidate)", async () => {
@@ -490,7 +543,12 @@ describe("executeStoredQuery", () => {
     mockHardenConnection.mockReset();
     mockGetProjectInstance.mockReset();
     mockMaterialiseModelViews.mockReset();
-    mockMaterialiseModelViews.mockResolvedValue({ materialised: [], missingViewQuery: [], failed: [] });
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: [],
+      inferred: [],
+      missingViewQuery: [],
+      failed: [],
+    });
   });
 
   it("returns not found when stored query does not exist", async () => {

@@ -211,10 +211,11 @@ describe("makeRunModelQueryTool", () => {
     expect(out.error).toMatch(/not found/);
   });
 
-  it("reports datasets with missing view_query and does not run the query", async () => {
+  it("reports datasets that are incomplete (no view_query AND not enough metadata to infer one) and does not run the query", async () => {
     mockGetSemanticModel.mockResolvedValue({ name: "ecommerce", datasets: [{ name: "orders" }, { name: "customers" }] });
     (materialiseModelViews as ReturnType<typeof vi.fn>).mockResolvedValue({
       materialised: ["orders"],
+      inferred: [],
       missingViewQuery: ["customers"],
       failed: [],
     });
@@ -223,7 +224,14 @@ describe("makeRunModelQueryTool", () => {
       await t.invoke({ modelName: "ecommerce", sql: 'SELECT * FROM "orders"', params: [] }),
     );
     expect(out.error).toMatch(/customers/);
+    // After the inferred-fallback landed, this error fires only when the
+    // dataset is genuinely incomplete. The self-correction prompt MUST
+    // expose BOTH paths the agent can take — fix the metadata to enable
+    // inference, OR author an explicit `view_query`.
     expect(out.error).toMatch(/view_query/);
+    expect(out.error).toMatch(/fields/);
+    expect(out.error).toMatch(/source/);
+    expect(out.error).toMatch(/infer/i);
     // The error is the agent's self-correction prompt — it MUST tell the
     // agent this is its job (not an operator's) and point at the workflow
     // step where the three view_query shapes are documented.
@@ -236,6 +244,7 @@ describe("makeRunModelQueryTool", () => {
     mockGetSemanticModel.mockResolvedValue({ name: "ecommerce", datasets: [{ name: "orders" }] });
     (materialiseModelViews as ReturnType<typeof vi.fn>).mockResolvedValue({
       materialised: [],
+      inferred: [],
       missingViewQuery: [],
       failed: [{ dataset: "orders", error: 'Column "_scope_ecommerce.orders.foo" does not exist' }],
     });
@@ -251,6 +260,7 @@ describe("makeRunModelQueryTool", () => {
     mockGetSemanticModel.mockResolvedValue({ name: "ecommerce", datasets: [{ name: "orders" }] });
     (materialiseModelViews as ReturnType<typeof vi.fn>).mockResolvedValue({
       materialised: ["orders"],
+      inferred: [],
       missingViewQuery: [],
       failed: [],
     });

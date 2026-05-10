@@ -396,6 +396,87 @@ describe("validateSqlAst — agent mode does NOT enforce BASE_TABLE rules", () =
   });
 });
 
+describe("validateSqlAst — view_query mode", () => {
+  // The `view_query` validation mode gates persistent VIEW bodies that
+  // an authoring agent writes into a dataset's COMMON extension. It
+  // splits the difference between `agent` (too permissive — would let
+  // a view body project from `information_schema`) and `mcp` (too
+  // strict — would forbid the legitimate `catalog.schema.table` shape
+  // a view body must use to reach an attached source).
+  const VIEW_QUERY = { mode: "view_query" as const };
+
+  it("accepts catalog.schema.table source references", async () => {
+    expect(
+      await validateSqlAst("SELECT id FROM Shopify.public.orders", VIEW_QUERY),
+    ).toBeNull();
+  });
+
+  it("accepts schema-qualified references to attached catalogs", async () => {
+    expect(
+      await validateSqlAst("SELECT * FROM datev.public.accounts", VIEW_QUERY),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["information_schema", "SELECT * FROM information_schema.tables"],
+    ["pg_catalog", "SELECT * FROM pg_catalog.pg_class"],
+    ["sqlite_master", "SELECT * FROM sqlite_master"],
+    ["main schema", "SELECT * FROM main.foo"],
+    ["temp schema", "SELECT * FROM temp.foo"],
+    ["system schema", "SELECT * FROM system.foo"],
+  ])("rejects system catalog/schema reference (%s)", async (_label, sql) => {
+    const err = await validateSqlAst(sql, VIEW_QUERY);
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/system catalog\/schema/i);
+  });
+
+  it("rejects information_schema hidden inside a CTE", async () => {
+    const err = await validateSqlAst(
+      "WITH bad AS (SELECT * FROM information_schema.tables) SELECT * FROM bad",
+      VIEW_QUERY,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  it("rejects _scope_* cross-references between models", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM _scope_other.orders",
+      VIEW_QUERY,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/_scope_/);
+  });
+
+  it("rejects duckdb_* metadata references", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM duckdb_secrets()",
+      VIEW_QUERY,
+    );
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects forbidden table functions", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM read_parquet('/etc/passwd.parquet')",
+      VIEW_QUERY,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/read_parquet/);
+  });
+
+  it("rejects forbidden scalar functions", async () => {
+    const err = await validateSqlAst("SELECT pg_read_file('/etc/passwd')", VIEW_QUERY);
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects non-SELECT statements", async () => {
+    const err = await validateSqlAst("DROP TABLE orders", VIEW_QUERY);
+    expect(err).not.toBeNull();
+  });
+});
+
 describe("validateSqlAst — connection lifecycle", () => {
   it("reuses the parser instance across calls (singleton)", async () => {
     // Successive calls share a process-wide DuckDBInstance; if the

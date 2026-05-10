@@ -20,20 +20,30 @@ Pulled from Railway:
   MONGODB_URI, REDIS_URL
 
 Options:
-  --dry-run     Print the updated file without writing
-  -h, --help    Show this help
+  --dry-run         Print the updated file with secret values masked
+  --show-secrets    With --dry-run, print raw values instead of masking
+                    (off by default; use only when you explicitly need
+                    the unredacted output for local debugging)
+  -h, --help        Show this help
 EOF
 }
 
 DRY_RUN=false
+SHOW_SECRETS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dry-run) DRY_RUN=true; shift ;;
-    -h|--help) usage; exit 0 ;;
-    *)         echo "Unknown option: $1"; usage; exit 1 ;;
+    --dry-run)      DRY_RUN=true; shift ;;
+    --show-secrets) SHOW_SECRETS=true; shift ;;
+    -h|--help)      usage; exit 0 ;;
+    *)              echo "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
+
+if [[ "$SHOW_SECRETS" == true && "$DRY_RUN" != true ]]; then
+  echo "Error: --show-secrets only applies to --dry-run output."
+  exit 1
+fi
 
 command -v railway &>/dev/null || { echo "Error: Railway CLI not found. Install: npm i -g @railway/cli"; exit 1; }
 [[ -f "$ROOT_TARGET" ]]        || { echo "Error: Target not found: $ROOT_TARGET"; exit 1; }
@@ -120,10 +130,28 @@ update_env_in_place() {
   rm -f "$written_file"
 }
 
+mask_secrets() {
+  # Replace every value half of `KEY=VALUE` lines with a fixed
+  # placeholder so dry-run output never echoes a real password,
+  # connection URI, or token to stdout / terminal scrollback /
+  # CI log capture. Lines without `=` (comments, blanks) pass
+  # through unchanged.
+  awk -F= '
+    /^[A-Z_][A-Z_0-9]*=/ { printf "%s=********\n", $1; next }
+    { print }
+  '
+}
+
 echo ""
 if [[ "$DRY_RUN" == true ]]; then
-  echo "--- .env.local ---"
-  update_env_in_place "$ROOT_TARGET"
+  echo "--- .env.local (dry-run preview) ---"
+  if [[ "$SHOW_SECRETS" == true ]]; then
+    echo "# WARNING: --show-secrets is enabled; raw values are printed below."
+    update_env_in_place "$ROOT_TARGET"
+  else
+    echo "# Values are masked. Re-run with --show-secrets to see them."
+    update_env_in_place "$ROOT_TARGET" | mask_secrets
+  fi
   echo "---"
 else
   TMP_OUT=$(mktemp)

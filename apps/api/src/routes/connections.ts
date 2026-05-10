@@ -123,6 +123,16 @@ const createSchema = z.object({
 
 const updateSchema = createSchema.partial();
 
+// `/reinit` accepts a single optional `reset` flag. When `reset=true`,
+// the route deletes the project's persistent DuckDB file — a state-
+// changing destructive operation. The query must be parsed through a
+// Zod schema (rather than read straight off `c.req.query()`) so that
+// values like `reset=evil`, `reset=true%00`, or arrays cannot reach the
+// handler. Unknown keys are stripped by Zod's default behaviour.
+const reinitQuerySchema = z.object({
+  reset: z.enum(["true", "false"]).optional(),
+});
+
 const app = new Hono()
   .get("/", async (c) => {
     await connectDB();
@@ -206,13 +216,13 @@ const app = new Hono()
       return c.json({ ok: false, error: message }, 400);
     }
   })
-  .post("/reinit", async (c) => {
+  .post("/reinit", zValidator("query", reinitQuerySchema), async (c) => {
     await connectDB();
     const projectId = c.req.param("projectId")!;
     const project = await Project.findById(projectId).lean();
     if (!project) throw AppError.notFound("Project not found");
 
-    const reset = c.req.query("reset") === "true";
+    const reset = c.req.valid("query").reset === "true";
 
     try {
       await disposeProjectInstance(projectId);
