@@ -224,6 +224,11 @@ describe("makeRunModelQueryTool", () => {
     );
     expect(out.error).toMatch(/customers/);
     expect(out.error).toMatch(/view_query/);
+    // The error is the agent's self-correction prompt — it MUST tell the
+    // agent this is its job (not an operator's) and point at the workflow
+    // step where the three view_query shapes are documented.
+    expect(out.error).toMatch(/your job, not the operator/i);
+    expect(out.error).toMatch(/step 4f|workflow step/i);
     expect(mockDb.prepare).not.toHaveBeenCalled();
   });
 

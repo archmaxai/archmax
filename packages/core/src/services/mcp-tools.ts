@@ -258,10 +258,19 @@ export async function executeScopedQuery(
 
   if (materialisation.missingViewQuery.length > 0) {
     const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+    // This error is read by downstream MCP-client LLMs that have no
+    // ability to author the semantic model. We tell them clearly that
+    // the gap is in the model definition (so they don't hallucinate a
+    // workaround or surface it as a transient runtime error), and we
+    // route the fix request to the *authoring agent / model owner* —
+    // never to a "data team" the end user does not have.
     return {
       text:
-        `Semantic model "${modelName}" cannot be queried: dataset(s) ${names} have no \`view_query\`. ` +
-        `Each dataset's COMMON custom extension must define a non-empty \`view_query\` SELECT body before \`execute_query\` will materialise its view.`,
+        `Dataset(s) ${names} in semantic model "${modelName}" are not yet queryable: their authored ` +
+        `\`view_query\` SELECT body is missing. This is an authoring gap in the model itself, not a ` +
+        `transient error and not a user-correctable configuration. Ask the agent (or maintainer) that ` +
+        `owns this semantic model to add a \`view_query\` to each affected dataset and republish; ` +
+        `\`execute_query\` cannot run against the model until then.`,
       isError: true,
     };
   }

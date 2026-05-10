@@ -167,50 +167,95 @@ function buildSemanticModel(connections: ConnectionInfo[]) {
   const msSlug = connections.find((c) => c.type === "mssql")!.slug;
   const iceSlug = connections.find((c) => c.type === "iceberg")!.slug;
 
+  // Each dataset must carry a `view_query` in its COMMON custom extension —
+  // the platform no longer auto-derives a view body from `fields`. We use a
+  // mirror SELECT (one column per field, projecting from `dataset.source`),
+  // matching the shape the migration script writes for legacy models.
+  const mirrorView = (
+    source: string,
+    fields: Array<{ name: string; expression: string }>,
+  ) => {
+    const cols = fields
+      .map(({ name, expression }) =>
+        expression === name ? `"${name}"` : `"${expression}" AS "${name}"`,
+      )
+      .join(",\n  ");
+    return {
+      vendor_name: "COMMON",
+      data: JSON.stringify({ view_query: `SELECT\n  ${cols}\nFROM ${source}` }),
+    };
+  };
+
+  const productsFields = [
+    { name: "id", expression: "id" },
+    { name: "name", expression: "name" },
+    { name: "price", expression: "price" },
+  ];
+  const ordersFields = [
+    { name: "id", expression: "id" },
+    { name: "product_name", expression: "product_name" },
+    { name: "quantity", expression: "quantity" },
+  ];
+  const customersFields = [
+    { name: "id", expression: "id" },
+    { name: "name", expression: "name" },
+    { name: "email", expression: "email" },
+  ];
+  const shipmentsFields = [
+    { name: "id", expression: "id" },
+    { name: "product_name", expression: "product_name" },
+    { name: "shipped_date", expression: "shipped_date" },
+    { name: "destination", expression: "destination" },
+  ];
+
+  const productsSource = `${pgSlug}.public.e2e_products`;
+  const ordersSource = `${mySlug}.e2e_test.e2e_orders`;
+  const customersSource = `${msSlug}.dbo.e2e_customers`;
+  const shipmentsSource = `${iceSlug}.e2e_test.e2e_shipments`;
+
   return {
     name: MODEL_NAME,
     description: "E2E test model spanning Postgres, MySQL, MSSQL, and Iceberg",
     datasets: [
       {
         name: "products",
-        source: `${pgSlug}.public.e2e_products`,
+        source: productsSource,
         primary_key: ["id"],
-        fields: [
-          { name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } },
-          { name: "name", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "name" }] } },
-          { name: "price", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "price" }] } },
-        ],
+        fields: productsFields.map((f) => ({
+          name: f.name,
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: f.expression }] },
+        })),
+        custom_extensions: [mirrorView(productsSource, productsFields)],
       },
       {
         name: "orders",
-        source: `${mySlug}.e2e_test.e2e_orders`,
+        source: ordersSource,
         primary_key: ["id"],
-        fields: [
-          { name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } },
-          { name: "product_name", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "product_name" }] } },
-          { name: "quantity", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "quantity" }] } },
-        ],
+        fields: ordersFields.map((f) => ({
+          name: f.name,
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: f.expression }] },
+        })),
+        custom_extensions: [mirrorView(ordersSource, ordersFields)],
       },
       {
         name: "customers",
-        source: `${msSlug}.dbo.e2e_customers`,
+        source: customersSource,
         primary_key: ["id"],
-        fields: [
-          { name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } },
-          { name: "name", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "name" }] } },
-          { name: "email", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "email" }] } },
-        ],
+        fields: customersFields.map((f) => ({
+          name: f.name,
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: f.expression }] },
+        })),
+        custom_extensions: [mirrorView(customersSource, customersFields)],
       },
       {
         name: "shipments",
-        source: `${iceSlug}.e2e_test.e2e_shipments`,
+        source: shipmentsSource,
         primary_key: ["id"],
-        fields: [
-          { name: "id", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "id" }] } },
-          { name: "product_name", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "product_name" }] } },
-          { name: "shipped_date", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "shipped_date" }] } },
-          { name: "destination", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "destination" }] } },
-        ],
+        fields: shipmentsFields.map((f) => ({
+          name: f.name,
+          expression: { dialects: [{ dialect: "ANSI_SQL", expression: f.expression }] },
+        })),
+        custom_extensions: [mirrorView(shipmentsSource, shipmentsFields)],
       },
     ],
     relationships: [],

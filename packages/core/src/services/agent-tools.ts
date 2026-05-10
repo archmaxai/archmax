@@ -167,10 +167,17 @@ export function makeRunModelQueryTool(projectId: string) {
 
       if (materialisation.missingViewQuery.length > 0) {
         const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+        // This error reaches the *authoring agent*, not an end-user
+        // consumer. Phrase it as a self-correction prompt so the agent
+        // re-enters the authoring loop (workflow step 4f) instead of
+        // surfacing the gap to the human.
         return JSON.stringify({
           error:
-            `Model "${modelName}" cannot be queried yet: dataset(s) ${names} are missing a \`view_query\`. ` +
-            `Add a non-empty \`view_query\` to each dataset's COMMON custom extension before testing.`,
+            `Cannot test model "${modelName}" yet — dataset(s) ${names} have no \`view_query\` ` +
+            `authored. This is your job, not the operator's: open each affected dataset's YAML, ` +
+            `add a \`view_query\` to its COMMON custom extension (a single SELECT body referencing ` +
+            `the source table — see workflow step 4f for the mirror / row-filtered / denormalising ` +
+            `shapes), then call \`runModelQuery\` again to confirm it materialises.`,
         });
       }
 

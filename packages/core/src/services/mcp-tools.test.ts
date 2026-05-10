@@ -397,6 +397,14 @@ describe("executeScopedQuery", () => {
     expect(result.text).toContain("view_query");
     // The internal _scope_ schema name MUST NOT leak through to the agent.
     expect(result.text).not.toContain("_scope_");
+    // The error is read by downstream LLM consumers that cannot author the
+    // model — it MUST direct them to the agent / maintainer, not present
+    // the gap as a transient error or push it onto the end user.
+    expect(result.text).toMatch(/authoring gap/i);
+    expect(result.text).toMatch(/agent.*(maintainer|owner)|maintainer.*agent/i);
+    // It MUST NOT use the legacy "data team" framing that previously caused
+    // downstream LLMs to bounce the issue back at the human user.
+    expect(result.text).not.toMatch(/data team/i);
   });
 
   it("re-runs materialisation on every call (no cache to invalidate)", async () => {
