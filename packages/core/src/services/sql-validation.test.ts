@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateReadOnlySQL, validateScopedSQL } from "./sql-validation";
+import { validateSqlAst } from "./sql-ast-validation";
 
 describe("validateReadOnlySQL", () => {
   it("allows SELECT queries", () => {
@@ -79,6 +80,16 @@ describe("validateReadOnlySQL", () => {
 
   it("rejects multi-statement queries", () => {
     expect(validateReadOnlySQL("SELECT 1; DROP TABLE t")).not.toBeNull();
+  });
+
+  it("rejects semicolons inside string literals (regex-layer false positive)", async () => {
+    // The regex layer cannot tokenize SQL, so a semicolon inside a string
+    // literal followed by text is rejected. The structural validator
+    // (`validateSqlAst`) accepts the same input — it walks the parsed AST.
+    expect(validateReadOnlySQL("SELECT 'a;b' FROM t")).not.toBeNull();
+    expect(
+      await validateSqlAst("SELECT 'a;b' FROM t", { mode: "mcp", catalogSlugs: [] }),
+    ).toBeNull();
   });
 
   it("allows trailing semicolon with whitespace only", () => {

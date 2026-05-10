@@ -105,11 +105,13 @@ describe("validateReadOnlySQL", () => {
     });
 
     it("allows semicolons inside string literals (edge case)", () => {
-      // This is a known limitation — the regex doesn't parse SQL strings.
-      // A semicolon inside a string literal followed by text will be falsely blocked.
-      // This is an acceptable trade-off for security.
+      // Known false-positive of the regex layer — it does not tokenize SQL,
+      // so a semicolon inside a string literal followed by text is rejected
+      // here. The structural validator (`validateSqlAst`) accepts the same
+      // input because it walks the parsed AST; coverage for that lives in
+      // `packages/core/src/services/sql-ast-validation.test.ts`.
       const result = validateReadOnlySQL("SELECT 'a;b' FROM t");
-      expect(result).not.toBeNull(); // false positive, but safe
+      expect(result).not.toBeNull(); // false positive at the regex layer; safe
     });
   });
 });

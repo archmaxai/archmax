@@ -15,6 +15,7 @@ import {
   getQueryTimeoutMs,
 } from "./duckdb";
 import { validateReadOnlySQL, validateScopedSQL } from "./sql-validation";
+import { validateSqlAst } from "./sql-ast-validation";
 
 export interface ToolResult {
   text: string;
@@ -246,6 +247,16 @@ export async function executeScopedQuery(
   const scopedError = validateScopedSQL(sql, catalogSlugs);
   if (scopedError) {
     return { text: scopedError, isError: true };
+  }
+
+  // Structural pass via DuckDB's own parser. Defends against quoting /
+  // escape-form variants the lexical regex cannot model (see
+  // openspec/changes/add-structural-sql-safety/design.md). Runs before
+  // any DuckDB connection against the project's federated instance is
+  // acquired; the parsing instance is process-wide and isolated.
+  const astError = await validateSqlAst(sql, { mode: "mcp", catalogSlugs });
+  if (astError) {
+    return { text: astError, isError: true };
   }
 
   const model = await fileSvc.get(projectId, modelName);

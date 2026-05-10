@@ -82,6 +82,8 @@ When AI agents use `execute_query` or `runModelQuery`, they don't access raw con
 
 Per-model VIEWs are **(re-)materialised on every model-scoped query** with `CREATE OR REPLACE VIEW`; there is no in-memory cache. Editing a dataset's `view_query` takes effect on the very next call. Agents reference datasets by their bare name (e.g. `FROM "orders"`) — the platform resolves the name to the right VIEW automatically. A dataset without `view_query` is unqueryable, and the tools return a clear error identifying the offending datasets.
 
+Bare-name references are enforced **structurally**, not just lexically. Every query passes through a structural validator that parses the SQL with DuckDB's own parser and rejects any base-table reference whose AST has a non-empty `schema_name` or `catalog_name`, regardless of how the reference is spelled in source text — quoted (`"shopify"."public"."orders"`), unicode-escaped, or dollar-quoted variants are all rejected on the parse tree, not on the raw text. See the [`execute_query` reference](/reference/mcp-tools#validation-rules) for the full denylist.
+
 ## Connection Lifecycle
 
 - **Active connections** are attached to DuckDB and available for querying

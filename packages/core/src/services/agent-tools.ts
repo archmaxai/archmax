@@ -14,6 +14,7 @@ import {
   withQueryTimeout,
 } from "./duckdb";
 import { validateReadOnlySQL, validateScopedSQL } from "./sql-validation";
+import { validateSqlAst } from "./sql-ast-validation";
 import { DocumentFileService } from "./document-files";
 import { GitService } from "./git";
 import { SemanticModelFileService } from "./semantic-model-files";
@@ -34,6 +35,19 @@ export function makeExecuteQueryTool(projectId: string) {
       const violation = validateReadOnlySQL(sql);
       if (violation) {
         return JSON.stringify({ error: violation });
+      }
+
+      // Structural validation in 'agent' mode: the agent path
+      // legitimately uses fully-qualified `catalog.schema.table` refs
+      // for schema exploration (see openspec/changes/add-structural-
+      // sql-safety/specs/semantic-model-agent/spec.md), so the
+      // catalog-reference rule from the MCP path is not applied here.
+      // System-catalog (information_schema, pg_catalog, sqlite_master,
+      // main, temp, system), `_scope_*`, table-function allowlist, and
+      // scalar-function denylist still apply identically.
+      const astError = await validateSqlAst(sql, { mode: "agent" });
+      if (astError) {
+        return JSON.stringify({ error: astError });
       }
 
       await connectDB();
@@ -146,6 +160,16 @@ export function makeRunModelQueryTool(projectId: string) {
       const scopedError = validateScopedSQL(sql, catalogSlugs);
       if (scopedError) {
         return JSON.stringify({ error: scopedError });
+      }
+
+      // `runModelQuery` is the agent's *scoped* tool — it queries
+      // model-scoped views by bare dataset name, exactly like the MCP
+      // `execute_query` path. Apply the same structural pass so quoting
+      // / escape-form variants of system catalogs / `_scope_*` are
+      // rejected here too.
+      const astError = await validateSqlAst(sql, { mode: "mcp", catalogSlugs });
+      if (astError) {
+        return JSON.stringify({ error: astError });
       }
 
       const model = await fileSvc.get(projectId, modelName);

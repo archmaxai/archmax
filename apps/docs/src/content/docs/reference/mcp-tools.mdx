@@ -65,11 +65,25 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 ### Validation Rules
 
-- Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
-- Multi-statement queries rejected
-- Raw catalog references (e.g., `shopify.public.orders`) rejected — use bare dataset names instead
-- Explicit `_scope_` prefixes rejected — dataset names resolve automatically via `search_path`
-- `SET` statements blocked
+Every query passes through two layers before execution:
+
+1. **Lexical pre-filter** — a fast regex check that rejects obvious junk:
+   - Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
+   - Multi-statement queries rejected
+   - Raw catalog references (e.g., `shopify.public.orders`) rejected — use bare dataset names instead
+   - Explicit `_scope_` prefixes rejected — dataset names resolve automatically via `search_path`
+   - `SET`, `PRAGMA`, `COPY`, `ATTACH`, `INSTALL`, `LOAD`, and `CREATE SECRET` statements blocked
+2. **Structural AST validator** — every query that survives the regex layer is parsed with DuckDB's own parser via `json_serialize_sql` and rejected unless its abstract syntax tree matches a strict allowlisted shape:
+   - Exactly one top-level statement
+   - Top-level node must be a SELECT / set-operation / recursive CTE
+   - Every base-table reference must use bare dataset names (no schema, no catalog)
+   - System catalogs (`information_schema`, `pg_catalog`, `sqlite_master`, `main`, `temp`, `system`) and any schema beginning with `_scope_` are rejected — at the AST level, so quoting variants (`"information_schema"`, `U&"…"`, dollar-quoted, mixed-case, …) cannot evade the check
+   - Table functions are restricted to a small allowlist (`generate_series`, `range`, `unnest`, `repeat`, `from_json`, `values`); `read_csv*`, `read_parquet*`, `read_json*`, `read_blob*`, `parse_sql`, `json_serialize_sql`, and any function whose name begins with `duckdb_` are rejected
+   - Scalar function calls covering `read_*`, `pg_read_*`, `pg_ls_dir`, `duckdb_*`, `nextval`, and `currval` are rejected anywhere in the tree
+   - Any `EXPLAIN ANALYZE` (including comment-evasion variants such as `EXPLAIN /* ... */ ANALYZE`) is rejected — it would execute the wrapped statement
+   - Parser failures and parse timeouts are surfaced verbatim in the rejection message
+
+The structural validator can be disabled in an emergency by setting `SQL_VALIDATION_AST=false`; the lexical pre-filter and connection hardening still apply.
 
 ### Security Hardening
 

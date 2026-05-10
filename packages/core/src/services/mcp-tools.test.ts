@@ -30,6 +30,9 @@ vi.mock("./sql-validation", () => ({
   validateReadOnlySQL: vi.fn(() => null),
   validateScopedSQL: vi.fn(() => null),
 }));
+vi.mock("./sql-ast-validation", () => ({
+  validateSqlAst: vi.fn(() => Promise.resolve(null)),
+}));
 
 import {
   listSemanticModels,
