@@ -3,17 +3,17 @@ import { withQueryTimeout } from "./duckdb";
 
 /**
  * Structural SQL validator built on DuckDB's own parser via
- * `json_serialize_sql`. Layered AFTER the lexical pre-filter
- * (`validateReadOnlySQL` / `validateScopedSQL`) and BEFORE the query is
- * handed to the project's federated DuckDB instance.
+ * `json_serialize_sql`. This is the sole SQL-safety layer between an
+ * external caller (MCP `execute_query`, the semantic-model agent's
+ * tools) and the project's federated DuckDB instance.
  *
- * Rationale (see `openspec/changes/add-structural-sql-safety/design.md`):
- * the regex layer cannot tokenize SQL, which means quoting variants
- * (`"information_schema"."tables"`, `U&"\006D\0061\0069\006E".x`,
- * dollar-quoted statement separators, mid-token comments inside
- * `EXPLAIN ... ANALYZE`, etc.) can systematically fool it. By using
- * the *same* parser DuckDB will execute against, the validator's view
- * of the query and the engine's view cannot disagree.
+ * Why use the parser directly: regex-based lexers cannot tokenize SQL,
+ * so quoting variants (`"information_schema"."tables"`,
+ * `U&"\006D\0061\0069\006E".x`, dollar-quoted statement separators,
+ * mid-token comments inside `EXPLAIN ... ANALYZE`, etc.) can
+ * systematically fool them. By using the *same* parser DuckDB will
+ * execute against, the validator's view of the query and the engine's
+ * view cannot disagree.
  *
  * The parser instance is dedicated to validation: no extensions, no
  * attached catalogs, `enable_external_access=false`. `json_serialize_sql`
@@ -90,24 +90,29 @@ async function serializeSqlToAst(sql: string): Promise<SerializeSqlPayload> {
   const instance = await getParserInstance();
   const db = await instance.connect();
   try {
-    // Defence-in-depth: even though the parser instance has no extensions
-    // and no attached catalogs, lock the parsing connection down further.
-    try { await db.run("SET enable_external_access = false"); } catch { /* already set */ }
+    // Defence-in-depth: lock the parsing connection down even though the
+    // shared instance has no extensions and no attached catalogs. May
+    // throw if the option is already locked at instance scope — ignore.
+    try {
+      await db.run("SET enable_external_access = false");
+    } catch {
+      // intentionally swallowed
+    }
 
     const prepared = await db.prepare(
       "SELECT json_serialize_sql(CAST(? AS VARCHAR), skip_default := true, format := false) AS ast",
     );
     prepared.bindVarchar(1, sql);
     const result = await withQueryTimeout(db, () => prepared.run(), PARSE_TIMEOUT_MS);
-    const rows: unknown[] = [];
+    const rows: unknown[][] = [];
     for await (const chunk of result) {
       for (const row of chunk.getRows()) rows.push(row);
     }
-    const json = rows[0]?.[0 as keyof typeof rows[0]];
-    if (typeof json !== "string") {
+    const firstColumn = rows[0]?.[0];
+    if (typeof firstColumn !== "string") {
       throw new Error("json_serialize_sql returned no row");
     }
-    return JSON.parse(json) as SerializeSqlPayload;
+    return JSON.parse(firstColumn) as SerializeSqlPayload;
   } finally {
     db.disconnectSync();
   }
@@ -125,6 +130,10 @@ function stripLeadingTrivia(sql: string): string {
   return sql.replace(/^(\s+|--[^\n]*\n?|\/\*[\s\S]*?\*\/)*/, "");
 }
 
+type PeelResult =
+  | { ok: true; body: string }
+  | { ok: false; error: string };
+
 /**
  * Detect leading EXPLAIN (with optional intervening comments). Returns
  * the body that should be passed to the parser, or an error if the
@@ -132,20 +141,20 @@ function stripLeadingTrivia(sql: string): string {
  * variant (`EXPLAIN <comment> ANALYZE`) that the lexical pre-filter's
  * regex misses because it scans byte-form text.
  */
-function peelExplain(sql: string): { body: string; error?: string } {
+function peelExplain(sql: string): PeelResult {
   const stripped = stripLeadingTrivia(sql);
   const m = /^EXPLAIN\b/i.exec(stripped);
-  if (!m) return { body: sql };
+  if (!m) return { ok: true, body: sql };
   const afterExplain = stripLeadingTrivia(stripped.slice(m[0].length));
   if (/^ANALYZE\b/i.test(afterExplain)) {
     return {
-      body: sql,
+      ok: false,
       error:
         "EXPLAIN ANALYZE is not allowed (it executes the wrapped statement); " +
-        "this includes comment-evasion variants such as `EXPLAIN /* … */ ANALYZE`.",
+        "this includes comment-evasion variants such as `EXPLAIN <comment> ANALYZE`.",
     };
   }
-  return { body: afterExplain };
+  return { ok: true, body: afterExplain };
 }
 
 // ── AST allowlists / denylists ───────────────────────────────────────
@@ -157,16 +166,16 @@ function peelExplain(sql: string): { body: string; error?: string } {
  * already rejects those with "Only SELECT statements can be
  * serialized to json!" — is rejected on the AST layer too.
  */
-const ALLOWED_TOP_LEVEL_NODE_TYPES = new Set([
+const ALLOWED_QUERY_NODE_TYPES = new Set([
   "SELECT_NODE",
   "SET_OPERATION_NODE",
   "RECURSIVE_CTE_NODE",
 ]);
 
 /**
- * Structural node types permitted anywhere inside the tree. Anything
- * else with a `type` field that we recognize as structural causes
- * rejection (fail-closed default for new DuckDB AST shapes).
+ * From-table node types permitted anywhere inside the tree. Combined
+ * with `ALLOWED_QUERY_NODE_TYPES` to form the full structural allowlist
+ * applied by the walker.
  *
  * Expression-level `class`/`type` values (COLUMN_REF, FUNCTION,
  * CONSTANT, COMPARISON, OPERATOR, …) are NOT enumerated here — the
@@ -175,12 +184,7 @@ const ALLOWED_TOP_LEVEL_NODE_TYPES = new Set([
  * unrestricted because the allowed-statement-type rule already
  * prevents side effects.
  */
-const ALLOWED_STRUCTURAL_NODE_TYPES = new Set([
-  // Query-shape nodes
-  "SELECT_NODE",
-  "SET_OPERATION_NODE",
-  "RECURSIVE_CTE_NODE",
-  // From-table nodes
+const ALLOWED_FROM_TABLE_TYPES = new Set([
   "BASE_TABLE",
   "TABLE_FUNCTION",
   "JOIN",
@@ -191,6 +195,11 @@ const ALLOWED_STRUCTURAL_NODE_TYPES = new Set([
   // DESCRIBE / SUMMARIZE wrap a SELECT in a SHOW_REF; allowed if its
   // show_type is DESCRIBE/SUMMARIZE (checked at the SHOW_REF site).
   "SHOW_REF",
+]);
+
+const ALLOWED_STRUCTURAL_NODE_TYPES = new Set([
+  ...ALLOWED_QUERY_NODE_TYPES,
+  ...ALLOWED_FROM_TABLE_TYPES,
 ]);
 
 /**
@@ -213,9 +222,16 @@ const ALLOWED_TABLE_FUNCTIONS = new Set([
  * Forbidden BASE_TABLE schemas / catalogs / table-names. Matched
  * case-insensitively against the AST's parser-canonicalised name, so
  * quoting variants (`"information_schema"`, `"INFORMATION_SCHEMA"`,
- * dollar-quoted, …) cannot evade the check. The `_scope_*` rule is
- * a prefix match — any schema beginning with `_scope_` (regardless of
- * case or quoting) is rejected.
+ * dollar-quoted, …) cannot evade the check.
+ *
+ * Two prefix rules also apply to every name component:
+ *   - `_scope_*`  — internal scoped schemas; never referenced directly
+ *   - `duckdb_*`  — DuckDB metadata views that expose the host catalog
+ *                   (`duckdb_columns`, `duckdb_tables`, `duckdb_secrets`,
+ *                   …). The function form `duckdb_<x>()` is also denied
+ *                   via the table-function allowlist and the scalar-
+ *                   function denylist; this prefix rule covers the
+ *                   bare-table form `SELECT * FROM duckdb_columns`.
  */
 const FORBIDDEN_TABLE_NAMESPACES = new Set([
   "information_schema",
@@ -225,6 +241,8 @@ const FORBIDDEN_TABLE_NAMESPACES = new Set([
   "temp",
   "system",
 ]);
+
+const FORBIDDEN_TABLE_NAME_PREFIXES = ["_scope_", "duckdb_"];
 
 /**
  * Predicates against a `function_name` (already lowercased) that
@@ -276,8 +294,10 @@ function walk(node: unknown, opts: SqlAstValidationOpts): string | null {
   }
   if (!isObject(node)) return null;
 
-  const type = typeof node["type"] === "string" ? (node["type"] as string) : null;
-  const klass = typeof node["class"] === "string" ? (node["class"] as string) : null;
+  const rawType = node["type"];
+  const type = typeof rawType === "string" ? rawType : null;
+  const rawClass = node["class"];
+  const klass = typeof rawClass === "string" ? rawClass : null;
 
   // Apply structural allowlist for known query-shape / from-table types.
   // Expression types (COLUMN_REF, CONSTANT, FUNCTION, COMPARISON, …) and
@@ -287,21 +307,21 @@ function walk(node: unknown, opts: SqlAstValidationOpts): string | null {
     return `Unsupported statement shape (AST node type "${type}" is not on the read-only allowlist).`;
   }
 
-  if (type === "BASE_TABLE" && opts.mode === "mcp") {
-    // BASE_TABLE checks (system-catalog, `_scope_*`, catalog/schema-
-    // qualified) are MCP-only. The agent path legitimately reads
-    // information_schema for schema exploration and uses
-    // `catalog.schema.table` references for attached connections (see
-    // openspec/changes/add-structural-sql-safety/specs/semantic-model-
-    // agent/spec.md "Agent explores database schema" /
-    // "Catalog references remain allowed in agent path"); only the
-    // table-function and scalar-function rules apply there.
-    const err = checkBaseTable(node, opts);
-    if (err) return err;
+  if (type === "BASE_TABLE") {
+    // Universal denies — platform-internal namespaces that no caller
+    // (MCP or agent) is ever allowed to reach directly.
+    const universalErr = checkBaseTableUniversalDeny(node);
+    if (universalErr) return universalErr;
+    // MCP-only denies — system catalogs, catalog/schema-qualified refs.
+    if (opts.mode === "mcp") {
+      const mcpErr = checkBaseTableMcpOnly(node, opts);
+      if (mcpErr) return mcpErr;
+    }
   }
 
   if (type === "TABLE_FUNCTION") {
-    const fn = isObject(node["function"]) ? (node["function"] as AstNode) : null;
+    const fnNode = node["function"];
+    const fn = isObject(fnNode) ? fnNode : null;
     const fnName = lc(fn?.["function_name"]);
     if (!fnName) {
       return "Unsupported statement shape (table function with no resolvable name).";
@@ -344,34 +364,62 @@ function walk(node: unknown, opts: SqlAstValidationOpts): string | null {
  * values (e.g. `COMPARE_EQUAL`, `VALUE_CONSTANT`, `FUNCTION`,
  * `OPERATOR`, …) are not structural and fall through to the
  * recursive descent.
+ *
+ * Heuristic: any `_NODE`-suffixed name is structural (ensures unknown
+ * future query nodes like a hypothetical `INSERT_NODE` fail closed),
+ * plus the explicit from-table set above.
  */
 function isStructuralType(type: string): boolean {
-  // Heuristic: structural query nodes end in `_NODE`; from-table nodes
-  // are an explicit small set; everything else is treated as an
-  // expression/modifier and skipped by this gate.
-  if (type.endsWith("_NODE")) return true;
-  return (
-    type === "BASE_TABLE" ||
-    type === "TABLE_FUNCTION" ||
-    type === "JOIN" ||
-    type === "SUBQUERY" ||
-    type === "EMPTY" ||
-    type === "EXPRESSION_LIST" ||
-    type === "PIVOT" ||
-    type === "SHOW_REF"
-  );
+  return type.endsWith("_NODE") || ALLOWED_FROM_TABLE_TYPES.has(type);
 }
 
-function checkBaseTable(node: AstNode, opts: SqlAstValidationOpts): string | null {
+/**
+ * Universal BASE_TABLE denies — invoked in BOTH `mcp` and `agent`
+ * modes. These cover platform-internal namespaces that no caller is
+ * ever allowed to reach: the `_scope_*` schemas the MCP path
+ * synthesises for model isolation, and the DuckDB metadata views
+ * (`duckdb_columns`, `duckdb_tables`, `duckdb_secrets`, …) that would
+ * leak host-catalog state regardless of which API surface called us.
+ */
+function checkBaseTableUniversalDeny(node: AstNode): string | null {
   const tableName = lc(node["table_name"]);
   const schemaName = lc(node["schema_name"]);
   const catalogName = lc(node["catalog_name"]);
 
-  // The system-catalog / `_scope_*` rule applies in BOTH modes — the
-  // agent path legitimately uses fully-qualified `catalog.schema.table`
-  // references for *user* schemas (e.g. `Shopify.public.orders`) but
-  // never for DuckDB / Postgres / SQLite system schemas, which would
-  // bypass the semantic layer's read-only contract.
+  for (const candidate of [tableName, schemaName, catalogName]) {
+    if (!candidate) continue;
+    for (const prefix of FORBIDDEN_TABLE_NAME_PREFIXES) {
+      if (candidate.startsWith(prefix)) {
+        if (prefix === "_scope_") {
+          return (
+            `Direct reference to internal scoped schema "${candidate}" is not allowed. ` +
+            `Use dataset names directly — they resolve automatically via search_path.`
+          );
+        }
+        return (
+          `Direct reference to DuckDB metadata "${candidate}" is not allowed. ` +
+          `Use semantic-model dataset names directly.`
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * MCP-only BASE_TABLE checks: forbids system catalogs/schemas
+ * (`information_schema`, `pg_catalog`, `sqlite_master`, `main`,
+ * `temp`, `system`) and any catalog/schema-qualified table reference.
+ * The agent path skips this gate because schema exploration via
+ * `information_schema.tables` and `catalog.schema.table` references
+ * is part of the agent's documented workflow.
+ */
+function checkBaseTableMcpOnly(node: AstNode, opts: SqlAstValidationOpts): string | null {
+  const tableName = lc(node["table_name"]);
+  const schemaName = lc(node["schema_name"]);
+  const catalogName = lc(node["catalog_name"]);
+
   for (const candidate of [tableName, schemaName, catalogName]) {
     if (!candidate) continue;
     if (FORBIDDEN_TABLE_NAMESPACES.has(candidate)) {
@@ -380,63 +428,36 @@ function checkBaseTable(node: AstNode, opts: SqlAstValidationOpts): string | nul
         `Use semantic-model dataset names directly.`
       );
     }
-    if (candidate.startsWith("_scope_")) {
-      return (
-        `Direct reference to internal scoped schema "${candidate}" is not allowed. ` +
-        `Use dataset names directly — they resolve automatically via search_path.`
-      );
-    }
   }
 
-  if (opts.mode === "mcp") {
-    if (catalogName) {
-      const slugMatch = (opts.catalogSlugs ?? []).some((s) => s.toLowerCase() === catalogName);
-      // Reject any catalog reference in MCP mode — only bare dataset
-      // names are valid (resolved via `search_path = _scope_<model>`).
-      // Phrasing differs depending on whether the catalog is one of
-      // *this* project's connection slugs (more actionable error) or
-      // an unrelated catalog name (still rejected).
-      if (slugMatch) {
-        return (
-          `Direct reference to catalog "${node["catalog_name"]}" is not allowed. ` +
-          `Use dataset names directly (e.g. FROM orders) — they resolve automatically.`
-        );
-      }
+  if (catalogName) {
+    // Phrasing differs depending on whether the catalog is one of
+    // *this* project's connection slugs (more actionable error) or an
+    // unrelated catalog name (still rejected).
+    const slugMatch = (opts.catalogSlugs ?? []).some((s) => s.toLowerCase() === catalogName);
+    if (slugMatch) {
       return (
-        `Direct catalog references are not allowed in MCP execute_query. ` +
-        `Use dataset names directly (e.g. FROM orders) — they resolve automatically via search_path.`
+        `Direct reference to catalog "${node["catalog_name"]}" is not allowed. ` +
+        `Use dataset names directly (e.g. FROM orders) — they resolve automatically.`
       );
     }
-    if (schemaName) {
-      // Bare-name rule: a non-empty schema is always rejected in MCP
-      // mode (system-catalog check above already rejected the
-      // dangerous ones; this rejects user schemas too — `public.orders`,
-      // `dbo.foo`, etc.).
-      return (
-        `Schema-qualified table reference "${node["schema_name"]}.${node["table_name"]}" ` +
-        `is not allowed. Use dataset names directly — they resolve automatically via search_path.`
-      );
-    }
+    return (
+      `Direct catalog references are not allowed in MCP execute_query. ` +
+      `Use dataset names directly (e.g. FROM orders) — they resolve automatically via search_path.`
+    );
+  }
+
+  if (schemaName) {
+    return (
+      `Schema-qualified table reference "${node["schema_name"]}.${node["table_name"]}" ` +
+      `is not allowed. Use dataset names directly — they resolve automatically via search_path.`
+    );
   }
 
   return null;
 }
 
 // ── Public API ───────────────────────────────────────────────────────
-
-/**
- * Read the kill-switch flag once at module load. Defaults to `true`
- * (validator on) if unset or any value other than the literal string
- * `"false"`. The flag exists only to bypass the structural validator
- * if a DuckDB upgrade ever breaks `json_serialize_sql`; the lexical
- * pre-filter, connection hardening, READ_ONLY ATTACH, and search_path
- * scoping are unaffected.
- */
-const SQL_VALIDATION_AST_ENABLED = process.env.SQL_VALIDATION_AST !== "false";
-
-export function isSqlAstValidationEnabled(): boolean {
-  return SQL_VALIDATION_AST_ENABLED;
-}
 
 /**
  * Validate the structure of a SQL query using DuckDB's own parser.
@@ -446,34 +467,26 @@ export function isSqlAstValidationEnabled(): boolean {
  * forward the message into their existing `{ isError: true, text }`
  * response shape without changing control flow.
  *
- * Layered AFTER the lexical pre-filter (`validateReadOnlySQL` /
- * `validateScopedSQL`) and BEFORE the query is handed to the
- * project's federated DuckDB instance. The lexical pre-filter handles
- * obvious junk on the deny path at zero parse cost; this validator
- * pays for one DuckDB parse on the accept path (~sub-millisecond).
+ * Runs BEFORE the query is handed to the project's federated DuckDB
+ * instance. This is the **sole** SQL-safety layer for `execute_query`
+ * and the agent tools; there is no fallback validator and no kill-
+ * switch. If `json_serialize_sql` ever fails to parse a query, the
+ * query is rejected with a parser-error message. Operators who need
+ * to bypass validation must roll back the deployment, not flip a
+ * config flag.
  */
 export async function validateSqlAst(
   sql: string,
   opts: SqlAstValidationOpts,
 ): Promise<string | null> {
-  if (!SQL_VALIDATION_AST_ENABLED) return null;
-
-  // Decompose EXPLAIN / DESCRIBE prefixes so the body is what we hand
-  // to `json_serialize_sql` (which only serializes SELECT statements).
-  // EXPLAIN ANALYZE — including comment-evasion variants — is rejected
-  // here because the lexical regex's `^\s*EXPLAIN\s+ANALYZE\b` does
-  // not see past mid-token block comments.
-  const explainPeel = peelExplain(sql);
-  if (explainPeel.error) return explainPeel.error;
-  let body = explainPeel.body;
-
-  // DESCRIBE wraps its argument in a SHOW_REF inside a synthesized
-  // SELECT_NODE; `json_serialize_sql` accepts that shape, so we let
-  // DESCRIBE flow through to the parser unchanged. The walker rejects
-  // any non-DESCRIBE/SUMMARIZE SHOW_REF show_type and walks the
-  // wrapped query so disallowed table functions inside
-  // `DESCRIBE SELECT * FROM read_parquet(...)` are still caught.
-  body = body.trimStart();
+  // Strip leading EXPLAIN (rejecting EXPLAIN ANALYZE, including comment-
+  // evasion variants) before the parser, since `json_serialize_sql`
+  // only accepts SELECT statements. DESCRIBE flows through unchanged —
+  // it parses as a SHOW_REF inside a synthesized SELECT_NODE that the
+  // walker handles via the SHOW_REF show_type allowlist.
+  const peeled = peelExplain(sql);
+  if (!peeled.ok) return peeled.error;
+  const body = peeled.body.trimStart();
 
   let payload: SerializeSqlPayload;
   try {
@@ -493,9 +506,12 @@ export async function validateSqlAst(
     return `Multiple statements are not allowed (got ${statements.length}).`;
   }
 
-  const root = statements[0]!.node;
+  const root = statements[0]?.node;
+  if (!root) {
+    return "Could not parse query: empty statement.";
+  }
   const rootType = typeof root.type === "string" ? root.type : "";
-  if (!ALLOWED_TOP_LEVEL_NODE_TYPES.has(rootType)) {
+  if (!ALLOWED_QUERY_NODE_TYPES.has(rootType)) {
     return (
       `Unsupported statement shape: top-level node "${rootType}" is not a SELECT/CTE/UNION. ` +
       `Only read-only queries (SELECT / WITH / set operations) are allowed.`

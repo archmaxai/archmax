@@ -267,20 +267,29 @@ describe("validateSqlAst — reject path (parser-evasion corpus)", () => {
     }
   });
 
-  it("rejects DuckDB metadata table forms (no parens)", async () => {
+  it("rejects DuckDB metadata table forms (no parens) in MCP mode", async () => {
     // `SELECT * FROM duckdb_columns` (no parentheses) parses as a
     // BASE_TABLE with table_name="duckdb_columns" rather than a
-    // TABLE_FUNCTION; it's still rejected because in MCP mode any
-    // schema-qualified ref is denied and bare `duckdb_*` table_names
-    // are denied too.
+    // TABLE_FUNCTION. The duckdb_* prefix rule on BASE_TABLE rejects
+    // it before the schema/catalog gate even runs.
+    const err = await validateSqlAst("SELECT * FROM duckdb_columns", MCP);
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/duckdb_columns/);
+  });
+
+  it("rejects DuckDB metadata table forms (no parens) in agent mode too", async () => {
+    // The duckdb_* prefix is platform-internal regardless of caller —
+    // agent path must not use it for schema exploration either
+    // (information_schema covers that need).
     const err = await validateSqlAst("SELECT * FROM duckdb_columns", AGENT);
-    // In agent mode bare `duckdb_columns` slips past — only the
-    // FUNCTION-call denylist catches scalar invocations. We rely on
-    // search_path / catalogs not exposing this name; the MCP mode
-    // already rejects via the schema-qualified rule. Document the
-    // status quo with this assertion (sanity check, not a security
-    // claim).
-    expect(err).toBeNull();
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/duckdb_columns/);
+  });
+
+  it("rejects quoted DuckDB metadata table forms in MCP mode", async () => {
+    const err = await validateSqlAst('SELECT * FROM "duckdb_secrets"', MCP);
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/duckdb_secrets/);
   });
 
   it("rejects glob() table function", async () => {
@@ -399,5 +408,487 @@ describe("validateSqlAst — connection lifecycle", () => {
     }
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(2_000);
+  });
+});
+
+describe("validateSqlAst — regex-parity corpus (sole-validator coverage)", () => {
+  // Every check the previous lexical pre-filter
+  // (validateReadOnlySQL / validateScopedSQL) caught is asserted here
+  // against the AST validator alone. If any of these stop firing,
+  // dropping the regex layer regresses security.
+
+  // ── First-keyword allowlist (non-SELECT/WITH/EXPLAIN/DESCRIBE) ──
+
+  it.each([
+    "INSERT INTO orders VALUES (1)",
+    "UPDATE orders SET total = 0",
+    "DELETE FROM orders",
+    "DROP TABLE orders",
+    "CREATE TABLE x (a INT)",
+    "ALTER TABLE orders ADD COLUMN c INT",
+    "TRUNCATE TABLE orders",
+    "COPY orders TO '/tmp/x.csv'",
+    "ATTACH 'foo.db' AS bar",
+    "DETACH bar",
+    "INSTALL postgres",
+    "LOAD postgres",
+    "PRAGMA table_info('orders')",
+    "PRAGMA version",
+    "SET memory_limit = '1GB'",
+    "VACUUM",
+    "CHECKPOINT",
+  ])("rejects non-SELECT statement: %s", async (sql) => {
+    const err = await validateSqlAst(sql, MCP);
+    expect(err, `expected reject for: ${sql}`).not.toBeNull();
+  });
+
+  it("rejects SHOW TABLES (only DESCRIBE/SUMMARIZE allowed for SHOW_REF)", async () => {
+    const err = await validateSqlAst("SHOW TABLES", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects SHOW DATABASES", async () => {
+    const err = await validateSqlAst("SHOW DATABASES", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  // ── EXPLAIN restrictions ──
+
+  it("rejects EXPLAIN INSERT (peeled body fails json_serialize_sql)", async () => {
+    const err = await validateSqlAst("EXPLAIN INSERT INTO t VALUES (1)", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects EXPLAIN DROP TABLE", async () => {
+    const err = await validateSqlAst("EXPLAIN DROP TABLE t", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects EXPLAIN UPDATE", async () => {
+    const err = await validateSqlAst("EXPLAIN UPDATE t SET x = 1", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects EXPLAIN ANALYZE wrapping CREATE TABLE (DuckDB would execute it)", async () => {
+    // EXPLAIN ANALYZE in DuckDB *executes* the wrapped statement, so
+    // this is the high-stakes regression test: a CREATE TABLE that
+    // smuggles past EXPLAIN ANALYZE detection would actually mutate.
+    const err = await validateSqlAst(
+      "EXPLAIN ANALYZE CREATE TABLE leak AS SELECT * FROM orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/EXPLAIN ANALYZE/);
+  });
+
+  // ── Multi-statement ──
+
+  it("rejects SELECT 1; DROP TABLE t (multi-statement)", async () => {
+    const err = await validateSqlAst("SELECT 1; DROP TABLE t", MCP);
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/Multiple statements|parse/i);
+  });
+
+  it("rejects SELECT 1; INSERT INTO t VALUES (1)", async () => {
+    const err = await validateSqlAst("SELECT 1; INSERT INTO t VALUES (1)", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects SELECT 1; SELECT 2", async () => {
+    const err = await validateSqlAst("SELECT 1; SELECT 2", MCP);
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/Multiple statements/);
+  });
+
+  it("accepts trailing semicolon after a single statement", async () => {
+    expect(await validateSqlAst("SELECT 1;", MCP)).toBeNull();
+  });
+
+  // ── Comment-prefixed evasion ──
+
+  it("rejects DROP hidden behind a leading line comment", async () => {
+    const err = await validateSqlAst("-- harmless\nDROP TABLE t", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects DROP hidden behind a leading block comment", async () => {
+    const err = await validateSqlAst("/* harmless */ DROP TABLE t", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("accepts leading line comment before a SELECT", async () => {
+    expect(
+      await validateSqlAst("-- this is a comment\nSELECT * FROM t", MCP),
+    ).toBeNull();
+  });
+
+  it("accepts leading block comment before a SELECT", async () => {
+    expect(
+      await validateSqlAst("/* block comment */ SELECT * FROM t", MCP),
+    ).toBeNull();
+  });
+
+  // ── System schemas / catalogs (MCP mode) ──
+
+  it.each([
+    ["bare information_schema", "SELECT * FROM information_schema.tables"],
+    ["bare pg_catalog", "SELECT * FROM pg_catalog.pg_class"],
+    ["bare sqlite_master", "SELECT * FROM sqlite_master"],
+    ["main schema", "SELECT * FROM main.foo"],
+    ["temp schema", "SELECT * FROM temp.foo"],
+    ["system schema", "SELECT * FROM system.foo"],
+  ])("rejects system schema: %s", async (_label, sql) => {
+    const err = await validateSqlAst(sql, MCP);
+    expect(err, `expected reject for: ${sql}`).not.toBeNull();
+  });
+
+  // ── Catalog slug references (MCP mode) ──
+
+  it("rejects bare catalog reference matching a project slug", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM shopify.public.orders",
+      { mode: "mcp", catalogSlugs: ["shopify"] },
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/catalog/);
+  });
+
+  it("rejects case-folded catalog slug reference", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM Shopify.public.orders",
+      { mode: "mcp", catalogSlugs: ["shopify"] },
+    );
+    expect(err).not.toBeNull();
+  });
+
+  // ── External readers (table-function form) ──
+
+  it.each([
+    "SELECT * FROM read_csv('/etc/passwd')",
+    "SELECT * FROM read_csv_auto('/etc/passwd')",
+    "SELECT * FROM read_parquet('s3://bucket/x.parquet')",
+    "SELECT * FROM read_json('/x.json')",
+    "SELECT * FROM read_blob('/x.bin')",
+  ])("rejects external file reader: %s", async (sql) => {
+    const err = await validateSqlAst(sql, MCP);
+    expect(err, `expected reject for: ${sql}`).not.toBeNull();
+  });
+
+  // ── DuckDB metadata (function and table forms) ──
+
+  it.each([
+    "SELECT * FROM duckdb_tables()",
+    "SELECT * FROM duckdb_columns()",
+    "SELECT * FROM duckdb_secrets()",
+    "SELECT * FROM duckdb_settings()",
+  ])("rejects duckdb_* function form: %s", async (sql) => {
+    const err = await validateSqlAst(sql, MCP);
+    expect(err, `expected reject for: ${sql}`).not.toBeNull();
+  });
+
+  it.each([
+    "SELECT * FROM duckdb_columns",
+    "SELECT * FROM duckdb_tables",
+    "SELECT * FROM duckdb_secrets",
+  ])("rejects duckdb_* bare-table form: %s", async (sql) => {
+    const err = await validateSqlAst(sql, MCP);
+    expect(err, `expected reject for: ${sql}`).not.toBeNull();
+  });
+
+  // ── _scope_* references ──
+
+  it("rejects bare _scope_ reference", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM _scope_ecommerce.orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/_scope_/);
+  });
+
+  it("rejects _scope_ reference in agent mode too", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM _scope_ecommerce.orders",
+      AGENT,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/_scope_/);
+  });
+
+  // ── Parser-evasion / quoting variants ──
+
+  it("rejects U&-escaped information_schema reference", async () => {
+    // "main" via 6-digit unicode escape — the regex couldn't decode
+    // these; the parser canonicalises them to the bare ident.
+    const err = await validateSqlAst(
+      "SELECT * FROM U&\"\\006D\\0061\\0069\\006E\".foo",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+  });
+
+  // ── False-positive fixes (regex was wrong, AST correct) ──
+
+  it("accepts string literals containing semicolons (no longer a false positive)", async () => {
+    // Previously the regex /;\s*\S/ rejected `SELECT 'a;b' FROM t`.
+    // The AST validator parses the literal correctly and accepts it.
+    expect(await validateSqlAst("SELECT 'a;b' FROM t", MCP)).toBeNull();
+  });
+
+  it("accepts dollar-quoted strings containing semicolons", async () => {
+    expect(
+      await validateSqlAst("SELECT $tag$;DROP TABLE x;$tag$ FROM t", MCP),
+    ).toBeNull();
+  });
+
+  // ── Empty / malformed input ──
+
+  it("rejects empty string", async () => {
+    const err = await validateSqlAst("", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects whitespace-only input", async () => {
+    const err = await validateSqlAst("   \n\t  ", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects comment-only input", async () => {
+    const err = await validateSqlAst("-- just a comment", MCP);
+    expect(err).not.toBeNull();
+  });
+
+  it("rejects block-comment-only input", async () => {
+    const err = await validateSqlAst("/* block */", MCP);
+    expect(err).not.toBeNull();
+  });
+});
+
+describe("validateSqlAst — deep-nesting evasion (walker is unbounded-depth)", () => {
+  // The walker visits every AST node. These tests assert that
+  // forbidden namespaces / functions cannot be hidden inside CTEs,
+  // set operations, lateral joins, window/aggregate expressions,
+  // ORDER BY / GROUP BY / HAVING, or DESCRIBE wrappers. If any of
+  // these regress, an attacker could smuggle a forbidden table or
+  // function past validation by burying it deep in the tree.
+
+  // ── information_schema / system catalogs hidden in CTEs ──
+
+  it("rejects information_schema hidden inside a CTE (MCP)", async () => {
+    const err = await validateSqlAst(
+      "WITH bad AS (SELECT * FROM information_schema.tables) SELECT * FROM bad",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  it("rejects pg_catalog hidden inside a recursive CTE (MCP)", async () => {
+    const err = await validateSqlAst(
+      "WITH RECURSIVE r AS (SELECT * FROM pg_catalog.pg_class UNION ALL SELECT * FROM r) SELECT * FROM r",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_catalog/i);
+  });
+
+  it("rejects information_schema on the right side of UNION (MCP)", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM orders UNION ALL SELECT * FROM information_schema.tables",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  it("rejects information_schema inside an EXISTS subquery (MCP)", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM orders WHERE EXISTS (SELECT 1 FROM information_schema.tables)",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  it("rejects information_schema inside a LATERAL join (MCP)", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM orders, LATERAL (SELECT * FROM information_schema.tables) t",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  // ── _scope_* cross-model leak hidden in nested queries ──
+
+  it("rejects _scope_other inside a CTE (universal deny — both modes)", async () => {
+    const sql =
+      'WITH x AS (SELECT * FROM "_scope_other_model"."orders") SELECT * FROM x';
+    expect(await validateSqlAst(sql, MCP)).toMatch(/_scope_/);
+    expect(await validateSqlAst(sql, AGENT)).toMatch(/_scope_/);
+  });
+
+  it("rejects _scope_other inside a subquery in agent mode", async () => {
+    const err = await validateSqlAst(
+      'SELECT * FROM orders WHERE id IN (SELECT id FROM "_scope_other"."orders")',
+      AGENT,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/_scope_/);
+  });
+
+  // ── duckdb_* metadata hidden in nested queries ──
+
+  it("rejects duckdb_columns hidden inside a subquery (both modes)", async () => {
+    const sql =
+      "SELECT * FROM orders WHERE id IN (SELECT cardinality FROM duckdb_columns)";
+    expect(await validateSqlAst(sql, MCP)).toMatch(/duckdb_columns/);
+    expect(await validateSqlAst(sql, AGENT)).toMatch(/duckdb_columns/);
+  });
+
+  it("rejects duckdb_secrets hidden inside a CTE", async () => {
+    const err = await validateSqlAst(
+      "WITH s AS (SELECT * FROM duckdb_secrets) SELECT * FROM s",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/duckdb_secrets/);
+  });
+
+  // ── Forbidden scalar functions hidden in expression positions ──
+
+  it("rejects pg_read_file in WHERE clause", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM orders WHERE customer_id = pg_read_file('/etc/passwd')",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects pg_read_file inside an aggregate", async () => {
+    const err = await validateSqlAst(
+      "SELECT count(pg_read_file('/etc/passwd')) FROM orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects pg_read_file inside a window function argument", async () => {
+    const err = await validateSqlAst(
+      "SELECT first_value(pg_read_file('/etc/passwd')) OVER (PARTITION BY id) FROM orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects pg_read_file inside ORDER BY", async () => {
+    const err = await validateSqlAst(
+      "SELECT * FROM orders ORDER BY pg_read_file('/etc/passwd')",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects pg_read_file inside GROUP BY", async () => {
+    const err = await validateSqlAst(
+      "SELECT count(*) FROM orders GROUP BY pg_read_file('/etc/passwd')",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects pg_read_file inside HAVING", async () => {
+    const err = await validateSqlAst(
+      "SELECT customer_id FROM orders GROUP BY customer_id HAVING count(*) > pg_read_file('/etc/passwd')::INTEGER",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects pg_read_file inside a CASE expression", async () => {
+    const err = await validateSqlAst(
+      "SELECT CASE WHEN id > 0 THEN pg_read_file('/etc/passwd') ELSE 'safe' END FROM orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+
+  it("rejects nextval() inside a SELECT projection", async () => {
+    const err = await validateSqlAst(
+      "SELECT id, nextval('my_seq') FROM orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/nextval/);
+  });
+
+  // ── DESCRIBE wrapping a forbidden namespace ──
+
+  it("rejects DESCRIBE wrapping a SELECT from information_schema (MCP)", async () => {
+    const err = await validateSqlAst(
+      "DESCRIBE SELECT * FROM information_schema.tables",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  it("rejects DESCRIBE wrapping a SELECT from duckdb_secrets (both modes)", async () => {
+    const sql = "DESCRIBE SELECT * FROM duckdb_secrets";
+    expect(await validateSqlAst(sql, MCP)).toMatch(/duckdb_secrets/);
+    expect(await validateSqlAst(sql, AGENT)).toMatch(/duckdb_secrets/);
+  });
+
+  // ── EXPLAIN wrapping deeply nested forbidden references ──
+
+  it("rejects EXPLAIN of a query containing information_schema in a CTE", async () => {
+    const err = await validateSqlAst(
+      "EXPLAIN WITH bad AS (SELECT * FROM information_schema.tables) SELECT * FROM bad",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/information_schema/i);
+  });
+
+  it("rejects EXPLAIN of a query containing pg_read_file inside an expression", async () => {
+    const err = await validateSqlAst(
+      "EXPLAIN SELECT pg_read_file('/etc/passwd') FROM orders",
+      MCP,
+    );
+    expect(err).not.toBeNull();
+    expect(err).toMatch(/pg_read_file/);
+  });
+});
+
+describe("validateSqlAst — fail-closed default for unknown statement shapes", () => {
+  // A future DuckDB release that introduces a new query-like AST node
+  // (e.g. a hypothetical `MERGE_NODE`) must NOT silently flow through
+  // the validator. The structural allowlist + `_NODE` suffix heuristic
+  // ensures unknown query-shape nodes are rejected with a clear error.
+  // We assert on real AST shapes the parser refuses today as a proxy
+  // for the fail-closed default — `INSERT_NODE`, `UPDATE_NODE`,
+  // `COPY_NODE`, etc. all hit the json_serialize_sql refusal first;
+  // the structural allowlist is a second line of defense for any node
+  // that DOES get serialised but isn't on our allowlist.
+
+  it("only allows SELECT_NODE / SET_OPERATION_NODE / RECURSIVE_CTE_NODE at the top level", async () => {
+    // INSERT/UPDATE/DELETE/COPY are caught by json_serialize_sql
+    // refusing non-SELECT statements; this assertion documents the
+    // top-level allowlist as the second line of defense.
+    expect(await validateSqlAst("SELECT 1", MCP)).toBeNull();
+    expect(await validateSqlAst("SELECT 1 UNION SELECT 2", MCP)).toBeNull();
+    expect(
+      await validateSqlAst(
+        "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) SELECT * FROM r",
+        MCP,
+      ),
+    ).toBeNull();
   });
 });

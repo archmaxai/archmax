@@ -65,25 +65,18 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 ### Validation Rules
 
-Every query passes through two layers before execution:
+Every query is parsed with DuckDB's own parser via `json_serialize_sql` and rejected unless its abstract syntax tree matches a strict allowlisted shape:
 
-1. **Lexical pre-filter** — a fast regex check that rejects obvious junk:
-   - Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
-   - Multi-statement queries rejected
-   - Raw catalog references (e.g., `shopify.public.orders`) rejected — use bare dataset names instead
-   - Explicit `_scope_` prefixes rejected — dataset names resolve automatically via `search_path`
-   - `SET`, `PRAGMA`, `COPY`, `ATTACH`, `INSTALL`, `LOAD`, and `CREATE SECRET` statements blocked
-2. **Structural AST validator** — every query that survives the regex layer is parsed with DuckDB's own parser via `json_serialize_sql` and rejected unless its abstract syntax tree matches a strict allowlisted shape:
-   - Exactly one top-level statement
-   - Top-level node must be a SELECT / set-operation / recursive CTE
-   - Every base-table reference must use bare dataset names (no schema, no catalog)
-   - System catalogs (`information_schema`, `pg_catalog`, `sqlite_master`, `main`, `temp`, `system`) and any schema beginning with `_scope_` are rejected — at the AST level, so quoting variants (`"information_schema"`, `U&"…"`, dollar-quoted, mixed-case, …) cannot evade the check
-   - Table functions are restricted to a small allowlist (`generate_series`, `range`, `unnest`, `repeat`, `from_json`, `values`); `read_csv*`, `read_parquet*`, `read_json*`, `read_blob*`, `parse_sql`, `json_serialize_sql`, and any function whose name begins with `duckdb_` are rejected
-   - Scalar function calls covering `read_*`, `pg_read_*`, `pg_ls_dir`, `duckdb_*`, `nextval`, and `currval` are rejected anywhere in the tree
-   - Any `EXPLAIN ANALYZE` (including comment-evasion variants such as `EXPLAIN /* ... */ ANALYZE`) is rejected — it would execute the wrapped statement
-   - Parser failures and parse timeouts are surfaced verbatim in the rejection message
+- Exactly one top-level statement (multi-statement payloads are rejected even when separators sit inside string literals — the parser distinguishes them, the validator doesn't have to)
+- Top-level node must be a SELECT / set-operation / recursive CTE; `EXPLAIN` is allowed as a wrapper around any of these
+- `EXPLAIN ANALYZE` is rejected — including comment-evasion variants such as `EXPLAIN /* ... */ ANALYZE` — because DuckDB executes the wrapped statement
+- Every base-table reference must use bare dataset names (no schema, no catalog); system catalogs (`information_schema`, `pg_catalog`, `sqlite_master`, `main`, `temp`, `system`) are rejected by name regardless of quoting variant (`"information_schema"`, `U&"…"`, dollar-quoted, mixed-case, …)
+- Any reference whose schema or table name begins with `_scope_` or `duckdb_` is rejected (covers `SELECT * FROM duckdb_columns`, `SELECT * FROM "_scope_other"."x"`, etc.)
+- Table functions are restricted to a small allowlist (`generate_series`, `range`, `unnest`, `repeat`, `from_json`, `values`); `read_csv*`, `read_parquet*`, `read_json*`, `read_blob*`, `parse_sql`, `json_serialize_sql`, and any function whose name begins with `duckdb_` are rejected
+- Scalar function calls covering `read_*`, `pg_read_*`, `pg_ls_dir`, `duckdb_*`, `nextval`, `currval`, `parse_sql`, and `json_serialize_sql` are rejected anywhere in the tree
+- Parser failures, malformed input, and empty / comment-only inputs are surfaced verbatim in the rejection message
 
-The structural validator can be disabled in an emergency by setting `SQL_VALIDATION_AST=false`; the lexical pre-filter and connection hardening still apply.
+This is the sole SQL-safety layer on the `execute_query` path. There is no fallback validator and no kill-switch — using DuckDB's own parser eliminates the class of regex bypasses where the validator and the engine disagreed about how to tokenize a query. If `json_serialize_sql` ever rejects a query the validator returns a parse-error message; recovery is a code fix, not a config flag.
 
 ### Security Hardening
 

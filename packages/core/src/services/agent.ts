@@ -22,7 +22,6 @@ import {
 } from "./agent-tools";
 
 export { ValidatingFilesystemBackend } from "./agent-filesystem";
-export { validateReadOnlySQL } from "./sql-validation";
 
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 

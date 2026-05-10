@@ -5,7 +5,7 @@ import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
 import { getEnv } from "../config/env";
-import { validateReadOnlySQL } from "./sql-validation";
+import { validateSqlAst } from "./sql-ast-validation";
 
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
@@ -516,19 +516,23 @@ export interface MaterialiseViewsResult {
 }
 
 /**
- * Validate a single dataset's `view_query` body before passing it to DuckDB.
+ * Validate a single dataset's `view_query` body before wrapping it in
+ * `CREATE OR REPLACE VIEW ... AS <view_query>`.
  *
- * We apply the read-only contract (`SELECT`/`WITH`/`EXPLAIN`/`DESCRIBE`,
- * single statement, no `EXPLAIN ANALYZE`) — that is sufficient to reject
- * the most dangerous authoring mistakes (`DROP TABLE`, `CREATE SECRET`,
- * multi-statement payloads). Forbidden-table-function rules are not
- * applied here because the body legitimately references the project's
- * attached catalogs (e.g. `FROM shop.public.orders`); those are the only
- * thing it should reference. The structural validator landing in
- * `add-structural-sql-safety` will tighten this further once it ships.
+ * Uses the same structural validator the agent's `executeQuery` tool
+ * uses (`mode: "agent"`), which permits `catalog.schema.table`
+ * references for attached connections — the legitimate shape of a
+ * view body — while still rejecting:
+ *   - non-SELECT/WITH/EXPLAIN/DESCRIBE statements (DROP, CREATE,
+ *     INSERT, multi-statement payloads, EXPLAIN ANALYZE, …)
+ *   - external file readers (`read_csv`, `read_parquet`, …)
+ *   - DuckDB metadata (`duckdb_*` table or function form)
+ *   - `_scope_*` cross-references between models
+ *   - sequence side effects (`nextval`, `currval`)
+ *   - file/directory readers (`pg_read_file`, `pg_ls_dir`, …)
  */
-function validateViewQuery(viewQuery: string): string | null {
-  return validateReadOnlySQL(viewQuery);
+async function validateViewQuery(viewQuery: string): Promise<string | null> {
+  return validateSqlAst(viewQuery, { mode: "agent" });
 }
 
 /**
@@ -563,7 +567,7 @@ export async function materialiseModelViews(
         continue;
       }
 
-      const validatorError = validateViewQuery(viewQuery);
+      const validatorError = await validateViewQuery(viewQuery);
       if (validatorError) {
         const msg = `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": validator rejected view_query (${validatorError})`;
         console.warn(msg);

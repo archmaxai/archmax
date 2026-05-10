@@ -13,7 +13,6 @@ import {
   withProjectQuerySlot,
   withQueryTimeout,
 } from "./duckdb";
-import { validateReadOnlySQL, validateScopedSQL } from "./sql-validation";
 import { validateSqlAst } from "./sql-ast-validation";
 import { DocumentFileService } from "./document-files";
 import { GitService } from "./git";
@@ -32,19 +31,13 @@ const MAX_ROWS = 1000;
 export function makeExecuteQueryTool(projectId: string) {
   return tool(
     async ({ sql, params }: { sql: string; params: unknown[] }) => {
-      const violation = validateReadOnlySQL(sql);
-      if (violation) {
-        return JSON.stringify({ error: violation });
-      }
-
-      // Structural validation in 'agent' mode: the agent path
-      // legitimately uses fully-qualified `catalog.schema.table` refs
-      // for schema exploration (see openspec/changes/add-structural-
-      // sql-safety/specs/semantic-model-agent/spec.md), so the
-      // catalog-reference rule from the MCP path is not applied here.
-      // System-catalog (information_schema, pg_catalog, sqlite_master,
-      // main, temp, system), `_scope_*`, table-function allowlist, and
-      // scalar-function denylist still apply identically.
+      // Sole SQL-safety layer for agent schema exploration. 'agent'
+      // mode skips BASE_TABLE catalog/schema rules so the agent can
+      // legitimately query `information_schema.tables` and
+      // `catalog.schema.table` references for attached connections;
+      // the statement-shape allowlist, table-function allowlist,
+      // scalar-function denylist, and `_scope_*` / `duckdb_*` prefix
+      // bans still apply.
       const astError = await validateSqlAst(sql, { mode: "agent" });
       if (astError) {
         return JSON.stringify({ error: astError });
@@ -145,11 +138,6 @@ export function makeRunModelQueryTool(projectId: string) {
     }) => {
       const fileSvc = new SemanticModelFileService(getEnv().projectsDir);
 
-      const readOnlyError = validateReadOnlySQL(sql);
-      if (readOnlyError) {
-        return JSON.stringify({ error: readOnlyError });
-      }
-
       await connectDB();
       const connections = (await Connection.find({
         project: projectId,
@@ -157,16 +145,11 @@ export function makeRunModelQueryTool(projectId: string) {
       }).lean()) as IConnectionDocument[];
 
       const catalogSlugs = getAttachedCatalogSlugs(connections);
-      const scopedError = validateScopedSQL(sql, catalogSlugs);
-      if (scopedError) {
-        return JSON.stringify({ error: scopedError });
-      }
 
-      // `runModelQuery` is the agent's *scoped* tool — it queries
-      // model-scoped views by bare dataset name, exactly like the MCP
-      // `execute_query` path. Apply the same structural pass so quoting
-      // / escape-form variants of system catalogs / `_scope_*` are
-      // rejected here too.
+      // Sole SQL-safety layer. `runModelQuery` queries model-scoped
+      // views by bare dataset name, so it uses 'mcp' mode (full
+      // BASE_TABLE rules including system-catalog and bare-name
+      // enforcement) — identical to the MCP `execute_query` path.
       const astError = await validateSqlAst(sql, { mode: "mcp", catalogSlugs });
       if (astError) {
         return JSON.stringify({ error: astError });

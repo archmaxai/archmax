@@ -86,6 +86,39 @@ describe("makeExecuteQueryTool", () => {
     const prepareOrder = mockDb.prepare.mock.invocationCallOrder[0];
     expect(hardenOrder).toBeLessThan(prepareOrder);
   });
+
+  it("rejects forbidden table functions via the AST validator before any DuckDB call", async () => {
+    // Wiring contract: read_parquet evades the lexical regex (no DDL
+    // tokens, no semicolons) but the AST validator rejects it. Proves
+    // makeExecuteQueryTool actually runs validateSqlAst.
+    const tool = makeExecuteQueryTool("proj-1");
+    const out = JSON.parse(
+      await tool.invoke({ sql: "SELECT * FROM read_parquet('/etc/x.parquet')", params: [] }),
+    );
+    expect(out.error).toMatch(/read_parquet/);
+    expect(getProjectInstance).not.toHaveBeenCalled();
+  });
+
+  it("rejects forbidden scalar functions via the AST validator", async () => {
+    const tool = makeExecuteQueryTool("proj-1");
+    const out = JSON.parse(
+      await tool.invoke({ sql: "SELECT pg_read_file('/etc/passwd')", params: [] }),
+    );
+    expect(out.error).toMatch(/pg_read_file/);
+    expect(getProjectInstance).not.toHaveBeenCalled();
+  });
+
+  it("permits information_schema queries (agent mode skips BASE_TABLE rules)", async () => {
+    // Counterpart to the rejection tests: the agent path explicitly
+    // allows information_schema for schema exploration, so the AST
+    // validator must NOT reject it.
+    const tool = makeExecuteQueryTool("proj-1");
+    await tool.invoke({
+      sql: "SELECT table_name FROM information_schema.tables",
+      params: [],
+    });
+    expect(getProjectInstance).toHaveBeenCalled();
+  });
 });
 
 describe("makeExecuteQueryTool description", () => {
@@ -148,6 +181,24 @@ describe("makeRunModelQueryTool", () => {
       await t.invoke({ modelName: "ecommerce", sql: 'SELECT * FROM _scope_ecommerce.orders', params: [] }),
     );
     expect(out.error).toMatch(/_scope_/);
+    expect(getProjectInstance).not.toHaveBeenCalled();
+  });
+
+  it("rejects quoted system schemas the regex layer would miss (AST wiring)", async () => {
+    // Wiring contract: makeRunModelQueryTool runs the AST validator in
+    // 'mcp' mode. `"information_schema"."tables"` slips past the
+    // lexical regex (no banned tokens, no semicolons) but the AST
+    // validator rejects it. If this assertion fires, the validator is
+    // not wired into the agent's runModelQuery path.
+    const t = makeRunModelQueryTool("proj-1");
+    const out = JSON.parse(
+      await t.invoke({
+        modelName: "ecommerce",
+        sql: 'SELECT * FROM "information_schema"."tables"',
+        params: [],
+      }),
+    );
+    expect(out.error).toMatch(/information_schema/i);
     expect(getProjectInstance).not.toHaveBeenCalled();
   });
 

@@ -26,12 +26,11 @@ vi.mock("./duckdb", async (importOriginal) => {
     hardenConnection: (...args: unknown[]) => mockHardenConnection(...args),
   };
 });
-vi.mock("./sql-validation", () => ({
-  validateReadOnlySQL: vi.fn(() => null),
-  validateScopedSQL: vi.fn(() => null),
-}));
+const mockValidateSqlAst = vi.fn<(sql: string, opts: unknown) => Promise<string | null>>(
+  () => Promise.resolve(null),
+);
 vi.mock("./sql-ast-validation", () => ({
-  validateSqlAst: vi.fn(() => Promise.resolve(null)),
+  validateSqlAst: (sql: string, opts: unknown) => mockValidateSqlAst(sql, opts),
 }));
 
 import {
@@ -228,6 +227,8 @@ describe("executeScopedQuery", () => {
     mockGetProjectInstance.mockReset();
     mockMaterialiseModelViews.mockReset();
     mockMaterialiseModelViews.mockResolvedValue({ materialised: [], missingViewQuery: [], failed: [] });
+    mockValidateSqlAst.mockReset();
+    mockValidateSqlAst.mockResolvedValue(null);
   });
 
   it("returns access denied for out-of-scope model", async () => {
@@ -235,6 +236,56 @@ describe("executeScopedQuery", () => {
     const result = await executeScopedQuery(fileSvc, "proj1", ["allowed"], "forbidden", "SELECT 1");
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Access denied");
+  });
+
+  it("forwards structural validator rejection as { isError: true }", async () => {
+    // Wiring contract: when validateSqlAst returns a non-null error, the
+    // MCP path must surface it in the response shape rather than letting
+    // the query reach DuckDB. Without this assertion the validator could
+    // silently be skipped or its output dropped.
+    mockValidateSqlAst.mockResolvedValueOnce(
+      `Reference to system catalog/schema "information_schema" is not allowed.`,
+    );
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const result = await executeScopedQuery(
+      fileSvc,
+      "proj1",
+      ["ecommerce"],
+      "ecommerce",
+      'SELECT * FROM "information_schema"."tables"',
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("information_schema");
+    expect(mockGetProjectInstance).not.toHaveBeenCalled();
+  });
+
+  it("calls validateSqlAst with mode='mcp' and the project's catalog slugs", async () => {
+    // Belt-and-suspenders: prove the MCP path doesn't accidentally pass
+    // mode='agent' (which would skip BASE_TABLE rules).
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const mockDb = {
+      prepare: vi.fn().mockResolvedValue({
+        bindVarchar: vi.fn(),
+        run: vi.fn().mockResolvedValue({
+          columnNames: () => ["id"],
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
+        }),
+      }),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", "SELECT * FROM orders");
+
+    expect(mockValidateSqlAst).toHaveBeenCalledWith(
+      "SELECT * FROM orders",
+      expect.objectContaining({ mode: "mcp" }),
+    );
   });
 
   it("returns not found for missing model", async () => {

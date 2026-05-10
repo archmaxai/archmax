@@ -221,7 +221,7 @@ The `execute_query` tool SHALL validate all SQL queries before execution. Only `
 
 ### Requirement: MCP DuckDB Connection Hardening
 
-Each `execute_query` invocation SHALL open a DuckDB connection with security hardening applied before query execution. The hardening SHALL include: `SET enable_external_access = false` (prevents file reads, network access, COPY operations), resource limits (`SET threads = 2`, `SET memory_limit = '512MB'`), and `SET search_path = '<scopeSchema>'` (resolves bare dataset names to the model's scoped VIEWs). Each setting SHALL be applied independently so that a failure on one does not skip the others. The `lock_configuration` setting SHALL NOT be used because it is instance-wide in DuckDB and would prevent per-connection `search_path` changes needed for model scoping; SQL validation (`validateReadOnlySQL`) serves as the primary guard against configuration tampering by rejecting all non-query statements. These settings SHALL be applied per-connection so they do not affect other DuckDB consumers (data browser, semantic model agent). The semantic model agent's `executeQuery` tool SHALL also apply the same `hardenConnection()` settings before executing any query, ensuring parity with the MCP code path.
+Each `execute_query` invocation SHALL open a DuckDB connection with security hardening applied before query execution. The hardening SHALL include: `SET enable_external_access = false` (prevents file reads, network access, COPY operations), resource limits (`SET threads = 2`, `SET memory_limit = '512MB'`), and `SET search_path = '<scopeSchema>'` (resolves bare dataset names to the model's scoped VIEWs). Each setting SHALL be applied independently so that a failure on one does not skip the others. The `lock_configuration` setting SHALL NOT be used because it is instance-wide in DuckDB and would prevent per-connection `search_path` changes needed for model scoping; SQL validation (`validateSqlAst`) serves as the primary guard against configuration tampering by rejecting all non-SELECT statements. These settings SHALL be applied per-connection so they do not affect other DuckDB consumers (data browser, semantic model agent). The semantic model agent's `executeQuery` tool SHALL also apply the same `hardenConnection()` settings before executing any query, ensuring parity with the MCP code path.
 
 #### Scenario: External access disabled
 - **WHEN** an MCP query attempts `SELECT * FROM read_csv('/etc/passwd')`
@@ -230,7 +230,7 @@ Each `execute_query` invocation SHALL open a DuckDB connection with security har
 
 #### Scenario: SET statements blocked by SQL validation
 - **WHEN** an MCP query attempts `SET enable_external_access = true`
-- **THEN** the query is rejected by `validateReadOnlySQL` before execution because it is not a SELECT/WITH/EXPLAIN/DESCRIBE statement
+- **THEN** the query is rejected by `validateSqlAst` before execution because the parser refuses to serialise non-SELECT statements
 
 #### Scenario: search_path resolves dataset names
 - **WHEN** an MCP query uses `SELECT * FROM "orders"` for model "ecommerce"
