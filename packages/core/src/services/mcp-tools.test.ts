@@ -14,21 +14,23 @@ vi.mock("../models/index", () => ({
 
 const mockHardenConnection = vi.fn();
 const mockGetProjectInstance = vi.fn();
-const mockCreateScopedViews = vi.fn();
+const mockMaterialiseModelViews = vi.fn();
 
 vi.mock("./duckdb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./duckdb")>();
   return {
     ...actual,
     getProjectInstance: (...args: unknown[]) => mockGetProjectInstance(...args),
-    createScopedViews: (...args: unknown[]) => mockCreateScopedViews(...args),
+    materialiseModelViews: (...args: unknown[]) => mockMaterialiseModelViews(...args),
     getAttachedCatalogSlugs: vi.fn(() => []),
     hardenConnection: (...args: unknown[]) => mockHardenConnection(...args),
   };
 });
-vi.mock("./sql-validation", () => ({
-  validateReadOnlySQL: vi.fn(() => null),
-  validateScopedSQL: vi.fn(() => null),
+const mockValidateSqlAst = vi.fn<(sql: string, opts: unknown) => Promise<string | null>>(
+  () => Promise.resolve(null),
+);
+vi.mock("./sql-ast-validation", () => ({
+  validateSqlAst: (sql: string, opts: unknown) => mockValidateSqlAst(sql, opts),
 }));
 
 import {
@@ -62,7 +64,11 @@ function makeField(name: string) {
   };
 }
 
-function makeDataset(name: string, fields: string[]) {
+function makeDataset(name: string, fields: string[], opts?: { withViewQuery?: boolean }) {
+  const withViewQuery = opts?.withViewQuery ?? true;
+  const viewQuery = withViewQuery
+    ? `SELECT ${fields.map((f) => `"${f}"`).join(", ")} FROM catalog.public.${name}`
+    : null;
   return {
     name,
     source: `catalog.public.${name}`,
@@ -70,7 +76,10 @@ function makeDataset(name: string, fields: string[]) {
     unique_keys: [] as string[][],
     description: "",
     fields: fields.map(makeField),
-    custom_extensions: [],
+    custom_extensions: viewQuery
+      ? [{ vendor_name: "COMMON", data: JSON.stringify({ view_query: viewQuery }) }]
+      : [],
+    viewQuery,
   };
 }
 
@@ -216,7 +225,15 @@ describe("executeScopedQuery", () => {
   beforeEach(() => {
     mockHardenConnection.mockReset();
     mockGetProjectInstance.mockReset();
-    mockCreateScopedViews.mockReset();
+    mockMaterialiseModelViews.mockReset();
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: [],
+      inferred: [],
+      missingViewQuery: [],
+      failed: [],
+    });
+    mockValidateSqlAst.mockReset();
+    mockValidateSqlAst.mockResolvedValue(null);
   });
 
   it("returns access denied for out-of-scope model", async () => {
@@ -224,6 +241,56 @@ describe("executeScopedQuery", () => {
     const result = await executeScopedQuery(fileSvc, "proj1", ["allowed"], "forbidden", "SELECT 1");
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Access denied");
+  });
+
+  it("forwards structural validator rejection as { isError: true }", async () => {
+    // Wiring contract: when validateSqlAst returns a non-null error, the
+    // MCP path must surface it in the response shape rather than letting
+    // the query reach DuckDB. Without this assertion the validator could
+    // silently be skipped or its output dropped.
+    mockValidateSqlAst.mockResolvedValueOnce(
+      `Reference to system catalog/schema "information_schema" is not allowed.`,
+    );
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const result = await executeScopedQuery(
+      fileSvc,
+      "proj1",
+      ["ecommerce"],
+      "ecommerce",
+      'SELECT * FROM "information_schema"."tables"',
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("information_schema");
+    expect(mockGetProjectInstance).not.toHaveBeenCalled();
+  });
+
+  it("calls validateSqlAst with mode='mcp' and the project's catalog slugs", async () => {
+    // Belt-and-suspenders: prove the MCP path doesn't accidentally pass
+    // mode='agent' (which would skip BASE_TABLE rules).
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const mockDb = {
+      prepare: vi.fn().mockResolvedValue({
+        bindVarchar: vi.fn(),
+        run: vi.fn().mockResolvedValue({
+          columnNames: () => ["id"],
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
+        }),
+      }),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", "SELECT * FROM orders");
+
+    expect(mockValidateSqlAst).toHaveBeenCalledWith(
+      "SELECT * FROM orders",
+      expect.objectContaining({ mode: "mcp" }),
+    );
   });
 
   it("returns not found for missing model", async () => {
@@ -307,6 +374,115 @@ describe("executeScopedQuery", () => {
     expect(result.text).toContain("customers: id, email");
   });
 
+  it("returns isError when any dataset has no view_query", async () => {
+    const datasets = [
+      makeDataset("orders", ["id", "total"]),
+      makeDataset("customers", ["id", "email"], { withViewQuery: false }),
+    ];
+    const model = makeModel("ecommerce", datasets);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    mockGetProjectInstance.mockResolvedValue({ connect: vi.fn() });
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: ["orders"],
+      inferred: [],
+      missingViewQuery: ["customers"],
+      failed: [],
+    });
+
+    const result = await executeScopedQuery(
+      fileSvc,
+      "proj1",
+      ["ecommerce"],
+      "ecommerce",
+      'SELECT * FROM "orders"',
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('"customers"');
+    // After the inferred-fallback landed, this error fires only when the
+    // dataset is genuinely incomplete (no fields/source AND no
+    // `view_query`). The message must call out BOTH paths the maintainer
+    // can take — fix the metadata to enable inference, OR author an
+    // explicit body — so the agent knows it has a choice.
+    expect(result.text).toMatch(/view_query/);
+    expect(result.text).toMatch(/fields/);
+    expect(result.text).toMatch(/source/);
+    expect(result.text).toMatch(/infer/i);
+    // The internal _scope_ schema name MUST NOT leak through to the agent.
+    expect(result.text).not.toContain("_scope_");
+    // The error is read by downstream LLM consumers that cannot author the
+    // model — it MUST direct them to the agent / maintainer, not present
+    // the gap as a transient error or push it onto the end user.
+    expect(result.text).toMatch(/authoring gap/i);
+    expect(result.text).toMatch(/agent.*(maintainer|owner)|maintainer.*agent/i);
+    // It MUST NOT use the legacy "data team" framing that previously caused
+    // downstream LLMs to bounce the issue back at the human user.
+    expect(result.text).not.toMatch(/data team/i);
+  });
+
+  it("returns isError when any dataset failed to materialise (does not query stale views)", async () => {
+    // `materialiseModelViews()` leaves the previous VIEW in place when
+    // a new view body is rejected by the validator or fails at CREATE
+    // OR REPLACE time. If the MCP path quietly proceeded, an MCP token
+    // holder could keep querying yesterday's looser body after the
+    // maintainer tightened the `view_query`. The MCP path MUST refuse
+    // to execute on this signal.
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    mockGetProjectInstance.mockResolvedValue({ connect: vi.fn() });
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: [],
+      inferred: [],
+      missingViewQuery: [],
+      failed: [
+        {
+          dataset: "orders",
+          // Include the internal scope qualifier in the simulated DuckDB
+          // error to assert the MCP path strips it before responding.
+          error: 'Catalog Error: Table with name "_scope_ecommerce"."orders" does not exist',
+        },
+      ],
+    });
+
+    const result = await executeScopedQuery(
+      fileSvc,
+      "proj1",
+      ["ecommerce"],
+      "ecommerce",
+      'SELECT * FROM "orders"',
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("orders");
+    expect(result.text).toMatch(/failed to materialise/i);
+    expect(result.text).not.toContain("_scope_");
+  });
+
+  it("re-runs materialisation on every call (no cache to invalidate)", async () => {
+    const model = makeModel("ecommerce", [makeDataset("orders", ["id", "total"])]);
+    const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
+
+    const mockDb = {
+      prepare: vi.fn().mockResolvedValue({
+        bindVarchar: vi.fn(),
+        run: vi.fn().mockResolvedValue({
+          columnNames: () => ["id", "total"],
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
+        }),
+      }),
+      disconnectSync: vi.fn(),
+    };
+    mockGetProjectInstance.mockResolvedValue({ connect: () => Promise.resolve(mockDb) });
+
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", 'SELECT * FROM "orders"');
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", 'SELECT * FROM "orders"');
+    await executeScopedQuery(fileSvc, "proj1", ["ecommerce"], "ecommerce", 'SELECT * FROM "orders"');
+
+    expect(mockMaterialiseModelViews).toHaveBeenCalledTimes(3);
+  });
+
   it("returns table-not-found error with bare dataset name hints", async () => {
     const model = makeModel("shop", [makeDataset("orders", ["id"])]);
     const fileSvc = createMockFileSvc([{ ...model, metrics: [] }]);
@@ -366,7 +542,13 @@ describe("executeStoredQuery", () => {
     mockStoredQueryFindOne.mockReset();
     mockHardenConnection.mockReset();
     mockGetProjectInstance.mockReset();
-    mockCreateScopedViews.mockReset();
+    mockMaterialiseModelViews.mockReset();
+    mockMaterialiseModelViews.mockResolvedValue({
+      materialised: [],
+      inferred: [],
+      missingViewQuery: [],
+      failed: [],
+    });
   });
 
   it("returns not found when stored query does not exist", async () => {

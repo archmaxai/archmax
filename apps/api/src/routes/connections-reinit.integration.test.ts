@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   projectFindById: vi.fn(),
   connectionFind: vi.fn(),
   disposeProjectInstance: vi.fn(),
+  deleteProjectDuckdbFile: vi.fn(),
   getProjectInstance: vi.fn(),
   testSingleConnection: vi.fn(),
   withQueryTimeout: vi.fn(async (_db: unknown, op: () => Promise<unknown>) => op()),
@@ -27,6 +28,7 @@ vi.mock("@archmax/core/models/index", () => ({
 }));
 vi.mock("@archmax/core/services/duckdb", () => ({
   disposeProjectInstance: mocks.disposeProjectInstance,
+  deleteProjectDuckdbFile: mocks.deleteProjectDuckdbFile,
   getProjectInstance: mocks.getProjectInstance,
   testSingleConnection: mocks.testSingleConnection,
   withQueryTimeout: mocks.withQueryTimeout,
@@ -133,5 +135,44 @@ describe("POST /api/projects/:projectId/connections/reinit", () => {
     const body = await jsonBody<{ ok: true; tableCount: number }>(res);
     expect(body.ok).toBe(true);
     expect(body.tableCount).toBe(0);
+  });
+
+  it("deletes the duckdb file when reset=true", async () => {
+    mocks.projectFindById.mockReturnValue({ lean: vi.fn().mockResolvedValue({ _id: "proj1" }) });
+    mocks.connectionFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([]) });
+    mockInstanceReturningRows([]);
+
+    const res = await app.request(`${BASE}?reset=true`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(mocks.deleteProjectDuckdbFile).toHaveBeenCalledWith("proj1");
+  });
+
+  it("does not delete the duckdb file when reset is omitted or false", async () => {
+    mocks.projectFindById.mockReturnValue({ lean: vi.fn().mockResolvedValue({ _id: "proj1" }) });
+    mocks.connectionFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([]) });
+    mockInstanceReturningRows([]);
+
+    const noFlag = await app.request(BASE, { method: "POST" });
+    expect(noFlag.status).toBe(200);
+    expect(mocks.deleteProjectDuckdbFile).not.toHaveBeenCalled();
+
+    const explicitFalse = await app.request(`${BASE}?reset=false`, { method: "POST" });
+    expect(explicitFalse.status).toBe(200);
+    expect(mocks.deleteProjectDuckdbFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-boolean reset values via zValidator before deleting anything", async () => {
+    // The route's `reset` flag triggers a destructive `deleteProjectDuckdbFile`
+    // call. Reading it straight off `c.req.query()` (without Zod parsing)
+    // would let `reset=evil` and similar inputs flow through unchecked.
+    // We pin behaviour: anything other than `true`/`false`/omitted must
+    // produce a 400 and MUST NOT call `deleteProjectDuckdbFile`.
+    mocks.projectFindById.mockReturnValue({ lean: vi.fn().mockResolvedValue({ _id: "proj1" }) });
+
+    for (const bad of ["evil", "1", "yes", "TRUE"]) {
+      const res = await app.request(`${BASE}?reset=${bad}`, { method: "POST" });
+      expect(res.status).toBe(400);
+    }
+    expect(mocks.deleteProjectDuckdbFile).not.toHaveBeenCalled();
   });
 });

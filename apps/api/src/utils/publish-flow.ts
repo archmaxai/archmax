@@ -3,7 +3,6 @@ import { connectDB } from "@archmax/core/infra/db";
 import { PublishEvent } from "@archmax/core/models/index";
 import type { IPublishEventDocument } from "@archmax/core/models/PublishEvent";
 import { PublishService } from "@archmax/core/services/publish";
-import { invalidateScopedViews } from "@archmax/core/services/duckdb";
 import type { GitService } from "@archmax/core/services/git";
 import { getRemoteConfig } from "./github";
 
@@ -38,7 +37,9 @@ export async function finalizePublish(
   const modelNames = await svc.assemble(projectId);
   const contentHash = await svc.computeSourceHash(projectId);
 
-  invalidateScopedViews(projectId);
+  // Stateless materialisation: scoped VIEWs are (re)created on every
+  // model-scoped query against the project's persistent DuckDB file, so
+  // there is no in-memory cache for the publish flow to invalidate.
 
   const oid = await gitSvc.commit(commitMessage);
 

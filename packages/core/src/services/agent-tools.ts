@@ -3,10 +3,20 @@ import { z } from "zod/v4";
 import { getEnv } from "../config/env";
 import { Connection, TestAgent, TestCase, type IConnectionDocument } from "../models/index";
 import { connectDB } from "../infra/db";
-import { getProjectInstance, hardenConnection, withQueryTimeout, withProjectQuerySlot } from "./duckdb";
-import { validateReadOnlySQL } from "./sql-validation";
+import {
+  getAttachedCatalogSlugs,
+  getProjectInstance,
+  hardenConnection,
+  materialiseModelViews,
+  scopeSchemaName,
+  stripScopedSchemaQualifier,
+  withProjectQuerySlot,
+  withQueryTimeout,
+} from "./duckdb";
+import { validateSqlAst } from "./sql-ast-validation";
 import { DocumentFileService } from "./document-files";
 import { GitService } from "./git";
+import { SemanticModelFileService } from "./semantic-model-files";
 import { SEMANTIC_MODEL_AGENT_PROMPT } from "../prompts/index";
 import type { ValidatingFilesystemBackend } from "./agent-filesystem";
 
@@ -21,9 +31,16 @@ const MAX_ROWS = 1000;
 export function makeExecuteQueryTool(projectId: string) {
   return tool(
     async ({ sql, params }: { sql: string; params: unknown[] }) => {
-      const violation = validateReadOnlySQL(sql);
-      if (violation) {
-        return JSON.stringify({ error: violation });
+      // Sole SQL-safety layer for agent schema exploration. 'agent'
+      // mode skips BASE_TABLE catalog/schema rules so the agent can
+      // legitimately query `information_schema.tables` and
+      // `catalog.schema.table` references for attached connections;
+      // the statement-shape allowlist, table-function allowlist,
+      // scalar-function denylist, and `_scope_*` / `duckdb_*` prefix
+      // bans still apply.
+      const astError = await validateSqlAst(sql, { mode: "agent" });
+      if (astError) {
+        return JSON.stringify({ error: astError });
       }
 
       await connectDB();
@@ -80,7 +97,9 @@ export function makeExecuteQueryTool(projectId: string) {
     {
       name: "executeQuery",
       description:
-        "Run a read-only SQL query against the project's DuckDB instance. " +
+        "Run a read-only SQL query against the project's catalogs for **schema exploration** — " +
+        "use this for `information_schema`, sampling raw source tables, and validating join " +
+        "cardinalities. Do NOT use it to test scoped views — use `runModelQuery` for that. " +
         "The SQL engine is DuckDB — use DuckDB SQL syntax, NOT PostgreSQL or MySQL. " +
         "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed. " +
         "All database connections are attached as named catalogs — you MUST fully qualify every table as catalog.schema.table (e.g. Shopify.public.shopify_orders). " +
@@ -90,6 +109,159 @@ export function makeExecuteQueryTool(projectId: string) {
       schema: z.object({
         sql: z.string().describe("SQL query with $1, $2, ... placeholders"),
         params: z.array(z.unknown()).describe("Parameter values for placeholders").default([]),
+      }),
+    },
+  );
+}
+
+/**
+ * Agent tool for testing a model's authored views.
+ *
+ * Counterpart to MCP `execute_query`: queries reference datasets by their
+ * **bare name** (resolved via `search_path = _scope_<modelName>`). The agent
+ * never sees the internal `_scope_*` schema — error messages are rewritten
+ * to drop that qualifier before being returned.
+ *
+ * On every call, this tool re-runs `materialiseModelViews` so the latest
+ * `view_query` from disk is reflected. There is no in-memory cache.
+ */
+export function makeRunModelQueryTool(projectId: string) {
+  return tool(
+    async ({
+      modelName,
+      sql,
+      params,
+    }: {
+      modelName: string;
+      sql: string;
+      params: unknown[];
+    }) => {
+      const fileSvc = new SemanticModelFileService(getEnv().projectsDir);
+
+      await connectDB();
+      const connections = (await Connection.find({
+        project: projectId,
+        isActive: true,
+      }).lean()) as IConnectionDocument[];
+
+      const catalogSlugs = getAttachedCatalogSlugs(connections);
+
+      // Sole SQL-safety layer. `runModelQuery` queries model-scoped
+      // views by bare dataset name, so it uses 'mcp' mode (full
+      // BASE_TABLE rules including system-catalog and bare-name
+      // enforcement) — identical to the MCP `execute_query` path.
+      const astError = await validateSqlAst(sql, { mode: "mcp", catalogSlugs });
+      if (astError) {
+        return JSON.stringify({ error: astError });
+      }
+
+      const model = await fileSvc.get(projectId, modelName);
+      if (!model) {
+        return JSON.stringify({
+          error: `Semantic model "${modelName}" not found. Use list_dir or fs to inspect what models exist.`,
+        });
+      }
+
+      const instance = await getProjectInstance(projectId, connections, { readOnly: true });
+      const materialisation = await materialiseModelViews(instance, projectId, model);
+
+      if (materialisation.missingViewQuery.length > 0) {
+        const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+        // This error fires only when the dataset has neither an authored
+        // `view_query` nor enough metadata to infer a default mirror view
+        // (no `source`, or no `fields`). The inferred-fallback path
+        // already covers the simple "I just declared fields and a source"
+        // shape automatically; landing here means the dataset YAML
+        // itself is incomplete. Phrase it as a self-correction prompt
+        // so the agent re-enters the authoring loop instead of
+        // surfacing the gap to the human.
+        return JSON.stringify({
+          error:
+            `Cannot test model "${modelName}" yet — dataset(s) ${names} are incomplete: the YAML ` +
+            `has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` pair ` +
+            `the platform could infer a default mirror view from. This is your job, not the ` +
+            `operator's: open each affected dataset's YAML and either (a) add the missing ` +
+            `\`fields\` / \`source\`, which lets the platform auto-derive a default mirror view, ` +
+            `or (b) author an explicit \`view_query\` in its COMMON custom extension when you ` +
+            `need filters / joins / computed columns (see workflow step 4f for the three concrete ` +
+            `shapes), then call \`runModelQuery\` again.`,
+        });
+      }
+
+      if (materialisation.failed.length > 0) {
+        const failures = materialisation.failed.map((f) => ({
+          dataset: f.dataset,
+          error: stripScopedSchemaQualifier(f.error, modelName),
+        }));
+        return JSON.stringify({
+          error:
+            `One or more datasets in "${modelName}" failed to materialise. ` +
+            `Fix their \`view_query\` and retry.`,
+          failures,
+        });
+      }
+
+      return withProjectQuerySlot(projectId, async () => {
+        const db = await instance.connect();
+        try {
+          const hasIceberg = connections.some((c) => c.type === "iceberg");
+          await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
+
+          const prepared = await db.prepare(sql);
+          if (params.length > 0) {
+            for (let i = 0; i < params.length; i++) {
+              prepared.bindVarchar(i + 1, String(params[i]));
+            }
+          }
+
+          const result = await withQueryTimeout(db, () => prepared.run());
+
+          const rows: Record<string, unknown>[] = [];
+          const columns = result.columnNames();
+          for await (const chunk of result) {
+            const chunkRows = chunk.getRows();
+            for (const row of chunkRows) {
+              const obj: Record<string, unknown> = {};
+              for (let i = 0; i < columns.length; i++) {
+                obj[columns[i]] = row[i];
+              }
+              rows.push(obj);
+              if (rows.length >= MAX_ROWS) break;
+            }
+            if (rows.length >= MAX_ROWS) break;
+          }
+
+          return safeStringify({
+            columns,
+            rows,
+            rowCount: rows.length,
+            truncated: rows.length >= MAX_ROWS,
+          });
+        } catch (err) {
+          console.error("[runModelQuery] Query error:", err);
+          const raw = err instanceof Error ? err.message : "Query execution failed.";
+          const msg = stripScopedSchemaQualifier(raw, modelName);
+          return JSON.stringify({ error: msg });
+        } finally {
+          db.disconnectSync();
+        }
+      });
+    },
+    {
+      name: "runModelQuery",
+      description:
+        "Run a query against a model you have authored. Reference datasets by their bare name " +
+        "(e.g. `SELECT * FROM \"orders\" LIMIT 5`). Use this to confirm a `view_query` you just " +
+        "wrote materialises and returns the rows you expected. Filtering and projection are the " +
+        "responsibility of `view_query`, not of this query. " +
+        "The SQL engine is DuckDB — use DuckDB SQL syntax, NOT PostgreSQL or MySQL. " +
+        "Only SELECT / WITH / EXPLAIN / DESCRIBE queries are allowed. " +
+        "Use $1, $2, ... placeholders and provide values in the params array. " +
+        "Results are limited to 1000 rows.",
+      schema: z.object({
+        modelName: z.string().describe("Name of the semantic model whose datasets you want to query"),
+        sql: z.string().describe("SQL query referencing datasets by bare name (e.g. FROM orders)"),
+        params: z.array(z.unknown()).describe("Parameter values for $1, $2, ... placeholders").default([]),
       }),
     },
   );
@@ -189,7 +361,10 @@ export function makeReadDocumentTool(projectId: string) {
       description:
         "Read an uploaded document and return its content as markdown. " +
         "Pass a filename to read a specific document, or pass an empty string to list all available documents. " +
-        "Supports PDF, DOCX, XLSX, CSV, TXT, MD, HTML, and more.",
+        "Supports PDF, DOCX, XLSX, CSV, TXT, MD, HTML, and more. " +
+        "Users may upload data dictionaries, ERDs, business glossaries, or mapping spreadsheets that provide " +
+        "context for building semantic models. When the user mentions a document or asks you to use " +
+        "supplementary documentation, use this tool to access it.",
       schema: z.object({
         filename: z
           .string()
@@ -263,7 +438,9 @@ export function makeListTestCasesTool(projectId: string) {
       name: "list_test_cases",
       description:
         "List existing test cases for the current project. Optionally filter by semantic model name. " +
-        "Use this to see what test coverage already exists before creating new test cases.",
+        "Returns each case's id, title, semantic model, input message, expected facts count, tags, " +
+        "and assigned test agent. Use this to review existing coverage before creating new test cases " +
+        "and to avoid creating duplicates.",
       schema: z.object({
         semanticModel: z
           .string()
@@ -361,7 +538,10 @@ export function makeCreateTestCaseTool(projectId: string) {
       description:
         "Create a test case for the current project. The test case captures a natural-language " +
         "question and the expected factual assertions that a test agent's response must satisfy. " +
-        "Use this after completing a semantic model to generate a starter test suite. " +
+        "**Only use this tool when the user explicitly provides ground-truth facts or expected " +
+        "answers.** Do NOT invent expected facts from your own data exploration — the user is the " +
+        "source of truth, because query results can change over time and only the user knows the " +
+        "true expected answers. " +
         "The 'auto-generated' tag is added automatically. Optionally assign a test agent by ID " +
         "(use list_test_agents first to find available agents).",
       schema: z.object({
@@ -424,7 +604,9 @@ export function makeDiscardAllChangesTool(projectDir: string) {
       description:
         "Restore the entire working directory to the state at the last Git commit (HEAD). " +
         "All uncommitted modifications, additions, and deletions are reverted. " +
-        "Use with caution — this removes all unsaved work.",
+        "Use with caution — this removes all unsaved work. " +
+        "**Always confirm with the user before calling this tool**, since it cannot be undone " +
+        "from within the agent.",
       schema: z.object({}),
     },
   );
@@ -476,6 +658,8 @@ export function buildConnectionContext(connections: IConnectionDocument[]): stri
     "NEVER query a table without its catalog prefix — unqualified names will fail.",
     "",
     "**READ-ONLY**: All queries are read-only. INSERT, UPDATE, DELETE, CREATE, DROP, and ALTER statements are forbidden and will be rejected.",
+    "",
+    "When testing a model you have authored, call `runModelQuery` with the model name and reference datasets by bare name.",
   ].join("\n");
 }
 

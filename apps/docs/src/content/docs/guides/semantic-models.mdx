@@ -51,7 +51,7 @@ metrics:
 
 ## Dataset Files
 
-Each dataset maps to a database table or view:
+Each dataset maps to a database table or view. Every dataset MUST declare a `view_query` in its COMMON custom extension — it is the SELECT body the platform wraps as the dataset's view, and downstream MCP tooling cannot query a dataset that lacks one.
 
 ```yaml
 name: orders
@@ -60,6 +60,9 @@ primary_key: [order_id]
 description: Customer orders with line items and totals
 ai_context:
   instructions: Each row is one order. Use total_amount for revenue calculations.
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"view_query":"SELECT order_id, total_amount, created_at FROM shopify.public.orders WHERE cancelled_at IS NULL"}'
 fields:
   - name: order_id
     expression:
@@ -91,6 +94,37 @@ fields:
         data:
           data_type: TIMESTAMP
 ```
+
+## The `view_query` Custom Extension
+
+Every dataset SHALL declare a `view_query` in its COMMON custom extension. It is the SELECT body the platform wraps as the dataset's view inside the per-model DuckDB schema. The platform never auto-derives a view from `fields`; without `view_query` the dataset is unqueryable.
+
+Three common shapes:
+
+```yaml
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"view_query":"SELECT id, status, total_amount, customer_id, ordered_at FROM shop_db.public.orders"}'
+```
+
+```yaml
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"view_query":"SELECT id, status, total_amount, customer_id, ordered_at FROM shop_db.public.orders WHERE cancelled_at IS NULL AND test IS NOT TRUE"}'
+```
+
+```yaml
+custom_extensions:
+  - vendor_name: COMMON
+    data: '{"view_query":"SELECT o.id, o.status, o.total_amount, c.email AS customer_email, o.ordered_at FROM shop_db.public.orders o LEFT JOIN shop_db.public.customers c ON c.id = o.customer_id"}'
+```
+
+Rules:
+
+- The body MUST be a single SELECT — no `CREATE VIEW` wrapper, no semicolon-separated multi-statement payloads.
+- Every declared `field.name` MUST appear as a column. Use `<expression> AS "<name>"` when the physical column name differs.
+- Reference physical tables by their full `catalog.schema.table` path. Do not reference other datasets in the same model from inside `view_query`; cross-dataset joins belong in the **relationships** layer.
+- The body is re-materialised as `CREATE OR REPLACE VIEW` on every model-scoped query, so editing `view_query` takes effect on the next call without any cache invalidation.
 
 ## Dataset Groups
 

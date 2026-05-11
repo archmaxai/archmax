@@ -61,7 +61,7 @@ Click any row to open a detail panel with the full input arguments and tool outp
 
 ## Query Execution
 
-The `execute_query` tool lets agents run SQL against your data through sandboxed VIEWs. Instead of accessing raw tables, agents write SQL with bare dataset names — the correct scoped schema is resolved automatically via DuckDB's `search_path`:
+The `execute_query` tool lets agents run SQL against your data through scoped per-model VIEWs. Instead of accessing raw tables, agents write SQL with bare dataset names — the correct scoped schema is resolved automatically via DuckDB's `search_path`:
 
 ```sql
 SELECT o.total_amount, c.name
@@ -74,6 +74,8 @@ LIMIT 100
 
 Agents should **not** add schema or catalog prefixes. The `search_path` ensures that `"orders"` resolves to the correct scoped VIEW for the requested model.
 
+The VIEW that backs each dataset comes from the dataset's `view_query` custom extension — authored by the modeller, not auto-generated. The platform re-materialises the VIEWs on every `execute_query` call (`CREATE OR REPLACE VIEW`), so changes to `view_query` take effect on the very next call. If a dataset has no `view_query`, `execute_query` returns a clear error identifying the offending datasets and the model is unqueryable until the modeller adds one.
+
 ### Security
 
 - Queries are validated to only allow `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements
@@ -81,6 +83,8 @@ Agents should **not** add schema or catalog prefixes. The `search_path` ensures 
 - Explicit `_scope_` prefixes are rejected — names resolve automatically
 - Each query runs with DuckDB security hardening: external access disabled, resource limits, `SET` statements blocked
 - Results are capped at 1,000 rows with a 30-second timeout
+
+The view layer is a **logical** access control built on top of the federated DuckDB instance — it is not a process or kernel sandbox. See [Limits of the View Layer](/guides/data-federation#limits-of-the-view-layer) for what it does and does not protect against, and the operator checklist for how to combine it with upstream database privileges.
 
 ## Client Configuration Examples
 

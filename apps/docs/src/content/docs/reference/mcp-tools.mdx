@@ -3,6 +3,8 @@ title: MCP Tools Reference
 description: Complete reference for all MCP tools exposed by archmax.
 ---
 
+import { Aside } from "@astrojs/starlight/components";
+
 All tools are available through the project MCP endpoint at `POST /mcp/<project-slug>/mcp`. Tools operate within the scope of the project identified by the URL slug.
 
 Semantic models are stored internally as [OSI](https://github.com/open-semantic-interchange/OSI) YAML, but all tools that return model information (`get_semantic_model`, `get_datasets`) serve a **compressed markdown digest** instead of raw YAML. This digest uses 3–5× fewer tokens while preserving field types, descriptions, enums, examples, relationships, and instructions.
@@ -65,11 +67,18 @@ Run a read-only SQL query scoped to a semantic model's VIEWs.
 
 ### Validation Rules
 
-- Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements allowed
-- Multi-statement queries rejected
-- Raw catalog references (e.g., `shopify.public.orders`) rejected — use bare dataset names instead
-- Explicit `_scope_` prefixes rejected — dataset names resolve automatically via `search_path`
-- `SET` statements blocked
+Every query is parsed with DuckDB's own parser via `json_serialize_sql` and rejected unless its abstract syntax tree matches a strict allowlisted shape:
+
+- Exactly one top-level statement (multi-statement payloads are rejected even when separators sit inside string literals — the parser distinguishes them, the validator doesn't have to)
+- Top-level node must be a SELECT / set-operation / recursive CTE; `EXPLAIN` is allowed as a wrapper around any of these
+- `EXPLAIN ANALYZE` is rejected — including comment-evasion variants such as `EXPLAIN /* ... */ ANALYZE` — because DuckDB executes the wrapped statement
+- Every base-table reference must use bare dataset names (no schema, no catalog); system catalogs (`information_schema`, `pg_catalog`, `sqlite_master`, `main`, `temp`, `system`) are rejected by name regardless of quoting variant (`"information_schema"`, `U&"…"`, dollar-quoted, mixed-case, …)
+- Any reference whose schema or table name begins with `_scope_` or `duckdb_` is rejected (covers `SELECT * FROM duckdb_columns`, `SELECT * FROM "_scope_other"."x"`, etc.)
+- Table functions are restricted to a small allowlist (`generate_series`, `range`, `unnest`, `repeat`, `from_json`, `values`); `read_csv*`, `read_parquet*`, `read_json*`, `read_blob*`, `parse_sql`, `json_serialize_sql`, and any function whose name begins with `duckdb_` are rejected
+- Scalar function calls covering `read_*`, `pg_read_*`, `pg_ls_dir`, `duckdb_*`, `nextval`, `currval`, `parse_sql`, and `json_serialize_sql` are rejected anywhere in the tree
+- Parser failures, malformed input, and empty / comment-only inputs are surfaced verbatim in the rejection message
+
+This is the sole SQL-safety layer on the `execute_query` path. There is no fallback validator and no kill-switch — using DuckDB's own parser eliminates the class of regex bypasses where the validator and the engine disagreed about how to tokenize a query. If `json_serialize_sql` ever rejects a query the validator returns a parse-error message; recovery is a code fix, not a config flag.
 
 ### Security Hardening
 
@@ -77,6 +86,10 @@ Each query runs in a DuckDB connection with:
 - `enable_external_access = false`: no file reads, network access, or COPY operations
 - `threads = 2`, `memory_limit = '512MB'`: resource limits
 - `search_path` set to the model's scoped schema so bare dataset names resolve to the correct VIEWs
+
+<Aside type="caution" title="Logical layer, not a process sandbox">
+The validator + scoped-VIEW combination runs against the same DuckDB instance that holds every attached connection in the project. Modeller mistakes in `view_query`, co-tenancy across MCP tokens scoped to the same model, and DuckDB / extension privilege-escalation bugs are explicitly **out of scope** for this layer. See [Limits of the View Layer](/guides/data-federation#limits-of-the-view-layer) for the full list and the operator checklist.
+</Aside>
 
 ---
 

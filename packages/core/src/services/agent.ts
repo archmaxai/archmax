@@ -7,6 +7,7 @@ import { connectDB } from "../infra/db";
 import { ValidatingFilesystemBackend } from "./agent-filesystem";
 import {
   makeExecuteQueryTool,
+  makeRunModelQueryTool,
   makeDeleteTool,
   makeMvTool,
   makeCpTool,
@@ -21,7 +22,6 @@ import {
 } from "./agent-tools";
 
 export { ValidatingFilesystemBackend } from "./agent-filesystem";
-export { validateReadOnlySQL } from "./sql-validation";
 
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
@@ -57,6 +57,7 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
   });
 
   const executeQuery = makeExecuteQueryTool(projectId);
+  const runModelQuery = makeRunModelQueryTool(projectId);
   const rmTool = makeDeleteTool(backend);
   const mvTool = makeMvTool(backend);
   const cpTool = makeCpTool(backend);
@@ -71,7 +72,7 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
   return createDeepAgent({
     model: llm,
     backend,
-    tools: [executeQuery, rmTool, mvTool, cpTool, readDocTool, revertFileTool, discardAllTool, listTestAgentsTool, listTestCasesTool, deleteTestCaseTool, createTestCaseTool],
+    tools: [executeQuery, runModelQuery, rmTool, mvTool, cpTool, readDocTool, revertFileTool, discardAllTool, listTestAgentsTool, listTestCasesTool, deleteTestCaseTool, createTestCaseTool],
     systemPrompt: buildSystemPrompt(connections),
   });
 }
