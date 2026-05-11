@@ -40,7 +40,7 @@ archmax helps you create semantic descriptions of your database schemas (tables,
 
 - **Project-based organization**: group related database connections and their semantic models
 - **AI-assisted model building**: a chat-based agent helps discover schemas, map fields, detect enums, and infer relationships
-- **Scoped query execution**: AI agents run read-only SQL against sandboxed VIEWs, not raw tables
+- **Scoped query execution**: AI agents run read-only SQL against per-model scoped VIEWs, not raw tables (a logical access layer — see [its limits](/guides/data-federation#limits-of-the-view-layer))
 - **Token-based access control**: MCP tokens with configurable scopes and expiry
 - **Version control**: built-in Git history for every publish, with optional GitHub sync
 - **Self-hosted**: deploy with Docker in minutes

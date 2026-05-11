@@ -3,6 +3,8 @@ title: Data Federation
 description: Query across multiple databases from a single project using DuckDB.
 ---
 
+import { Aside } from "@astrojs/starlight/components";
+
 archmax uses [DuckDB](https://duckdb.org/) as an in-process query engine that can federate queries across multiple database connections. Each project gets its own DuckDB instance with connections attached as named schemas.
 
 ## How It Works
@@ -78,11 +80,45 @@ This is used internally by:
 
 ## Scoped VIEWs
 
-When AI agents use `execute_query` or `runModelQuery`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs whose SELECT bodies are **authored explicitly by the modeller** in each dataset's `view_query` custom extension. This is the curated and safe access layer.
+When AI agents use `execute_query` or `runModelQuery`, they don't access raw connection schemas directly. Instead, each semantic model gets a set of VIEWs whose SELECT bodies are **authored explicitly by the modeller** in each dataset's `view_query` custom extension. This is the curated access layer.
 
 Per-model VIEWs are **(re-)materialised on every model-scoped query** with `CREATE OR REPLACE VIEW`; there is no in-memory cache. Editing a dataset's `view_query` takes effect on the very next call. Agents reference datasets by their bare name (e.g. `FROM "orders"`) — the platform resolves the name to the right VIEW automatically. A dataset without `view_query` is unqueryable, and the tools return a clear error identifying the offending datasets.
 
 Bare-name references are enforced **structurally**. Every query passes through a validator that parses the SQL with DuckDB's own parser and rejects any base-table reference whose AST has a non-empty `schema_name` or `catalog_name`, regardless of how the reference is spelled in source text — quoted (`"shopify"."public"."orders"`), unicode-escaped, or dollar-quoted variants are all rejected on the parse tree, not on the raw text. See the [`execute_query` reference](/reference/mcp-tools#validation-rules) for the full denylist.
+
+## Limits of the View Layer
+
+<Aside type="caution" title="The view layer is logical, not a physical sandbox">
+The scoped VIEWs + AST validator combination is a **logical** access layer over a single DuckDB process. It is not a process, container, or kernel-level sandbox. Treat it as defence-in-depth on top of a correctly configured upstream database, not as a substitute for upstream access control.
+</Aside>
+
+### What the view layer does protect against
+
+These properties hold whenever the validator and `view_query` materialisation are working correctly:
+
+- **No raw catalog escape from MCP.** An `execute_query` caller cannot reach attached connections directly — any `catalog.schema.table` reference is rejected on the AST regardless of quoting variant (`"shopify"."public"."orders"`, `U&"…"`, dollar-quoted, mixed-case).
+- **No system-catalog enumeration.** `information_schema`, `pg_catalog`, `sqlite_master`, `main`, `temp`, and `system` are denied at the validator. So is anything beginning with `_scope_` or `duckdb_` (covers cross-model schema references and DuckDB metadata views like `duckdb_secrets`).
+- **No file or network egress.** `enable_external_access = false` blocks `read_csv` / `read_parquet` / `pg_read_file` / `COPY` / HTTP fetches at the engine level; the validator denylist covers the same surface at parse time.
+- **No DDL or mutation.** Only SELECT / WITH / set-operation / EXPLAIN / DESCRIBE statements pass; `EXPLAIN ANALYZE` (and comment-evasion variants) is rejected because it executes the wrapped statement.
+- **No stale view exposure.** A `view_query` that fails to rematerialise (validator rejection or DuckDB error) makes the model unqueryable until fixed; MCP refuses to fall back to the previous view body.
+
+### What the view layer does NOT protect against
+
+- **Modeller mistakes.** A `view_query` of `SELECT * FROM shop.public.users` exposes every column of `users`, including PII, password hashes, and audit columns. The platform never inspects view bodies for sensitive content, never auto-redacts columns, and never enforces row-level filters. Treat each `view_query` as an authorisation contract you have to write by hand.
+- **Co-tenancy across MCP tokens scoped to the same model.** Two MCP bearer tokens granting access to model `ecommerce` see exactly the same rows. There is no per-token row filter, no `current_user`-aware view body, no automatic tenant-id injection. If you need per-tenant isolation, model the tenant column explicitly in `view_query` and split tenants across separate archmax projects (or build a tenant-aware `view_query` that reads the agent identity from `params`).
+- **Co-tenancy across models in the same project.** Every model in a project shares one DuckDB instance, one `duckdb.db` file, and the same set of attached connections with the same database credentials. There is no per-model database role. A connection user with DELETE rights upstream gives DuckDB latent DELETE rights for *every* model in the project — only `enable_external_access = false` and the read-only validator keep that latent power from being used.
+- **DuckDB / extension privilege-escalation bugs.** The validator parses with DuckDB's own parser and runs queries on the same process that holds every attached catalog. A binder, optimizer, or extension bug that lets a structurally-valid SELECT reach an unintended object (or trigger arbitrary code via a malicious community extension) is not contained by the view layer. Keep DuckDB and its extensions up to date.
+- **Resource exhaustion across the project.** `threads = 2` and `memory_limit = '512MB'` are session settings on a shared instance. A pathological query under one model can still cause memory pressure for queries running under another model in the same project, and the per-project `withProjectQuerySlot` semaphore caps concurrency but does not isolate work.
+- **Side-channels through the persistent file.** `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db` holds every model's `_scope_<model>` schema in plain DDL. Anyone who can read the file can read every materialised view body. Protect the data directory with the same filesystem permissions you would give a database data dir.
+- **Upstream credential leakage.** Connection passwords / tokens are encrypted at rest and redacted in API responses, but they are still passed to DuckDB's connector for every `ATTACH`. A query that triggers a driver-level error does not leak them to the API caller (the connection-test endpoint sanitises and the federated query path returns generic errors), but anything that gets into operator logs is your responsibility to retain or rotate.
+
+### Operator checklist
+
+- **Use a least-privilege database user** for every connection — read-only on exactly the schemas your `view_query` bodies need. The validator is defence-in-depth on top of this, not a replacement for it.
+- **Treat `view_query` as the authorisation boundary.** Project only the columns the model needs (`SELECT id, status, total_amount FROM …`, never `SELECT *`). Apply the same row filters you would apply in a database VIEW intended for an external consumer (`WHERE deleted_at IS NULL`, `WHERE tenant_id = …`).
+- **Don't put two trust domains in the same project.** Separate customers, separate environments (prod vs staging), or separate sensitivity tiers go into separate archmax projects so they don't share the DuckDB instance, the persistent file, or the connection set.
+- **Rotate the upstream database password when scope changes.** Removing a dataset's `view_query` doesn't revoke any database privilege — only deactivating or deleting the connection does. If a model previously had access to a sensitive column and you tightened the body, also rotate the upstream credential.
+- **Lock down `ARCHMAX_DATA_DIR`** with filesystem-level permissions; treat each project's `duckdb.db` as sensitive.
 
 ## Connection Lifecycle
 

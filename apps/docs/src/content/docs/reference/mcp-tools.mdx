@@ -3,6 +3,8 @@ title: MCP Tools Reference
 description: Complete reference for all MCP tools exposed by archmax.
 ---
 
+import { Aside } from "@astrojs/starlight/components";
+
 All tools are available through the project MCP endpoint at `POST /mcp/<project-slug>/mcp`. Tools operate within the scope of the project identified by the URL slug.
 
 Semantic models are stored internally as [OSI](https://github.com/open-semantic-interchange/OSI) YAML, but all tools that return model information (`get_semantic_model`, `get_datasets`) serve a **compressed markdown digest** instead of raw YAML. This digest uses 3–5× fewer tokens while preserving field types, descriptions, enums, examples, relationships, and instructions.
@@ -84,6 +86,10 @@ Each query runs in a DuckDB connection with:
 - `enable_external_access = false`: no file reads, network access, or COPY operations
 - `threads = 2`, `memory_limit = '512MB'`: resource limits
 - `search_path` set to the model's scoped schema so bare dataset names resolve to the correct VIEWs
+
+<Aside type="caution" title="Logical layer, not a process sandbox">
+The validator + scoped-VIEW combination runs against the same DuckDB instance that holds every attached connection in the project. Modeller mistakes in `view_query`, co-tenancy across MCP tokens scoped to the same model, and DuckDB / extension privilege-escalation bugs are explicitly **out of scope** for this layer. See [Limits of the View Layer](/guides/data-federation#limits-of-the-view-layer) for the full list and the operator checklist.
+</Aside>
 
 ---
 
