@@ -63,6 +63,31 @@ function uriContainsSentinel(uri: string): boolean {
   }
 }
 
+/**
+ * Strip credential-bearing substrings out of a driver/DuckDB error
+ * message before it is logged. Failed `ATTACH` and connection-test
+ * errors commonly echo the raw DSN — including `password=...` or a
+ * `proto://user:secret@host` URI — so the message is unsafe to log
+ * verbatim and absolutely unsafe to return to the API caller.
+ *
+ * The redactor is *defensive*, not exhaustive: it covers the patterns
+ * the project's drivers (DuckDB postgres / mysql / mssql, the iceberg
+ * extension) emit. The route itself never returns this string to the
+ * client; we only use it for the server-side diagnostic log.
+ */
+export function redactConnectionErrorMessage(message: string): string {
+  let m = message;
+  // URI-style credentials: `protocol://user:password@host` →
+  // `protocol://***:***@host`. Caps the user/password segments so a
+  // pathological message with no `@` cannot match across the whole
+  // string.
+  m = m.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@:]{1,256}:[^\s/@]{1,256}@/g, "$1***:***@");
+  // `key=value` credential pairs in DSN-style strings. Match
+  // case-insensitively; stop at `;`, `,`, whitespace, or end.
+  m = m.replace(/(password|pwd|secret|token|client_secret|clientsecret|api[_-]?key|access[_-]?key|auth)\s*=\s*[^;\s,]+/gi, "$1=********");
+  return m;
+}
+
 function preserveOrEncryptField(
   merged: Record<string, unknown>,
   stored: Record<string, unknown>,
@@ -212,8 +237,19 @@ const app = new Hono()
       }
       return c.json({ ok: true });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Connection test failed";
-      return c.json({ ok: false, error: message }, 400);
+      // Driver errors (DuckDB ATTACH failures, libpq, the iceberg
+      // extension, …) commonly echo the raw connection string into
+      // their messages — `host=… password=…` or `proto://user:secret@…`
+      // — so returning the message verbatim leaks credentials to
+      // anyone with API access (and into any captured response body).
+      // Surface a generic message to the client and log a redacted
+      // diagnostic server-side for ops debugging.
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      const sanitized = redactConnectionErrorMessage(rawMessage);
+      console.warn(
+        `[connections.test] connection ${conn._id} (${conn.type}) test failed: ${sanitized}`,
+      );
+      return c.json({ ok: false, error: "Connection test failed" }, 400);
     }
   })
   .post("/reinit", zValidator("query", reinitQuerySchema), async (c) => {

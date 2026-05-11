@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { redactConnectionConfig, mergeConnectionConfig, REDACTED_SENTINEL } from "./connections";
+import {
+  redactConnectionConfig,
+  mergeConnectionConfig,
+  redactConnectionErrorMessage,
+  REDACTED_SENTINEL,
+} from "./connections";
 
 vi.mock("@archmax/core/config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "" })),
@@ -198,5 +203,72 @@ describe("mergeConnectionConfig", () => {
     const result = mergeConnectionConfig(incoming, stored);
     expect(result.uri).not.toBe("postgresql://admin:newpass@host/db");
     expect(decrypt(result.uri as string, key)).toBe("postgresql://admin:newpass@host/db");
+  });
+});
+
+describe("redactConnectionErrorMessage", () => {
+  // Driver/DuckDB errors echo raw connection strings into their messages
+  // (e.g. an iceberg ATTACH failure that includes the full DSN, or a
+  // libpq error that contains `password=...`). The route never returns
+  // these verbatim to the API caller, but we still log a sanitized copy
+  // server-side for ops debugging — the redactor below ensures secrets
+  // never reach disk-resident logs.
+
+  it("redacts URI-style password between user: and @host", () => {
+    const out = redactConnectionErrorMessage(
+      "ATTACH failed: connection to postgresql://admin:supersecret@db.example.com:5432/mydb refused",
+    );
+    expect(out).not.toContain("supersecret");
+    expect(out).toContain("***:***@db.example.com");
+  });
+
+  it("redacts MongoDB-style URIs with url-encoded passwords", () => {
+    const out = redactConnectionErrorMessage(
+      "Error: cannot connect to mongodb+srv://admin:p%40ssw0rd@cluster.mongodb.net/mydb",
+    );
+    expect(out).not.toContain("p%40ssw0rd");
+    expect(out).toContain("***:***@cluster.mongodb.net");
+  });
+
+  it.each([
+    ["password=supersecret", "password"],
+    ["Password=supersecret", "Password"],
+    ["pwd=supersecret", "pwd"],
+    ["token=supersecret", "token"],
+    ["client_secret=supersecret", "client_secret"],
+    ["clientSecret=supersecret", "clientSecret"],
+    ["api_key=supersecret", "api_key"],
+    ["api-key=supersecret", "api-key"],
+    ["secret=supersecret", "secret"],
+  ])("redacts DSN-style credential pair %s", (pair, key) => {
+    const msg = `connection failed: host=db.example.com ${pair};database=mydb`;
+    const out = redactConnectionErrorMessage(msg);
+    expect(out).not.toContain("supersecret");
+    expect(out).toContain(`${key}=********`);
+    expect(out).toContain("host=db.example.com");
+  });
+
+  it("preserves non-credential parts of the message", () => {
+    const out = redactConnectionErrorMessage(
+      "IO Error: connection refused at db.example.com:5432",
+    );
+    expect(out).toBe("IO Error: connection refused at db.example.com:5432");
+  });
+
+  it("redacts both URI and DSN credentials in the same message", () => {
+    const out = redactConnectionErrorMessage(
+      "ATTACH error: postgresql://u:p1@h/d failed; password=p2 unusable",
+    );
+    expect(out).not.toContain("p1");
+    expect(out).not.toContain("p2");
+    expect(out).toContain("***:***@h/d");
+    expect(out).toContain("password=********");
+  });
+
+  it("does not match arbitrary 'token' words inside other identifiers", () => {
+    // The denylist is anchored on `<key>=<value>` not bare words; a
+    // word like `tokenized` should pass through unchanged.
+    const out = redactConnectionErrorMessage("Error: tokenized response invalid");
+    expect(out).toBe("Error: tokenized response invalid");
   });
 });

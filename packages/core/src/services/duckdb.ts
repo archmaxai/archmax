@@ -570,11 +570,19 @@ export function inferDefaultViewQuery(
 ): string | null {
   if (!dataset.source || dataset.source.trim().length === 0) return null;
   if (!dataset.fields || dataset.fields.length === 0) return null;
+  // `fieldSchema` only requires `name: z.string().min(1)`, so an
+  // authored field name could contain `"` or other punctuation. Always
+  // route through `quoteIdentifier` (which doubles embedded `"`) so a
+  // name like `a", bar AS "baz` cannot break out of the projection
+  // and turn the inferred body into a structurally-valid SELECT that
+  // exposes columns the model never declared. Caller (`materialiseModelViews`)
+  // additionally rejects field names containing control characters.
   const columns = dataset.fields.map((f) => {
+    const quotedName = quoteIdentifier(f.name);
     const expr = f.expression?.dialects?.[0]?.expression ?? f.name;
-    if (expr === f.name) return `"${f.name}"`;
-    if (SIMPLE_IDENT_RE.test(expr)) return `"${expr}" AS "${f.name}"`;
-    return `${expr} AS "${f.name}"`;
+    if (expr === f.name) return quotedName;
+    if (SIMPLE_IDENT_RE.test(expr)) return `${quoteIdentifier(expr)} AS ${quotedName}`;
+    return `${expr} AS ${quotedName}`;
   });
   return `SELECT\n  ${columns.join(",\n  ")}\nFROM ${dataset.source}`;
 }
@@ -665,6 +673,20 @@ export async function materialiseModelViews(
       // and embedded `"` — so we don't gate on SIMPLE_IDENT_RE here.
       if (/[\u0000-\u001F]/.test(ds.name)) {
         const errMsg = `Dataset name contains a control character; refusing to materialise.`;
+        console.warn(`[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": ${errMsg}`);
+        result.failed.push({ dataset: ds.name, error: errMsg });
+        continue;
+      }
+
+      // Same control-character gate for field names: `quoteIdentifier`
+      // doubles embedded `"` but cannot make a name with a NUL or
+      // newline safe to embed in a multi-line `SELECT` projection.
+      // Without this, a field name like `id\nUNION ALL SELECT * FROM
+      // secret_table` could survive AST validation as two structurally
+      // valid statements and expose data the dataset never declared.
+      const badField = (ds.fields ?? []).find((f) => /[\u0000-\u001F]/.test(f.name));
+      if (badField) {
+        const errMsg = `Field name "${badField.name}" contains a control character; refusing to materialise.`;
         console.warn(`[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": ${errMsg}`);
         result.failed.push({ dataset: ds.name, error: errMsg });
         continue;

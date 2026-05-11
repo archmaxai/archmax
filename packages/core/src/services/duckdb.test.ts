@@ -138,6 +138,32 @@ describe("inferDefaultViewQuery", () => {
     );
     expect(body).toContain(`first_name || ' ' || last_name AS "full_name"`);
   });
+
+  it("doubles embedded double-quotes in a field name so it cannot break out of the projection", () => {
+    // `fieldSchema` only requires `name: z.string().min(1)`, so a
+    // pathological authored field name like `a", bar AS "baz` could
+    // turn the inferred body into a structurally-valid SELECT that
+    // projects an extra column the dataset never declared. The
+    // standard SQL escape — doubling `"` to `""` inside a quoted
+    // identifier — neutralises that.
+    const body = inferDefaultViewQuery(
+      ds({ source: "shop.public.orders", fields: [{ name: `a", bar AS "baz` }] }),
+    );
+    expect(body).toContain(`"a"", bar AS ""baz"`);
+    // The original break-out string must NOT survive verbatim into the
+    // emitted SQL — if it did, the validator would see two columns.
+    expect(body).not.toContain(`"a", bar AS "baz"`);
+  });
+
+  it("doubles embedded double-quotes when aliasing a different simple-identifier expression", () => {
+    const body = inferDefaultViewQuery(
+      ds({
+        source: "shop.public.orders",
+        fields: [{ name: `weird"name`, expression: "personid" }],
+      }),
+    );
+    expect(body).toContain(`"personid" AS "weird""name"`);
+  });
 });
 
 describe("scopedViewName", () => {
@@ -389,6 +415,26 @@ describe("materialiseModelViews", () => {
   it("rejects a dataset name containing a control character", async () => {
     const model = makeModel("shop", [
       makeDataset("orders\u0000evil", "test_source", [{ name: "id" }], "SELECT id FROM test_source"),
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await materialiseModelViews(instance, projectId, model);
+    warnSpy.mockRestore();
+
+    expect(result.materialised).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toMatch(/control character/);
+  });
+
+  it("rejects a field name containing a control character", async () => {
+    // `quoteIdentifier` neutralises embedded `"` but a NUL or newline
+    // in a field name would still let the inferred-mirror projection
+    // span multiple SQL lines, so the materialiser refuses to embed
+    // such a name. Without this gate, a field name like
+    // `id\nUNION ALL SELECT * FROM secret_table` could survive AST
+    // validation as a structurally valid two-statement(-ish) body.
+    const model = makeModel("shop", [
+      makeDataset("orders", "test_source", [{ name: "id\nUNION ALL SELECT 1" }]),
     ]);
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
