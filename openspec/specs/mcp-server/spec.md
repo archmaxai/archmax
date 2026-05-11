@@ -151,73 +151,115 @@ The MCP server SHALL expose an `execute_query` tool that runs read-only SQL quer
 
 ### Requirement: Scoped DuckDB VIEWs
 
-The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named `_scope_<modelName>` (e.g., `_scope_ecommerce`). Each dataset becomes a VIEW named `_scope_<modelName>."<datasetName>"` that selects only the field expressions from the dataset's source table. When a field's logical `name` differs from its physical `expression`, the VIEW SHALL alias the expression to the logical name (e.g., `SELECT personid AS "person_id" FROM source`). Aliased columns MUST be queryable through the VIEW using the logical field name. VIEWs are created lazily on the first `execute_query` call for a model and cached using a content hash of the model's YAML file. Subsequent calls skip view creation if the hash matches. When the model changes (e.g., after a publish), the hash mismatch triggers view recreation. The DuckDB `search_path` is set to the model's scoped schema before query execution, so agents use bare dataset names (e.g., `FROM "orders"`) and DuckDB resolves them to the scoped VIEWs. The `get_semantic_model` overview SHALL annotate each dataset with its bare table name (the dataset name) for use in queries. When a field expression cannot be resolved against the source table, the field SHALL be excluded from the VIEW and a warning SHALL be logged. The warning MUST include the dataset name, field name, and the error message from DuckDB.
+The `execute_query` tool SHALL maintain DuckDB VIEWs in per-model schemas named `_scope_<modelName>` (e.g., `_scope_ecommerce`). Each dataset becomes a VIEW named `_scope_<modelName>."<datasetName>"`. The VIEW body SHALL come from the dataset's `view_query` value inside its COMMON `custom_extensions` payload — the platform wraps the agent-authored SELECT body as `CREATE OR REPLACE VIEW _scope_<modelName>."<datasetName>" AS <view_query>`. The platform SHALL NOT auto-derive the VIEW body from the dataset's `fields` array; a dataset without a non-empty `view_query` SHALL produce no VIEW and SHALL surface an `isError: true` response when queried via `execute_query`.
 
-#### Scenario: VIEW created from semantic model dataset
-- **WHEN** `execute_query` is called with `modelName: "ecommerce"` and the model has dataset `orders` sourced from `shop.public.orders` with fields `order_id`, `total_amount`, `status`
-- **THEN** a VIEW `_scope_ecommerce."orders"` is created as `SELECT order_id, total_amount, status FROM shop.public.orders`
+VIEWs SHALL be (re)materialised on every model-scoped call (`execute_query` and the agent's equivalent). The platform SHALL NOT maintain an in-memory cache of "last seen view_query hash"; instead, it SHALL issue `CREATE OR REPLACE VIEW` for every dataset on every call, which is idempotent and inexpensive when the body is unchanged. The single source of truth for what a view SHOULD be is the dataset's `view_query` in YAML; the source of truth for what it currently IS is the persistent DuckDB file. Re-materialisation reads the former and rewrites the latter; no third-party cache exists.
+
+The DuckDB `search_path` is set to the model's scoped schema before query execution, so MCP token holders use bare dataset names (e.g., `FROM "orders"`) and DuckDB resolves them to the scoped VIEWs. The `get_semantic_model` overview SHALL annotate each dataset with its bare table name (the dataset name) for use in queries.
+
+Before issuing `CREATE OR REPLACE VIEW` for a dataset, the platform SHALL run the same SQL validator that gates `execute_query` against the `view_query` text. A `view_query` that fails validation SHALL be rejected: the previous VIEW (if any) is left in place untouched, and the failure is logged with the dataset name and the validator's message. A `view_query` that passes validation but fails at materialisation (e.g., references a column that no longer exists in the source table) SHALL surface the DuckDB error verbatim as a warning log including the dataset name; that dataset's VIEW is skipped for this call but other datasets in the model are unaffected.
+
+#### Scenario: VIEW created from agent-authored view_query
+
+- **WHEN** `execute_query` is called with `modelName: "ecommerce"` and the model's `orders` dataset has `view_query: "SELECT order_id, total_amount, status FROM shop.public.orders WHERE deleted_at IS NULL"`
+- **THEN** the platform issues `CREATE OR REPLACE VIEW _scope_ecommerce."orders" AS SELECT order_id, total_amount, status FROM shop.public.orders WHERE deleted_at IS NULL`
 - **AND** the `search_path` is set so `FROM "orders"` resolves to this VIEW
-- **AND** queries against the VIEW return only those three columns
+- **AND** queries against the VIEW return only non-deleted orders
 
-#### Scenario: VIEW reflects field expressions
-- **WHEN** a dataset field has a computed expression (e.g., `c_first_name || ' ' || c_last_name`)
-- **THEN** the VIEW includes the expression as a column with the field's name as alias
+#### Scenario: VIEW reflects view_query computed expressions
 
-#### Scenario: VIEW correctly aliases renamed fields
-- **WHEN** a dataset field has `name: "person_id"` and `expression: "personid"` (physical column is `personid`, logical name is `person_id`)
-- **THEN** the VIEW includes `personid AS "person_id"` in its SELECT list
-- **AND** querying `SELECT person_id FROM "dataset_name"` through the VIEW returns the correct data
-- **AND** the column appears as `person_id` in query result metadata
+- **WHEN** a dataset's `view_query` includes `c_first_name || ' ' || c_last_name AS "full_name"`
+- **THEN** the materialised VIEW exposes a `full_name` column with the computed value
 
-#### Scenario: VIEWs cached between calls
-- **WHEN** `execute_query` is called twice with the same `modelName` and the model has not changed
-- **THEN** the second call skips VIEW creation entirely
-- **AND** query execution proceeds using the existing VIEWs
+#### Scenario: Dataset without view_query rejected
 
-#### Scenario: VIEWs refreshed on model change
-- **WHEN** a semantic model is re-published and then `execute_query` is called
-- **THEN** the content hash mismatch triggers VIEW recreation with the updated field definitions
+- **WHEN** `execute_query` is called against a model whose `orders` dataset has no `view_query` (or an empty `view_query`)
+- **THEN** an `isError: true` content response is returned with a message naming the offending dataset and instructing the caller that the dataset's COMMON custom extension must define a `view_query`
+- **AND** no VIEW is created for that dataset
+
+#### Scenario: VIEWs always rematerialised on every call
+
+- **WHEN** `execute_query` is called twice in succession with the same `modelName` and no dataset's `view_query` has changed
+- **THEN** both calls issue `CREATE OR REPLACE VIEW` for every dataset in the model
+- **AND** the platform does not maintain an in-memory hash cache of the last-applied `view_query` text
+- **AND** the second call's results match the first's
+
+#### Scenario: View body changes are picked up immediately
+
+- **WHEN** a dataset's `view_query` is edited (the YAML is rewritten with a different body) and `execute_query` is called for the same model
+- **THEN** the next `CREATE OR REPLACE VIEW` writes the new body
+- **AND** the new body is observable to subsequent queries with no further coordination
 
 #### Scenario: Concurrent queries for different models
+
 - **WHEN** two concurrent `execute_query` calls arrive for models "ecommerce" and "analytics" that both have a dataset named "orders"
 - **THEN** each call operates on its own schema (`_scope_ecommerce` and `_scope_analytics`) via per-connection `search_path`
 - **AND** neither call's VIEWs interfere with the other
 
 #### Scenario: Dataset names shown in model overview
+
 - **WHEN** `get_semantic_model` is called for model "ecommerce"
 - **THEN** each dataset row includes the bare dataset name as the table name for use in queries
 
-#### Scenario: Invalid field expression excluded from VIEW
-- **WHEN** a dataset field has an expression that cannot be resolved against the source table (e.g., the physical column was renamed or dropped)
-- **THEN** the field is excluded from the VIEW
-- **AND** a warning is logged with the dataset name, field name, and the DuckDB error message
-- **AND** the remaining valid fields are still included in the VIEW
+#### Scenario: Invalid view_query rejected at materialisation
+
+- **WHEN** a dataset's `view_query` references a forbidden table function (e.g., `read_csv('s3://…')`)
+- **THEN** the SQL validator rejects the body before the `CREATE OR REPLACE VIEW` is issued
+- **AND** the previous VIEW (if any) is left in place
+- **AND** a warning is logged with the dataset name and the validator's message
+- **AND** other datasets in the model continue to materialise normally
+
+#### Scenario: view_query that fails to execute logs a warning
+
+- **WHEN** a dataset's `view_query` references a column that no longer exists in the source table
+- **THEN** the `CREATE OR REPLACE VIEW` statement fails with the DuckDB error
+- **AND** a warning is logged with the dataset name and the DuckDB error message
+- **AND** no VIEW is materialised for that dataset (other datasets in the model are unaffected)
 
 ### Requirement: MCP Query SQL Validation
 
-The `execute_query` tool SHALL validate all SQL queries before execution. Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements SHALL be allowed, and multi-statement queries SHALL be rejected. Queries SHALL be validated to ensure they do not reference raw attached catalog names directly — agents SHALL use bare dataset names which resolve via `search_path`. Explicit `_scope_` schema prefixes in queries SHALL be rejected with a message instructing the agent to use dataset names directly. The list of forbidden catalog names is derived from the project's active connection slugs.
+The `execute_query` tool SHALL validate all SQL queries before execution. Only `SELECT`, `WITH`, `EXPLAIN`, and `DESCRIBE` statements SHALL be allowed, and multi-statement queries SHALL be rejected. Queries SHALL be validated to ensure they do not reference raw attached catalog names directly — agents SHALL use bare dataset names which resolve via `search_path`. Explicit `_scope_*` schema prefixes in queries SHALL be rejected with a message instructing the agent to use dataset names directly. The list of forbidden catalog names is derived from the project's active connection slugs.
+
+Rejection of `_scope_*` references SHALL be enforced by **both** the lexical pre-filter (`validateScopedSQL`) and the structural AST validator (introduced by `add-structural-sql-safety`). Every `BASE_TABLE_REF` whose `schema_name` (case-insensitively, after the parser canonicalises quoting) begins with `_scope_` SHALL cause rejection at the structural layer, so that quoting variants like `"_scope_ecommerce"."orders"`, `U&"\\005Fscope\\005Fecommerce"."orders"`, dollar-quoted identifiers, or any other escape form cannot bypass the lexical regex. This invariant is the security boundary that keeps every MCP token holder inside the model's view sandbox; if it relaxes, a token scoped to one model could read datasets in any other model on the same project.
 
 #### Scenario: Write query rejected
+
 - **WHEN** any token submits `INSERT INTO "orders" VALUES (1, 100, 'new')`
 - **THEN** the query is rejected with an error before execution
 - **AND** no database modification occurs
 
 #### Scenario: Raw catalog reference rejected
+
 - **WHEN** any token submits `SELECT * FROM shopify.public.orders`
 - **THEN** the query is rejected with an error indicating that raw catalog references are not allowed
 - **AND** the error suggests using dataset names directly
 
 #### Scenario: Multi-statement query rejected
+
 - **WHEN** any token submits `SELECT 1; DROP TABLE "orders"`
 - **THEN** the query is rejected before execution
 
 #### Scenario: Valid query using bare dataset names passes validation
+
 - **WHEN** a query uses bare dataset names (e.g., `SELECT o.total_amount FROM "orders" o`) and the `modelName` is "ecommerce"
 - **THEN** the query passes validation and is executed
 
 #### Scenario: Explicit _scope_ prefix rejected
+
 - **WHEN** `execute_query` is called with SQL referencing `_scope_ecommerce."orders"` or any `_scope_*` prefix
 - **THEN** the query is rejected with an error instructing the agent to use dataset names directly via `search_path`
+
+#### Scenario: Structural validator rejects quoted _scope_ references
+
+- **WHEN** an MCP token holder submits `SELECT * FROM "_scope_ecommerce"."orders"` (the schema name in double quotes to evade the lexical regex)
+- **THEN** the structural AST validator rejects the query because the resolved `BASE_TABLE_REF.schema_name` matches `_scope_*` after parser canonicalisation
+- **AND** the error message instructs the caller to use bare dataset names
+
+#### Scenario: Structural validator rejects unicode-escaped _scope_ references
+
+- **WHEN** an MCP token holder submits a SQL where the schema identifier uses unicode escapes (e.g. `U&"\\005Fscope\\005Fanalytics"."revenue"`) or dollar-quoted identifiers that resolve to `_scope_<other_model>`
+- **THEN** the structural AST validator rejects the query because the parser canonicalises the identifier to `_scope_…` before matching
+- **AND** no DuckDB connection is opened
 
 ### Requirement: MCP DuckDB Connection Hardening
 
@@ -393,4 +435,92 @@ The system SHALL enforce a per-project limit on concurrent DuckDB queries, confi
 #### Scenario: Slot released after query timeout
 - **WHEN** a query is cancelled due to `QUERY_TIMEOUT_MS` timeout
 - **THEN** the query slot is released
+
+### Requirement: Structural SQL AST Validation
+
+The `execute_query` tool SHALL parse every submitted SQL statement using DuckDB's own parser before execution, and SHALL reject the query unless its abstract syntax tree (AST) matches a strict allowlisted shape. The parse SHALL be performed via DuckDB's `json_serialize_sql` function on a dedicated, process-wide DuckDB instance that has no extensions installed, no catalogs attached, and `enable_external_access=false`. The SQL SHALL be passed to `json_serialize_sql` via a bound parameter — never by string concatenation. Parser errors and parse timeouts SHALL be surfaced as a generic structural-validation rejection with the parser's own diagnostic message included verbatim. The structural validator SHALL run after the existing lexical pre-filter (`validateReadOnlySQL` + `validateScopedSQL`) and before any DuckDB connection is acquired against the project's federated instance.
+
+The parsing instance SHALL NOT require any of the project's source tables, scoped views, attached catalogs, or extensions to validate a query — `json_serialize_sql` is parse-only and does not invoke DuckDB's binder. Table and view resolution happens only later, in the federated instance, when the query is actually `Prepare`/`Run`-ed.
+
+The AST walker SHALL enforce, at every depth of the tree:
+
+- Exactly one entry in the top-level `statements` array.
+- The top-level statement type SHALL be a SELECT-shaped node (observed AST type: `SELECT_NODE`), optionally wrapped by an `EXPLAIN` node whose `analyzed` flag is `false`. Set-operation roots (`SET_OPERATION_NODE`) over SELECT children are also permitted. EXPLAIN ANALYZE, PRAGMA, SET, COPY, ATTACH, DETACH, INSTALL, LOAD, CREATE SECRET, CALL, and every DDL/DML statement type SHALL be rejected even if the engine would parse them.
+- An allowlist of permitted intermediate node types covering only read-shaped constructs (observed types: `SELECT_NODE`, `SET_OPERATION_NODE`, `BASE_TABLE`, `JOIN`, `TABLE_FUNCTION`, `SUBQUERY`, `EXPRESSION_LIST`, `PIVOT`, plus expression leaves such as `COLUMN_REF`, `STAR`, `CONSTANT`, `FUNCTION`, `OPERATOR`, `CASE_EXPR`, `CAST`, `COMPARISON`). CTEs appear under `cte_map.map[*].value` of the enclosing `SELECT_NODE` and SHALL be traversed recursively. Any AST node whose type is not in the allowlist SHALL cause rejection (fail-closed default).
+- Every base-table reference SHALL have empty `schema_name` and empty `catalog_name`. Bare table identifiers are required so that schema resolution remains the server's responsibility via `search_path`.
+- Every base-table reference's resolved `table_name` (and, where present, `schema_name`/`catalog_name`) SHALL be matched, case-insensitively, against the union of system-catalog names (`information_schema`, `pg_catalog`, `sqlite_master`, `main`, `temp`, `system`), the project's active connection slugs, and any schema name beginning with `_scope_`; any match SHALL cause rejection. Matching SHALL be performed against the AST's parser-canonicalized name, not against the source SQL text, so that quoting variants (`"information_schema"`, `U&"…"`, `"main"."foo"`, dollar-quoted identifiers, unicode-escaped `_scope_*`, etc.) cannot evade the check. The `_scope_*` rule covers the platform's internal model-scoped view schemas — agents reference datasets by bare name only, never by their scoped-schema qualifier.
+- Every `TABLE_FUNCTION` reference's `function_name` SHALL be in a small allowlist of read-only functions (e.g. `generate_series`, `range`, `unnest`, `repeat`, `from_json`, `values`). Any other table-function name — in particular `read_csv*`, `read_parquet*`, `read_json*`, `read_blob*`, `read_text*`, `parse_sql`, `json_serialize_sql`, and any function whose name begins with `duckdb_` — SHALL cause rejection.
+- Scalar function calls anywhere in the tree (AST type `FUNCTION`) SHALL be checked against a denylist covering at minimum `read_*`, `pg_read_*`, `pg_ls_dir`, `duckdb_*`, `nextval`, and `currval`. Other functions are permitted because the allowed-statement-type rule already prevents side effects.
+
+The structural validator SHALL be applied uniformly to all SQL paths into `execute_query`, including replays of stored queries (`execute_stored_query`); a stored query whose persisted SQL no longer passes structural validation SHALL be rejected at replay time even though it was valid when stored.
+
+#### Scenario: Quoted system schema rejected by AST not regex
+- **WHEN** any token submits `SELECT * FROM "information_schema"."tables"`
+- **THEN** the structural validator parses the query, observes a base-table reference whose resolved name is `information_schema.tables`, and rejects it
+- **AND** the rejection message references the structural-validation layer
+
+#### Scenario: Dollar-quoted multi-statement evasion rejected
+- **WHEN** any token submits `SELECT $tag$;DROP TABLE x;$tag$ FROM orders`
+- **THEN** the lexical pre-filter may incorrectly flag the embedded semicolon, but if it does not, the structural validator parses the query, observes a single SELECT statement, and accepts it
+- **AND** when any token submits a *genuine* multi-statement query like `SELECT 1; DROP TABLE orders`, the structural validator observes `statements.length === 2` and rejects it independently of the regex
+
+#### Scenario: Comment-evasion of EXPLAIN ANALYZE rejected
+- **WHEN** any token submits `EXPLAIN /*c*/ ANALYZE SELECT * FROM orders`
+- **THEN** the structural validator parses the query, observes an EXPLAIN node with `analyzed === true`, and rejects it
+- **AND** the rejection occurs even though the regex `^\s*EXPLAIN\s+ANALYZE\b` does not match
+
+#### Scenario: Quoted catalog reference rejected
+- **WHEN** any token submits `SELECT * FROM "shopify"."public"."orders"` and `shopify` is an active connection slug
+- **THEN** the structural validator observes a base-table reference whose `catalog_name === "shopify"` and rejects it
+- **AND** the rejection message indicates that direct catalog references are not allowed
+
+#### Scenario: Quoted _scope_ schema rejected by AST
+- **WHEN** any token submits `SELECT * FROM "_scope_ecommerce"."orders"` (or any other quoting variant of `_scope_<modelName>`, including dollar-quoted, unicode-escaped, and case-folded forms)
+- **THEN** the structural validator observes a base-table reference whose resolved `schema_name` begins with `_scope_` and rejects it
+- **AND** the rejection occurs even when the lexical pre-filter's `_scope_*` regex would have missed the quoting variant
+
+#### Scenario: Unicode-escape identifier evasion rejected
+- **WHEN** any token submits a query whose only table reference is written as `U&"\006D\0061\0069\006E"."x"` (which decodes to `main.x`)
+- **THEN** the structural validator observes a resolved base-table reference of `main.x` and rejects it
+- **AND** the rejection occurs on the AST, not on the source text
+
+#### Scenario: Disallowed table function rejected
+- **WHEN** any token submits `SELECT * FROM read_parquet('s3://bucket/secret.parquet')`
+- **THEN** the structural validator observes a TABLE_FUNCTION_REF whose `function_name === "read_parquet"` and rejects it
+- **AND** the rejection occurs even if `enable_external_access=false` would also have blocked execution
+
+#### Scenario: Unknown AST node type rejected by default
+- **WHEN** a future DuckDB version introduces a new statement-level node type that is not yet in the allowlist
+- **AND** any token submits a query that produces that node type
+- **THEN** the structural validator rejects the query with a generic "unsupported statement shape" message
+- **AND** no execution is attempted
+
+#### Scenario: Parser failure surfaced as rejection
+- **WHEN** any token submits SQL that DuckDB cannot parse
+- **THEN** the structural validator returns a rejection whose message contains the parser's own diagnostic
+- **AND** no DuckDB connection against the project's federated instance is acquired
+
+#### Scenario: Parsing connection isolated from project federation
+- **WHEN** the structural validator parses any SQL
+- **THEN** the parse is performed on the dedicated parsing instance, which has no attached catalogs and no extensions
+- **AND** failures of the parsing instance do not affect the project's federated instance, scoped views, or query timeouts
+
+#### Scenario: Parsing does not require source tables to exist
+- **WHEN** the structural validator parses a query that references a table not present in the parsing instance (e.g. `SELECT * FROM totally_nonexistent_table`)
+- **THEN** the parse succeeds and the validator inspects the resulting AST normally
+- **AND** rejection or acceptance is decided solely on the AST shape (statement type, base-table schema/catalog/name, table-function name, scalar-function denylist), without invoking DuckDB's binder
+- **AND** the parsing instance never sees the project's scoped views, attached catalogs, or extensions
+
+### Requirement: Structural SQL Validator Feature Flag
+
+The application SHALL read an environment variable `SQL_VALIDATION_AST` at startup. When set to `false`, the structural validator SHALL be skipped and only the lexical pre-filter applies; this is a kill-switch for the case where a DuckDB version regression breaks `json_serialize_sql`. The default value SHALL be `true`. The flag SHALL NOT disable any other security layer (lexical validators, connection hardening, scoped views, READ_ONLY ATTACH, search_path).
+
+#### Scenario: Default behaviour
+- **WHEN** `SQL_VALIDATION_AST` is unset
+- **THEN** the structural validator runs on every `execute_query` invocation
+
+#### Scenario: Kill-switch disables structural validator only
+- **WHEN** `SQL_VALIDATION_AST=false`
+- **THEN** the lexical pre-filter, connection hardening, READ_ONLY ATTACH, and search_path scoping continue to apply
+- **AND** the structural validator is skipped
 
