@@ -1,5 +1,5 @@
 # ---------- base ----------
-FROM node:25-slim AS base
+FROM node:26-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 # Node 25 dropped bundled corepack, so install pnpm directly.
