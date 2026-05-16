@@ -39,7 +39,7 @@ Internal services (API on 3000, MongoDB on 27017, Redis on 6379) bind to `127.0.
 | Variable | Description |
 |----------|-------------|
 | `BETTER_AUTH_SECRET` | Session encryption secret. Min 32 characters. Generate with `openssl rand -base64 32`. **Save this value and reuse it across container restarts and upgrades.** Changing or losing it invalidates all existing sessions and authentication data. |
-| `UI_PASSWORD` | Initial admin password. Used to seed the admin account on first run. |
+| `UI_PASSWORD` | Admin password. The current value is reapplied to the admin account on every container start. Update it and restart the container to rotate the password. |
 
 ### Optional Services
 
@@ -65,8 +65,8 @@ If you access archmax through a reverse proxy, load balancer, or custom domain, 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `UI_USERNAME` | `admin` | Initial admin username. |
-| `UI_PASSWORD` | - | **Required.** Initial admin password. |
+| `UI_USERNAME` | `admin` | Admin username (used to seed on first run). |
+| `UI_PASSWORD` | - | **Required.** Admin password. Reapplied to the admin account on every container start; any password changed via the admin UI is overwritten on restart unless `UI_PASSWORD` is updated to match. |
 
 ### Data
 
@@ -338,3 +338,13 @@ If running as a non-root user or on SELinux-enabled hosts, add the `:Z` flag:
 ```bash
 -v ~/.archmax:/data:Z
 ```
+
+### Locked out of the admin UI / forgot the admin password
+
+`UI_PASSWORD` is reapplied to the admin account on every container start. To recover access:
+
+1. Stop the container.
+2. Update `UI_PASSWORD` to the new value you want.
+3. Start the container again — the admin credential is replaced with the current `UI_PASSWORD` and you can log in with it immediately.
+
+Note that any password you change through the admin UI is overwritten on the next restart unless `UI_PASSWORD` is updated to match. Keep the env var as the source of truth, or accept that UI-side rotations are not durable across restarts.
