@@ -12,7 +12,7 @@ archmax is configured through environment variables. Set them in your shell, `.e
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `BETTER_AUTH_SECRET` | Session encryption secret (min 32 chars). Save this value and reuse it across restarts. | Generate with `openssl rand -base64 32` |
-| `UI_PASSWORD` | Initial admin password | `changeme` |
+| `UI_PASSWORD` | Admin password. Reapplied to the admin account on every API startup. | `changeme` |
 
 <Aside type="caution">
 Save your `BETTER_AUTH_SECRET` somewhere safe. If you lose it or change it, all existing sessions and authentication data become invalid. You will need to re-authenticate after any change to this value.
@@ -41,10 +41,14 @@ For most deployments behind a reverse proxy or on a cloud host, setting `APP_BAS
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `UI_USERNAME` | `admin` | Initial admin username (used to seed on first run) |
-| `UI_PASSWORD` | - | Initial admin password |
+| `UI_USERNAME` | `admin` | Admin username (used to seed on first run) |
+| `UI_PASSWORD` | - | Admin password. Reapplied to the admin account on every API startup. |
 
 Log in at `http://your-server:8080` with these credentials after deployment.
+
+<Aside type="caution">
+`UI_PASSWORD` is the source of truth for the admin password. On every API startup the value is verified against the stored credential and, if it differs, the credential is replaced with the current `UI_PASSWORD`. To rotate the admin password, change `UI_PASSWORD` and restart the API. Any password change made through the admin UI will be overwritten on the next restart unless `UI_PASSWORD` is updated to match.
+</Aside>
 
 ## Security
 

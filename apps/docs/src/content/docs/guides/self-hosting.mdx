@@ -229,6 +229,20 @@ The AI agent's resource usage depends on your configured model provider (OpenRou
 - Change `UI_PASSWORD` from the default `changeme` before exposing to users.
 - Place a reverse proxy (nginx, Caddy, Traefik) with TLS in front of port 8080 for HTTPS.
 
+### Rotating the Admin Password
+
+`UI_PASSWORD` is the source of truth for the admin password. On every container start the value is verified against the stored credential and, if it differs, the credential is replaced with the current `UI_PASSWORD`.
+
+To rotate the admin password:
+
+1. Update `UI_PASSWORD` in your environment (`.env`, compose file, or `docker run -e`) to the new value.
+2. Restart the container (`docker compose restart archmax` or `docker restart archmax`).
+3. Log in with the new password — the previous one no longer works.
+
+<Aside type="caution">
+Any password change made through the admin UI is overwritten on the next container restart unless `UI_PASSWORD` is updated to match. Treat `UI_PASSWORD` as authoritative.
+</Aside>
+
 ### Credential Encryption
 
 By default, database connection passwords and test agent API keys are stored in plaintext in MongoDB. To encrypt them at rest, set the `ENCRYPTION_KEY` environment variable:
