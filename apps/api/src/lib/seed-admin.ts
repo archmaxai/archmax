@@ -30,19 +30,19 @@ export async function seedAdmin(ctx?: AuthCtx): Promise<void> {
   );
   const credential = accounts.find((a) => a.providerId === "credential");
 
-  if (!credential || !credential.password) {
+  if (!credential) {
     console.log("Admin user exists but has no credential — adding password...");
     await createCredential(resolvedCtx, existing.user.id, env.UI_PASSWORD);
     console.log(`Admin credential added for "${env.UI_USERNAME}".`);
     return;
   }
 
-  const matches = await resolvedCtx.password.verify({
-    hash: credential.password,
-    password: env.UI_PASSWORD,
-  });
-  if (matches) {
-    return;
+  if (credential.password) {
+    const matches = await resolvedCtx.password.verify({
+      hash: credential.password,
+      password: env.UI_PASSWORD,
+    });
+    if (matches) return;
   }
 
   const hashedPassword = await resolvedCtx.password.hash(env.UI_PASSWORD);

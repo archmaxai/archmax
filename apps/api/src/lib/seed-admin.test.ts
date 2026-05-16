@@ -182,7 +182,7 @@ describe("seedAdmin", () => {
     expect(accounts).toHaveLength(1);
   });
 
-  it("creates a credential when the user has a credential account with no password", async () => {
+  it("updates the existing credential row in place when its password is null", async () => {
     const { ctx, spies, accounts } = buildCtx({
       user: { user: { id: USER_ID, email: ADMIN_EMAIL } },
       accounts: [{ providerId: "credential", password: null }],
@@ -191,9 +191,13 @@ describe("seedAdmin", () => {
     await seedAdmin(ctx as never);
 
     expect(spies.verify).not.toHaveBeenCalled();
-    expect(spies.updatePassword).not.toHaveBeenCalled();
+    expect(spies.createAccount).not.toHaveBeenCalled();
     expect(spies.hash).toHaveBeenCalledWith("current-password");
-    expect(spies.createAccount).toHaveBeenCalled();
-    expect(accounts).toHaveLength(2);
+    expect(spies.updatePassword).toHaveBeenCalledWith(
+      USER_ID,
+      "hash:current-password",
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.password).toBe("hash:current-password");
   });
 });
