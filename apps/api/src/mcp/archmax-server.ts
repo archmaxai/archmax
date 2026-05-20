@@ -76,27 +76,38 @@ export async function writeCallLog(
   }
 }
 
-type ToolHandler<A = void> = (args: A) => Promise<{
+interface ToolHandlerResult {
   result: McpResult;
   logResult?: McpResult;
   inputArgs: Record<string, unknown> | null;
-}>;
+}
 
-async function loggedTool<A = void>(
+function queryToolResult(
+  r: ExecuteQueryResult,
+  inputArgs: Record<string, unknown>,
+): ToolHandlerResult {
+  if (r.rowCount !== undefined) inputArgs.rowCount = r.rowCount;
+  return {
+    result: r.isError ? errorResult(r.text) : textResult(r.text),
+    logResult: summariseQueryResult(r),
+    inputArgs,
+  };
+}
+
+async function loggedTool(
   ctx: McpToolContext,
   toolName: string,
-  handler: ToolHandler<A>,
-  args: A,
+  handler: () => Promise<ToolHandlerResult>,
 ): Promise<McpResult> {
   const start = Date.now();
   try {
-    const { result, logResult, inputArgs } = await handler(args);
-    writeCallLog(ctx, toolName, inputArgs, logResult ?? result, Date.now() - start);
+    const { result, logResult, inputArgs } = await handler();
+    await writeCallLog(ctx, toolName, inputArgs, logResult ?? result, Date.now() - start);
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Internal tool error";
-    const result = errorResult(msg);
-    writeCallLog(ctx, toolName, null, result, Date.now() - start);
+    const errResult = errorResult(msg);
+    await writeCallLog(ctx, toolName, null, errResult, Date.now() - start);
     throw err;
   }
 }
@@ -110,7 +121,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
   }, () => loggedTool(ctx, "list_semantic_models", async () => {
     const r = await listSemanticModels(fileSvc, projectId, scopes);
     return { result: toMcpResult(r), inputArgs: null };
-  }, undefined as void));
+  }));
 
   server.registerTool("get_semantic_model", {
     description:
@@ -131,7 +142,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       scope, page, itemsPerPage: ctx.mcpPageSize, showTableNames: true,
     });
     return { result: toMcpResult(r), inputArgs };
-  }, undefined as void));
+  }));
 
   server.registerTool("get_datasets", {
     description:
@@ -152,7 +163,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       itemsPerPage: ctx.mcpPageSize,
     });
     return { result: toMcpResult(r), inputArgs };
-  }, undefined as void));
+  }));
 
   server.registerTool("execute_query", {
     description: EXECUTE_QUERY_DESCRIPTION,
@@ -181,10 +192,8 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       }
     }
 
-    if (r.rowCount !== undefined) inputArgs.rowCount = r.rowCount;
-    const result = r.isError ? errorResult(r.text) : textResult(r.text);
-    return { result, logResult: summariseQueryResult(r), inputArgs };
-  }, undefined as void));
+    return queryToolResult(r, inputArgs);
+  }));
 
   server.registerTool("execute_stored_query", {
     description: EXECUTE_STORED_QUERY_DESCRIPTION,
@@ -197,10 +206,8 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
   }, ({ storedQueryId, params }) => loggedTool(ctx, "execute_stored_query", async () => {
     const inputArgs: Record<string, unknown> = { storedQueryId };
     const r = await executeStoredQuery(fileSvc, projectId, scopes, storedQueryId, params);
-    if (r.rowCount !== undefined) inputArgs.rowCount = r.rowCount;
-    const result = r.isError ? errorResult(r.text) : textResult(r.text);
-    return { result, logResult: summariseQueryResult(r), inputArgs };
-  }, undefined as void));
+    return queryToolResult(r, inputArgs);
+  }));
 
   server.registerTool("request_improvement", {
     description:
@@ -236,6 +243,6 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
     });
 
     return { result: textResult("Improvement request submitted successfully"), inputArgs };
-  }, undefined as void));
+  }));
 
 }

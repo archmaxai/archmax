@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   connectDB: vi.fn(),
   mcpCallLogCreate: vi.fn(),
+  listSemanticModels: vi.fn(),
+  executeScopedQuery: vi.fn(),
+  storeQuery: vi.fn(),
+  executeStoredQuery: vi.fn(),
 }));
 
 vi.mock("@archmax/core/infra/db", () => ({ connectDB: mocks.connectDB }));
@@ -12,17 +16,17 @@ vi.mock("@archmax/core/models/index", () => ({
 }));
 
 vi.mock("@archmax/core/services/mcp-tools", () => ({
-  listSemanticModels: vi.fn().mockResolvedValue({ text: "# Models\n\n## demo" }),
+  listSemanticModels: mocks.listSemanticModels,
   getSemanticModelOverview: vi.fn().mockResolvedValue({ text: "overview" }),
   getDatasetFields: vi.fn().mockResolvedValue({ text: "fields" }),
-  executeScopedQuery: vi.fn().mockResolvedValue({ text: '{"columns":[],"rows":[],"rowCount":0}', rowCount: 0, columns: [] }),
-  storeQuery: vi.fn().mockResolvedValue("sq_123"),
-  executeStoredQuery: vi.fn().mockResolvedValue({ text: '{"columns":[],"rows":[],"rowCount":0}', rowCount: 0, columns: [] }),
+  executeScopedQuery: mocks.executeScopedQuery,
+  storeQuery: mocks.storeQuery,
+  executeStoredQuery: mocks.executeStoredQuery,
   EXECUTE_QUERY_DESCRIPTION: "Run a query",
   EXECUTE_STORED_QUERY_DESCRIPTION: "Re-run a stored query",
 }));
 
-import { writeCallLog, type McpToolContext } from "./archmax-server";
+import { writeCallLog, registerArchmaxTools, type McpToolContext } from "./archmax-server";
 
 function makeCtx(overrides: Partial<McpToolContext> = {}): McpToolContext {
   return {
@@ -37,10 +41,34 @@ function makeCtx(overrides: Partial<McpToolContext> = {}): McpToolContext {
   };
 }
 
+type ToolHandler = (...args: unknown[]) => Promise<unknown>;
+
+function createMockServer() {
+  const handlers = new Map<string, ToolHandler>();
+  const server = {
+    registerTool: vi.fn((name: string, _config: unknown, handler: ToolHandler) => {
+      handlers.set(name, handler);
+    }),
+  };
+  return { server, handlers };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.connectDB.mockResolvedValue(undefined);
   mocks.mcpCallLogCreate.mockResolvedValue({});
+  mocks.listSemanticModels.mockResolvedValue({ text: "# Models\n\n## demo" });
+  mocks.executeScopedQuery.mockResolvedValue({
+    text: '{"columns":["a"],"rows":[[1]],"rowCount":1}',
+    rowCount: 1,
+    columns: ["a"],
+  });
+  mocks.storeQuery.mockResolvedValue("sq_123");
+  mocks.executeStoredQuery.mockResolvedValue({
+    text: '{"columns":[],"rows":[],"rowCount":0}',
+    rowCount: 0,
+    columns: [],
+  });
 });
 
 describe("writeCallLog", () => {
@@ -134,5 +162,139 @@ describe("writeCallLog", () => {
         5,
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("registerArchmaxTools", () => {
+  it("registers all six tools", async () => {
+    const { server, handlers } = createMockServer();
+    await registerArchmaxTools(server as never, makeCtx());
+
+    expect(handlers.size).toBe(6);
+    expect([...handlers.keys()]).toEqual([
+      "list_semantic_models",
+      "get_semantic_model",
+      "get_datasets",
+      "execute_query",
+      "execute_stored_query",
+      "request_improvement",
+    ]);
+  });
+});
+
+describe("loggedTool (via registered handlers)", () => {
+  let handlers: Map<string, ToolHandler>;
+
+  beforeEach(async () => {
+    const mock = createMockServer();
+    handlers = mock.handlers;
+    await registerArchmaxTools(mock.server as never, makeCtx());
+  });
+
+  it("returns tool result and writes a call log for successful calls", async () => {
+    const handler = handlers.get("list_semantic_models")!;
+    const result = await handler();
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "# Models\n\n## demo" }],
+    });
+
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledOnce();
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "list_semantic_models",
+        isError: false,
+        inputArgs: null,
+      }),
+    );
+  });
+
+  it("logs error and re-throws when handler throws", async () => {
+    mocks.listSemanticModels.mockRejectedValue(new Error("disk read failed"));
+
+    const handler = handlers.get("list_semantic_models")!;
+    await expect(handler()).rejects.toThrow("disk read failed");
+
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledOnce();
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "list_semantic_models",
+        isError: true,
+        errorMessage: "disk read failed",
+      }),
+    );
+  });
+
+  it("still returns tool result when writeCallLog fails", async () => {
+    mocks.mcpCallLogCreate.mockRejectedValue(new Error("DB down"));
+
+    const handler = handlers.get("list_semantic_models")!;
+    const result = await handler();
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "# Models\n\n## demo" }],
+    });
+  });
+
+  it("uses logResult instead of full result for query tools", async () => {
+    const handler = handlers.get("execute_query")!;
+    const result = await handler({
+      modelName: "demo",
+      sql: "SELECT 1",
+      params: [],
+      store: false,
+    });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: expect.stringContaining('"rowCount":1') }],
+    });
+
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "execute_query",
+        outputContent: "1 rows, 1 columns",
+        inputArgs: expect.objectContaining({ modelName: "demo", sql: "SELECT 1", rowCount: 1 }),
+      }),
+    );
+  });
+
+  it("logs summarised output for execute_stored_query", async () => {
+    const handler = handlers.get("execute_stored_query")!;
+    await handler({ storedQueryId: "sq_abc", params: undefined });
+
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "execute_stored_query",
+        outputContent: "0 rows, 0 columns",
+        inputArgs: expect.objectContaining({ storedQueryId: "sq_abc", rowCount: 0 }),
+      }),
+    );
+  });
+
+  it("logs error result for failed queries", async () => {
+    mocks.executeScopedQuery.mockResolvedValue({
+      text: "Permission denied",
+      isError: true,
+    });
+
+    const handler = handlers.get("execute_query")!;
+    const result = await handler({
+      modelName: "demo",
+      sql: "SELECT 1",
+      params: [],
+      store: false,
+    });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Permission denied" }],
+      isError: true,
+    });
+
+    expect(mocks.mcpCallLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: "Permission denied",
+      }),
+    );
   });
 });
