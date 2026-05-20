@@ -43,42 +43,62 @@ function toMcpResult(r: ToolResult): McpResult {
   return r.isError ? errorResult(r.text) : textResult(r.text);
 }
 
-function logAndReturnQueryResult(
-  ctx: McpToolContext,
-  toolName: string,
-  args: Record<string, unknown>,
-  r: ExecuteQueryResult,
-  start: number,
-): McpResult {
-  if (r.rowCount !== undefined) args.rowCount = r.rowCount;
-  const result = r.isError ? errorResult(r.text) : textResult(r.text);
-  const logResult = r.isError
-    ? result
+function summariseQueryResult(r: ExecuteQueryResult): McpResult {
+  return r.isError
+    ? errorResult(r.text)
     : textResult(`${r.rowCount ?? 0} rows, ${r.columns?.length ?? 0} columns`);
-  logCall(ctx, toolName, args, logResult, Date.now() - start);
-  return result;
 }
 
-function logCall(
+export async function writeCallLog(
   ctx: McpToolContext,
   toolName: string,
   inputArgs: Record<string, unknown> | null,
   result: McpResult,
   durationMs: number,
-) {
-  McpCallLog.create({
-    project: ctx.projectId,
-    tokenId: ctx.tokenId,
-    tokenName: ctx.tokenName,
-    method: "tools/call",
-    toolName,
-    inputArgs,
-    outputContent: result.content.map((c) => c.text).join("\n"),
-    durationMs,
-    isError: result.isError ?? false,
-    errorMessage: result.isError ? result.content.map((c) => c.text).join("\n") : null,
-    clientIp: ctx.clientIp,
-  }).catch((err) => console.error("[MCP] Failed to write call log:", err));
+): Promise<void> {
+  try {
+    await connectDB();
+    await McpCallLog.create({
+      project: ctx.projectId,
+      tokenId: ctx.tokenId,
+      tokenName: ctx.tokenName,
+      method: "tools/call",
+      toolName,
+      inputArgs,
+      outputContent: result.content.map((c) => c.text).join("\n"),
+      durationMs,
+      isError: result.isError ?? false,
+      errorMessage: result.isError ? result.content.map((c) => c.text).join("\n") : null,
+      clientIp: ctx.clientIp,
+    });
+  } catch (err) {
+    console.error("[MCP] Failed to write call log:", err);
+  }
+}
+
+type ToolHandler<A = void> = (args: A) => Promise<{
+  result: McpResult;
+  logResult?: McpResult;
+  inputArgs: Record<string, unknown> | null;
+}>;
+
+async function loggedTool<A = void>(
+  ctx: McpToolContext,
+  toolName: string,
+  handler: ToolHandler<A>,
+  args: A,
+): Promise<McpResult> {
+  const start = Date.now();
+  try {
+    const { result, logResult, inputArgs } = await handler(args);
+    writeCallLog(ctx, toolName, inputArgs, logResult ?? result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Internal tool error";
+    const result = errorResult(msg);
+    writeCallLog(ctx, toolName, null, result, Date.now() - start);
+    throw err;
+  }
 }
 
 export async function registerArchmaxTools(server: McpServer, ctx: McpToolContext): Promise<void> {
@@ -87,13 +107,10 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
   server.registerTool("list_semantic_models", {
     description: "List semantic models you have access to (reads from YAML files on disk)",
     annotations: { readOnlyHint: true },
-  }, async () => {
-    const start = Date.now();
+  }, () => loggedTool(ctx, "list_semantic_models", async () => {
     const r = await listSemanticModels(fileSvc, projectId, scopes);
-    const result = toMcpResult(r);
-    logCall(ctx, "list_semantic_models", null, result, Date.now() - start);
-    return result;
-  });
+    return { result: toMcpResult(r), inputArgs: null };
+  }, undefined as void));
 
   server.registerTool("get_semantic_model", {
     description:
@@ -108,16 +125,13 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
         .describe("Page number within the scope (default 1, items per page configured per project). Only meaningful with scope."),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ modelName, scope, page }) => {
-    const start = Date.now();
-    const args = { modelName, scope, page };
+  }, ({ modelName, scope, page }) => loggedTool(ctx, "get_semantic_model", async () => {
+    const inputArgs = { modelName, scope, page };
     const r = await getSemanticModelOverview(fileSvc, projectId, scopes, modelName, {
       scope, page, itemsPerPage: ctx.mcpPageSize, showTableNames: true,
     });
-    const result = toMcpResult(r);
-    logCall(ctx, "get_semantic_model", args, result, Date.now() - start);
-    return result;
-  });
+    return { result: toMcpResult(r), inputArgs };
+  }, undefined as void));
 
   server.registerTool("get_datasets", {
     description:
@@ -132,16 +146,13 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       })).min(1).max(10).describe("Datasets to retrieve (1–10), each with an optional page"),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ modelName, datasets }) => {
-    const start = Date.now();
-    const args = { modelName, datasets };
+  }, ({ modelName, datasets }) => loggedTool(ctx, "get_datasets", async () => {
+    const inputArgs = { modelName, datasets };
     const r = await getDatasetFields(fileSvc, projectId, scopes, modelName, datasets, {
       itemsPerPage: ctx.mcpPageSize,
     });
-    const result = toMcpResult(r);
-    logCall(ctx, "get_datasets", args, result, Date.now() - start);
-    return result;
-  });
+    return { result: toMcpResult(r), inputArgs };
+  }, undefined as void));
 
   server.registerTool("execute_query", {
     description: EXECUTE_QUERY_DESCRIPTION,
@@ -154,9 +165,8 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
         .describe("When true (default), the query is stored and a storedQueryId is returned for later re-execution via execute_stored_query"),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ modelName, sql, params, store }) => {
-    const start = Date.now();
-    const args: Record<string, unknown> = { modelName, sql };
+  }, ({ modelName, sql, params, store }) => loggedTool(ctx, "execute_query", async () => {
+    const inputArgs: Record<string, unknown> = { modelName, sql };
     const r = await executeScopedQuery(fileSvc, projectId, scopes, modelName, sql, params);
 
     if (!r.isError && store) {
@@ -171,8 +181,10 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       }
     }
 
-    return logAndReturnQueryResult(ctx, "execute_query", args, r, start);
-  });
+    if (r.rowCount !== undefined) inputArgs.rowCount = r.rowCount;
+    const result = r.isError ? errorResult(r.text) : textResult(r.text);
+    return { result, logResult: summariseQueryResult(r), inputArgs };
+  }, undefined as void));
 
   server.registerTool("execute_stored_query", {
     description: EXECUTE_STORED_QUERY_DESCRIPTION,
@@ -182,12 +194,13 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
         .describe("Override parameter values; if omitted, the original stored params are used"),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ storedQueryId, params }) => {
-    const start = Date.now();
-    const args: Record<string, unknown> = { storedQueryId };
+  }, ({ storedQueryId, params }) => loggedTool(ctx, "execute_stored_query", async () => {
+    const inputArgs: Record<string, unknown> = { storedQueryId };
     const r = await executeStoredQuery(fileSvc, projectId, scopes, storedQueryId, params);
-    return logAndReturnQueryResult(ctx, "execute_stored_query", args, r, start);
-  });
+    if (r.rowCount !== undefined) inputArgs.rowCount = r.rowCount;
+    const result = r.isError ? errorResult(r.text) : textResult(r.text);
+    return { result, logResult: summariseQueryResult(r), inputArgs };
+  }, undefined as void));
 
   server.registerTool("request_improvement", {
     description:
@@ -200,22 +213,17 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       description: z.string().max(2000).describe("Detailed description of the issue or requested change (max 2000 chars)"),
     }),
     annotations: { readOnlyHint: false },
-  }, async ({ modelName, title, description }) => {
-    const start = Date.now();
-    const args = { modelName, title, description };
+  }, ({ modelName, title, description }) => loggedTool(ctx, "request_improvement", async () => {
+    const inputArgs = { modelName, title, description };
 
     if (!scopes.includes(modelName)) {
-      const result = errorResult(`Access denied: model "${modelName}" is not in your token's scope`);
-      logCall(ctx, "request_improvement", args, result, Date.now() - start);
-      return result;
+      return { result: errorResult(`Access denied: model "${modelName}" is not in your token's scope`), inputArgs };
     }
 
     const models = await fileSvc.list(projectId);
     const modelExists = models.some((m: { name: string }) => m.name === modelName);
     if (!modelExists) {
-      const result = errorResult(`Model "${modelName}" not found in this project`);
-      logCall(ctx, "request_improvement", args, result, Date.now() - start);
-      return result;
+      return { result: errorResult(`Model "${modelName}" not found in this project`), inputArgs };
     }
 
     await connectDB();
@@ -227,9 +235,7 @@ export async function registerArchmaxTools(server: McpServer, ctx: McpToolContex
       createdVia: ctx.tokenName,
     });
 
-    const result = textResult("Improvement request submitted successfully");
-    logCall(ctx, "request_improvement", args, result, Date.now() - start);
-    return result;
-  });
+    return { result: textResult("Improvement request submitted successfully"), inputArgs };
+  }, undefined as void));
 
 }
