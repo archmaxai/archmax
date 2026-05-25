@@ -18,16 +18,16 @@
   },
   "dependencies": {
     "@archmax/core": "workspace:*",
-    "@hono/node-server": "^2.0.2",
+    "@hono/node-server": "^2.0.4",
     "@hono/zod-validator": "^0.8.0",
-    "@langchain/core": "^1.1.46",
-    "@langchain/openai": "^1.4.5",
+    "@langchain/core": "^1.1.48",
+    "@langchain/openai": "^1.4.7",
     "@modelcontextprotocol/hono": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "better-auth": "^1.6.11",
     "deepagents": "^1.10.2",
     "dotenv": "^17.4.2",
-    "hono": "^4.12.19",
+    "hono": "^4.12.23",
     "js-yaml": "^4.1.1",
     "mongodb": "^7.2.0",
     "mongoose": "^9.6.2",
@@ -36,7 +36,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25",
-    "tsx": "^4.22.1",
+    "tsx": "^4.22.3",
     "typescript": "6.0.3"
   }
 }
