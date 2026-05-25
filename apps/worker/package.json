@@ -12,16 +12,16 @@
   },
   "dependencies": {
     "@archmax/core": "workspace:*",
-    "@langchain/core": "^1.1.46",
-    "bullmq": "^5.76.10",
+    "@langchain/core": "^1.1.48",
+    "bullmq": "^5.77.2",
     "dotenv": "^17.4.2",
     "ioredis": "^5",
     "mongoose": "^9"
   },
   "devDependencies": {
     "@types/node": "^25",
-    "tsx": "^4.22.1",
+    "tsx": "^4.22.3",
     "typescript": "6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   }
 }

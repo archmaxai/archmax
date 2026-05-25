@@ -11,10 +11,10 @@
     "typecheck": "turbo typecheck"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "esbuild": "^0.28.0",
     "turbo": "^2.9.14",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
