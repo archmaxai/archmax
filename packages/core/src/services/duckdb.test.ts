@@ -485,6 +485,19 @@ describe("isTransientDuckdbError", () => {
     }
   });
 
+  it("matches contextualised network / EOF faults but not bare identifier substrings", () => {
+    expect(isTransientDuckdbError("Network is unreachable")).toBe(true);
+    expect(isTransientDuckdbError("network error while reading from server")).toBe(true);
+    expect(isTransientDuckdbError("unexpected EOF on client connection")).toBe(true);
+
+    // Permanent binder/catalog errors that merely *contain* "network" or
+    // "eof" inside an identifier must not be misclassified as transient.
+    expect(
+      isTransientDuckdbError(`Binder Error: Referenced column "network_bytes" not found`),
+    ).toBe(false);
+    expect(isTransientDuckdbError(`Binder Error: Referenced column "eof" not found`)).toBe(false);
+  });
+
   it("does NOT classify permanent authoring errors or the query-timeout sentinel as transient", () => {
     for (const msg of [
       "Query timed out after 30s",
@@ -536,6 +549,22 @@ describe("retryOnTransientDuckdbError", () => {
     );
     expect(res.ok).toBe(false);
     expect(calls).toBe(3);
+  });
+
+  it("stops retrying once the wall-clock deadline has passed", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        // Burn past the deadline during the first attempt so the second
+        // attempt is never started.
+        await new Promise((r) => setTimeout(r, 20));
+        throw new Error("Connection Error: connection reset by peer");
+      },
+      { maxAttempts: 5, baseDelayMs: 0, deadlineMs: Date.now() + 10 },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(1);
   });
 });
 

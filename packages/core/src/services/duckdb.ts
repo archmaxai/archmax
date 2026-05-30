@@ -631,7 +631,11 @@ function delay(ms: number): Promise<void> {
  * retrying it would only stack more multi-second waits.
  */
 export function isTransientDuckdbError(message: string): boolean {
-  return /connection (error|reset|refused|timed out)|could not connect|failed to connect|server closed|terminating connection|broken pipe|i\/o error|network|temporarily unavailable|too many clients|EOF/i.test(
+  // Match multi-word phrases / contextualised tokens only. Bare substrings
+  // like `network` or `EOF` are deliberately avoided: a permanent binder
+  // error referencing an identifier such as `network_bytes` or a column
+  // named `eof` must NOT be misclassified as transient and retried.
+  return /connection (error|reset|refused|timed out)|could not connect|failed to connect|server closed|terminating connection|broken pipe|i\/o error|network (is unreachable|error)|temporarily unavailable|too many clients|unexpected eof/i.test(
     message,
   );
 }
@@ -642,15 +646,25 @@ export function isTransientDuckdbError(message: string): boolean {
  * `isTransientDuckdbError`). Returns a discriminated result instead of
  * throwing so callers can record a per-dataset failure without aborting
  * the rest of the materialisation loop.
+ *
+ * When `deadlineMs` (an absolute `Date.now()` epoch) is supplied, the
+ * helper never starts an attempt or sleeps a backoff that would run past
+ * it. This lets callers enforce a single overall wall-clock budget across
+ * many retried operations so a slow/unavailable upstream cannot tie up
+ * resources for `attempts * timeout` per item.
  */
 export async function retryOnTransientDuckdbError(
   op: () => Promise<void>,
-  opts?: { maxAttempts?: number; baseDelayMs?: number },
+  opts?: { maxAttempts?: number; baseDelayMs?: number; deadlineMs?: number },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const maxAttempts = opts?.maxAttempts ?? VIEW_MATERIALISE_MAX_ATTEMPTS;
   const baseDelayMs = opts?.baseDelayMs ?? VIEW_MATERIALISE_RETRY_BASE_MS;
+  const deadlineMs = opts?.deadlineMs;
   let lastError = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+      return { ok: false, error: lastError || "Materialisation time budget exceeded." };
+    }
     try {
       await op();
       return { ok: true };
@@ -659,7 +673,11 @@ export async function retryOnTransientDuckdbError(
       if (attempt === maxAttempts || !isTransientDuckdbError(lastError)) {
         return { ok: false, error: lastError };
       }
-      await delay(baseDelayMs * attempt);
+      const backoff = baseDelayMs * attempt;
+      if (deadlineMs !== undefined && Date.now() + backoff >= deadlineMs) {
+        return { ok: false, error: lastError };
+      }
+      await delay(backoff);
     }
   }
   return { ok: false, error: lastError };
@@ -686,6 +704,11 @@ export async function retryOnTransientDuckdbError(
  *   the first call no longer surfaces a permanent-sounding "ask the
  *   maintainer" error. Permanent failures (validator rejection, binder
  *   error) are not retried.
+ * - Time-bounded: the whole pass (all views, all retries and backoffs)
+ *   shares a single wall-clock budget equal to one query timeout, so a
+ *   slow/unavailable upstream cannot let materialisation run past the
+ *   advertised `execute_query` timeout. Once the budget is exhausted the
+ *   remaining datasets fail fast.
  * - Error-isolated: validator or DuckDB failures on one dataset never
  *   abort the materialisation of the rest. The previous VIEW (if any) is
  *   left in place and a warning is logged.
@@ -722,13 +745,17 @@ export async function materialiseModelViews(
 
   const schema = scopeSchemaName(model.name);
   // A cold upstream connection (notably the first Postgres bind after
-  // ATTACH) can take well over 10s to resolve the remote table's schema
-  // while DuckDB binds `CREATE OR REPLACE VIEW`. Give each view the full
-  // query-timeout budget instead of an aggressive 10s cap so a slow-but-
-  // valid first call no longer lands the dataset in `failed`. In practice
-  // only the first view in a model pays the cold-connection cost; the rest
-  // reuse the now-warm attach.
-  const perViewTimeout = getQueryTimeoutMs();
+  // ATTACH) can take well over the old 10s cap to resolve the remote
+  // table's schema while DuckDB binds `CREATE OR REPLACE VIEW`. Rather than
+  // an aggressive per-view cap, bound the *entire* materialisation pass
+  // (every view + every retry/backoff) by a single wall-clock budget equal
+  // to one query timeout. This keeps a slow/unavailable upstream from
+  // tying up resources for `datasets * attempts * timeout` while still
+  // giving a slow-but-valid first call enough room to succeed — in
+  // practice only the first view pays the cold-connection cost; the rest
+  // reuse the now-warm attach. Once the budget is spent, remaining views
+  // fail fast.
+  const materialiseDeadline = Date.now() + getQueryTimeoutMs();
 
   const db = await instance.connect();
   try {
@@ -781,13 +808,19 @@ export async function materialiseModelViews(
       }
 
       const viewName = scopedViewName(model.name, ds.name);
-      const created = await retryOnTransientDuckdbError(async () => {
-        await withQueryTimeout(
-          db,
-          () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
-          perViewTimeout,
-        );
-      });
+      const created = await retryOnTransientDuckdbError(
+        async () => {
+          // Per-attempt timeout = whatever remains of the shared budget, so
+          // the total materialisation pass can never exceed it.
+          const remaining = materialiseDeadline - Date.now();
+          await withQueryTimeout(
+            db,
+            () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
+            Math.max(1, remaining),
+          );
+        },
+        { deadlineMs: materialiseDeadline },
+      );
       if (created.ok) {
         result.materialised.push(ds.name);
         if (wasInferred) result.inferred.push(ds.name);
