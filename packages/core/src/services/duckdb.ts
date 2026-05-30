@@ -131,6 +131,39 @@ export async function withProjectQuerySlot<T>(
   }
 }
 
+// ── Per-project materialisation mutex ────────────────────────────────
+//
+// `CREATE OR REPLACE VIEW` is an ALTER on the DuckDB catalog. When several
+// MCP requests for the same model land together, each runs its own
+// materialisation pass and they race to (re)create the same scoped views,
+// which DuckDB aborts with "TransactionContext Error: Catalog write-write
+// conflict on alter". The tail-chaining promise mutex below serialises
+// materialisation per project so concurrent callers queue instead of
+// colliding. The map is pruned once a project's queue drains so it does
+// not grow unbounded.
+const materialiseTails = new Map<string, Promise<unknown>>();
+
+export function withProjectMaterialiseLock<T>(
+  projectId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const tail = materialiseTails.get(projectId) ?? Promise.resolve();
+  // Run `operation` once the previous pass settles, regardless of whether
+  // it resolved or rejected, so one failed pass never wedges the queue.
+  const result = tail.then(operation, operation);
+  const newTail = result.then(
+    () => {},
+    () => {},
+  );
+  materialiseTails.set(projectId, newTail);
+  void newTail.finally(() => {
+    if (materialiseTails.get(projectId) === newTail) {
+      materialiseTails.delete(projectId);
+    }
+  });
+  return result;
+}
+
 // ── Project DuckDB instance cache ────────────────────────────────────
 
 interface ProjectDuckDB {
@@ -629,13 +662,19 @@ function delay(ms: number): Promise<void> {
  * Our own query-timeout sentinel ("Query timed out after Ns") is also NOT
  * matched here — a slow bind already consumed its full per-view budget, so
  * retrying it would only stack more multi-second waits.
+ *
+ * A DuckDB catalog "write-write conflict" IS treated as transient: it is a
+ * concurrency abort that succeeds on a re-run once the competing
+ * transaction commits. `withProjectMaterialiseLock` already serialises
+ * passes within this process, but classifying the conflict as retryable is
+ * a cheap safety net for any residual contention.
  */
 export function isTransientDuckdbError(message: string): boolean {
   // Match multi-word phrases / contextualised tokens only. Bare substrings
   // like `network` or `EOF` are deliberately avoided: a permanent binder
   // error referencing an identifier such as `network_bytes` or a column
   // named `eof` must NOT be misclassified as transient and retried.
-  return /connection (error|reset|refused|timed out)|could not connect|failed to connect|server closed|terminating connection|broken pipe|i\/o error|network (is unreachable|error)|temporarily unavailable|too many clients|unexpected eof/i.test(
+  return /connection (error|reset|refused|timed out)|could not connect|failed to connect|server closed|terminating connection|broken pipe|i\/o error|network (is unreachable|error)|temporarily unavailable|too many clients|unexpected eof|write-write conflict/i.test(
     message,
   );
 }
@@ -715,7 +754,19 @@ export async function retryOnTransientDuckdbError(
  */
 export async function materialiseModelViews(
   instance: DuckDBInstance,
-  _projectId: string,
+  projectId: string,
+  model: SemanticModel,
+): Promise<MaterialiseViewsResult> {
+  // Serialise per project: concurrent passes racing on the same scoped
+  // VIEWs abort with a DuckDB catalog write-write conflict (see
+  // `withProjectMaterialiseLock`).
+  return withProjectMaterialiseLock(projectId, () =>
+    materialiseModelViewsLocked(instance, model),
+  );
+}
+
+async function materialiseModelViewsLocked(
+  instance: DuckDBInstance,
   model: SemanticModel,
 ): Promise<MaterialiseViewsResult> {
   const result: MaterialiseViewsResult = {

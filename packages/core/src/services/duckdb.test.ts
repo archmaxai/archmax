@@ -24,6 +24,7 @@ import {
   materialiseModelViews,
   isTransientDuckdbError,
   retryOnTransientDuckdbError,
+  withProjectMaterialiseLock,
   stripScopedSchemaQualifier,
   duckdbFilePath,
   deleteProjectDuckdbFile,
@@ -480,6 +481,8 @@ describe("isTransientDuckdbError", () => {
       "terminating connection due to administrator command",
       "Connection timed out",
       "FATAL: sorry, too many clients already",
+      // Concurrency abort: succeeds on re-run once the competing txn commits.
+      `TransactionContext Error: Catalog write-write conflict on alter with "Schema\0_scope_hr\0View\0_scope_hr\0leave_accounts"`,
     ]) {
       expect(isTransientDuckdbError(msg)).toBe(true);
     }
@@ -565,6 +568,64 @@ describe("retryOnTransientDuckdbError", () => {
     );
     expect(res.ok).toBe(false);
     expect(calls).toBe(1);
+  });
+});
+
+describe("withProjectMaterialiseLock", () => {
+  it("serialises concurrent operations for the same project (no overlap)", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const order: number[] = [];
+
+    const make = (id: number) => async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      order.push(id);
+      active--;
+      return id;
+    };
+
+    const results = await Promise.all([
+      withProjectMaterialiseLock("proj-a", make(1)),
+      withProjectMaterialiseLock("proj-a", make(2)),
+      withProjectMaterialiseLock("proj-a", make(3)),
+    ]);
+
+    // Never more than one running at a time, and FIFO order preserved.
+    expect(maxActive).toBe(1);
+    expect(order).toEqual([1, 2, 3]);
+    expect(results).toEqual([1, 2, 3]);
+  });
+
+  it("runs different projects concurrently", async () => {
+    let active = 0;
+    let maxActive = 0;
+
+    const make = () => async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    };
+
+    await Promise.all([
+      withProjectMaterialiseLock("proj-x", make()),
+      withProjectMaterialiseLock("proj-y", make()),
+    ]);
+
+    expect(maxActive).toBe(2);
+  });
+
+  it("does not let a rejected operation wedge the queue", async () => {
+    const failing = withProjectMaterialiseLock("proj-fail", async () => {
+      throw new Error("boom");
+    });
+    await expect(failing).rejects.toThrow("boom");
+
+    // A subsequent op on the same project still runs.
+    const after = await withProjectMaterialiseLock("proj-fail", async () => "ok");
+    expect(after).toBe("ok");
   });
 });
 
