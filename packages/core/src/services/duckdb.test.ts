@@ -22,6 +22,8 @@ import {
   getProjectInstance,
   disposeProjectInstance,
   materialiseModelViews,
+  isTransientDuckdbError,
+  retryOnTransientDuckdbError,
   stripScopedSchemaQualifier,
   duckdbFilePath,
   deleteProjectDuckdbFile,
@@ -464,6 +466,76 @@ describe("materialiseModelViews", () => {
     } finally {
       db.disconnectSync();
     }
+  });
+});
+
+describe("isTransientDuckdbError", () => {
+  it("classifies cold-connection / upstream faults as transient", () => {
+    for (const msg of [
+      "Failed to connect to Postgres database",
+      "Connection Error: connection refused",
+      "IO Error: connection reset by peer",
+      "could not connect to server: Connection refused",
+      "server closed the connection unexpectedly",
+      "terminating connection due to administrator command",
+      "Connection timed out",
+      "FATAL: sorry, too many clients already",
+    ]) {
+      expect(isTransientDuckdbError(msg)).toBe(true);
+    }
+  });
+
+  it("does NOT classify permanent authoring errors or the query-timeout sentinel as transient", () => {
+    for (const msg of [
+      "Query timed out after 30s",
+      `Binder Error: Referenced column "missing" not found`,
+      `Catalog Error: Table with name "orders" does not exist`,
+      "Parser Error: syntax error at or near SELECT",
+    ]) {
+      expect(isTransientDuckdbError(msg)).toBe(false);
+    }
+  });
+});
+
+describe("retryOnTransientDuckdbError", () => {
+  it("retries a transient failure and succeeds", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        if (calls < 2) throw new Error("Connection Error: connection reset by peer");
+      },
+      { baseDelayMs: 0 },
+    );
+    expect(res).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("does NOT retry a permanent (binder) error and fails fast", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        throw new Error(`Binder Error: Referenced column "missing" not found`);
+      },
+      { baseDelayMs: 0 },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(1);
+    if (!res.ok) expect(res.error).toMatch(/Binder Error/);
+  });
+
+  it("gives up after maxAttempts on a persistent transient fault", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        throw new Error("Failed to connect to Postgres database");
+      },
+      { maxAttempts: 3, baseDelayMs: 0 },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(3);
   });
 });
 

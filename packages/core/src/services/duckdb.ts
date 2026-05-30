@@ -610,6 +610,61 @@ async function validateViewQuery(viewQuery: string): Promise<string | null> {
   return validateSqlAst(viewQuery, { mode: "view_query" });
 }
 
+const VIEW_MATERIALISE_MAX_ATTEMPTS = 3;
+const VIEW_MATERIALISE_RETRY_BASE_MS = 250;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Heuristic: does a DuckDB/extension error message describe a *transient*
+ * connection-level fault (a cold attach handshake, a dropped upstream pool
+ * connection, an upstream temporarily unavailable) rather than a permanent
+ * authoring problem (bad column, syntax error in the view body)?
+ *
+ * Only transient faults are retried by `materialiseModelViews`. A genuine
+ * binder/catalog error (e.g. a `view_query` referencing a column that does
+ * not exist) is NOT transient, so it fails fast and surfaces immediately.
+ * Our own query-timeout sentinel ("Query timed out after Ns") is also NOT
+ * matched here — a slow bind already consumed its full per-view budget, so
+ * retrying it would only stack more multi-second waits.
+ */
+export function isTransientDuckdbError(message: string): boolean {
+  return /connection (error|reset|refused|timed out)|could not connect|failed to connect|server closed|terminating connection|broken pipe|i\/o error|network|temporarily unavailable|too many clients|EOF/i.test(
+    message,
+  );
+}
+
+/**
+ * Run a DuckDB operation, retrying with linear backoff only when the
+ * failure looks like a transient connection fault (see
+ * `isTransientDuckdbError`). Returns a discriminated result instead of
+ * throwing so callers can record a per-dataset failure without aborting
+ * the rest of the materialisation loop.
+ */
+export async function retryOnTransientDuckdbError(
+  op: () => Promise<void>,
+  opts?: { maxAttempts?: number; baseDelayMs?: number },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const maxAttempts = opts?.maxAttempts ?? VIEW_MATERIALISE_MAX_ATTEMPTS;
+  const baseDelayMs = opts?.baseDelayMs ?? VIEW_MATERIALISE_RETRY_BASE_MS;
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await op();
+      return { ok: true };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      if (attempt === maxAttempts || !isTransientDuckdbError(lastError)) {
+        return { ok: false, error: lastError };
+      }
+      await delay(baseDelayMs * attempt);
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
 /**
  * (Re-)materialise every per-model scoped VIEW for `model` against the
  * project's persistent DuckDB instance.
@@ -625,6 +680,12 @@ async function validateViewQuery(viewQuery: string): Promise<string | null> {
  * - Validator-gated: every view body — authored or inferred — is rejected
  *   by the structural SQL validator before being wrapped, so a malformed
  *   body never reaches DuckDB.
+ * - Resilient to transient faults: each `CREATE OR REPLACE VIEW` is retried
+ *   with linear backoff when it fails with a transient connection error
+ *   (see `retryOnTransientDuckdbError`), so a cold upstream connection on
+ *   the first call no longer surfaces a permanent-sounding "ask the
+ *   maintainer" error. Permanent failures (validator rejection, binder
+ *   error) are not retried.
  * - Error-isolated: validator or DuckDB failures on one dataset never
  *   abort the materialisation of the rest. The previous VIEW (if any) is
  *   left in place and a warning is logged.
@@ -660,7 +721,14 @@ export async function materialiseModelViews(
   }
 
   const schema = scopeSchemaName(model.name);
-  const perViewTimeout = Math.min(getQueryTimeoutMs(), 10_000);
+  // A cold upstream connection (notably the first Postgres bind after
+  // ATTACH) can take well over 10s to resolve the remote table's schema
+  // while DuckDB binds `CREATE OR REPLACE VIEW`. Give each view the full
+  // query-timeout budget instead of an aggressive 10s cap so a slow-but-
+  // valid first call no longer lands the dataset in `failed`. In practice
+  // only the first view in a model pays the cold-connection cost; the rest
+  // reuse the now-warm attach.
+  const perViewTimeout = getQueryTimeoutMs();
 
   const db = await instance.connect();
   try {
@@ -713,20 +781,21 @@ export async function materialiseModelViews(
       }
 
       const viewName = scopedViewName(model.name, ds.name);
-      try {
+      const created = await retryOnTransientDuckdbError(async () => {
         await withQueryTimeout(
           db,
           () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
           perViewTimeout,
         );
+      });
+      if (created.ok) {
         result.materialised.push(ds.name);
         if (wasInferred) result.inferred.push(ds.name);
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+      } else {
         console.warn(
-          `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": DuckDB error during CREATE OR REPLACE VIEW (${errMsg})`,
+          `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": DuckDB error during CREATE OR REPLACE VIEW (${created.error})`,
         );
-        result.failed.push({ dataset: ds.name, error: errMsg });
+        result.failed.push({ dataset: ds.name, error: created.error });
       }
     }
   } finally {
