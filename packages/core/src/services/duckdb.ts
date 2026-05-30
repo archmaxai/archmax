@@ -131,6 +131,39 @@ export async function withProjectQuerySlot<T>(
   }
 }
 
+// ── Per-project materialisation mutex ────────────────────────────────
+//
+// `CREATE OR REPLACE VIEW` is an ALTER on the DuckDB catalog. When several
+// MCP requests for the same model land together, each runs its own
+// materialisation pass and they race to (re)create the same scoped views,
+// which DuckDB aborts with "TransactionContext Error: Catalog write-write
+// conflict on alter". The tail-chaining promise mutex below serialises
+// materialisation per project so concurrent callers queue instead of
+// colliding. The map is pruned once a project's queue drains so it does
+// not grow unbounded.
+const materialiseTails = new Map<string, Promise<unknown>>();
+
+export function withProjectMaterialiseLock<T>(
+  projectId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const tail = materialiseTails.get(projectId) ?? Promise.resolve();
+  // Run `operation` once the previous pass settles, regardless of whether
+  // it resolved or rejected, so one failed pass never wedges the queue.
+  const result = tail.then(operation, operation);
+  const newTail = result.then(
+    () => {},
+    () => {},
+  );
+  materialiseTails.set(projectId, newTail);
+  void newTail.finally(() => {
+    if (materialiseTails.get(projectId) === newTail) {
+      materialiseTails.delete(projectId);
+    }
+  });
+  return result;
+}
+
 // ── Project DuckDB instance cache ────────────────────────────────────
 
 interface ProjectDuckDB {
@@ -610,6 +643,85 @@ async function validateViewQuery(viewQuery: string): Promise<string | null> {
   return validateSqlAst(viewQuery, { mode: "view_query" });
 }
 
+const VIEW_MATERIALISE_MAX_ATTEMPTS = 3;
+const VIEW_MATERIALISE_RETRY_BASE_MS = 250;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Heuristic: does a DuckDB/extension error message describe a *transient*
+ * connection-level fault (a cold attach handshake, a dropped upstream pool
+ * connection, an upstream temporarily unavailable) rather than a permanent
+ * authoring problem (bad column, syntax error in the view body)?
+ *
+ * Only transient faults are retried by `materialiseModelViews`. A genuine
+ * binder/catalog error (e.g. a `view_query` referencing a column that does
+ * not exist) is NOT transient, so it fails fast and surfaces immediately.
+ * Our own query-timeout sentinel ("Query timed out after Ns") is also NOT
+ * matched here — a slow bind already consumed its full per-view budget, so
+ * retrying it would only stack more multi-second waits.
+ *
+ * A DuckDB catalog "write-write conflict" IS treated as transient: it is a
+ * concurrency abort that succeeds on a re-run once the competing
+ * transaction commits. `withProjectMaterialiseLock` already serialises
+ * passes within this process, but classifying the conflict as retryable is
+ * a cheap safety net for any residual contention.
+ */
+export function isTransientDuckdbError(message: string): boolean {
+  // Match multi-word phrases / contextualised tokens only. Bare substrings
+  // like `network` or `EOF` are deliberately avoided: a permanent binder
+  // error referencing an identifier such as `network_bytes` or a column
+  // named `eof` must NOT be misclassified as transient and retried.
+  return /connection (error|reset|refused|timed out)|could not connect|failed to connect|server closed|terminating connection|broken pipe|i\/o error|network (is unreachable|error)|temporarily unavailable|too many clients|unexpected eof|write-write conflict/i.test(
+    message,
+  );
+}
+
+/**
+ * Run a DuckDB operation, retrying with linear backoff only when the
+ * failure looks like a transient connection fault (see
+ * `isTransientDuckdbError`). Returns a discriminated result instead of
+ * throwing so callers can record a per-dataset failure without aborting
+ * the rest of the materialisation loop.
+ *
+ * When `deadlineMs` (an absolute `Date.now()` epoch) is supplied, the
+ * helper never starts an attempt or sleeps a backoff that would run past
+ * it. This lets callers enforce a single overall wall-clock budget across
+ * many retried operations so a slow/unavailable upstream cannot tie up
+ * resources for `attempts * timeout` per item.
+ */
+export async function retryOnTransientDuckdbError(
+  op: () => Promise<void>,
+  opts?: { maxAttempts?: number; baseDelayMs?: number; deadlineMs?: number },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const maxAttempts = opts?.maxAttempts ?? VIEW_MATERIALISE_MAX_ATTEMPTS;
+  const baseDelayMs = opts?.baseDelayMs ?? VIEW_MATERIALISE_RETRY_BASE_MS;
+  const deadlineMs = opts?.deadlineMs;
+  let lastError = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+      return { ok: false, error: lastError || "Materialisation time budget exceeded." };
+    }
+    try {
+      await op();
+      return { ok: true };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      if (attempt === maxAttempts || !isTransientDuckdbError(lastError)) {
+        return { ok: false, error: lastError };
+      }
+      const backoff = baseDelayMs * attempt;
+      if (deadlineMs !== undefined && Date.now() + backoff >= deadlineMs) {
+        return { ok: false, error: lastError };
+      }
+      await delay(backoff);
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
 /**
  * (Re-)materialise every per-model scoped VIEW for `model` against the
  * project's persistent DuckDB instance.
@@ -625,13 +737,36 @@ async function validateViewQuery(viewQuery: string): Promise<string | null> {
  * - Validator-gated: every view body — authored or inferred — is rejected
  *   by the structural SQL validator before being wrapped, so a malformed
  *   body never reaches DuckDB.
+ * - Resilient to transient faults: each `CREATE OR REPLACE VIEW` is retried
+ *   with linear backoff when it fails with a transient connection error
+ *   (see `retryOnTransientDuckdbError`), so a cold upstream connection on
+ *   the first call no longer surfaces a permanent-sounding "ask the
+ *   maintainer" error. Permanent failures (validator rejection, binder
+ *   error) are not retried.
+ * - Time-bounded: the whole pass (all views, all retries and backoffs)
+ *   shares a single wall-clock budget equal to one query timeout, so a
+ *   slow/unavailable upstream cannot let materialisation run past the
+ *   advertised `execute_query` timeout. Once the budget is exhausted the
+ *   remaining datasets fail fast.
  * - Error-isolated: validator or DuckDB failures on one dataset never
  *   abort the materialisation of the rest. The previous VIEW (if any) is
  *   left in place and a warning is logged.
  */
 export async function materialiseModelViews(
   instance: DuckDBInstance,
-  _projectId: string,
+  projectId: string,
+  model: SemanticModel,
+): Promise<MaterialiseViewsResult> {
+  // Serialise per project: concurrent passes racing on the same scoped
+  // VIEWs abort with a DuckDB catalog write-write conflict (see
+  // `withProjectMaterialiseLock`).
+  return withProjectMaterialiseLock(projectId, () =>
+    materialiseModelViewsLocked(instance, model),
+  );
+}
+
+async function materialiseModelViewsLocked(
+  instance: DuckDBInstance,
   model: SemanticModel,
 ): Promise<MaterialiseViewsResult> {
   const result: MaterialiseViewsResult = {
@@ -660,7 +795,18 @@ export async function materialiseModelViews(
   }
 
   const schema = scopeSchemaName(model.name);
-  const perViewTimeout = Math.min(getQueryTimeoutMs(), 10_000);
+  // A cold upstream connection (notably the first Postgres bind after
+  // ATTACH) can take well over the old 10s cap to resolve the remote
+  // table's schema while DuckDB binds `CREATE OR REPLACE VIEW`. Rather than
+  // an aggressive per-view cap, bound the *entire* materialisation pass
+  // (every view + every retry/backoff) by a single wall-clock budget equal
+  // to one query timeout. This keeps a slow/unavailable upstream from
+  // tying up resources for `datasets * attempts * timeout` while still
+  // giving a slow-but-valid first call enough room to succeed — in
+  // practice only the first view pays the cold-connection cost; the rest
+  // reuse the now-warm attach. Once the budget is spent, remaining views
+  // fail fast.
+  const materialiseDeadline = Date.now() + getQueryTimeoutMs();
 
   const db = await instance.connect();
   try {
@@ -713,20 +859,27 @@ export async function materialiseModelViews(
       }
 
       const viewName = scopedViewName(model.name, ds.name);
-      try {
-        await withQueryTimeout(
-          db,
-          () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
-          perViewTimeout,
-        );
+      const created = await retryOnTransientDuckdbError(
+        async () => {
+          // Per-attempt timeout = whatever remains of the shared budget, so
+          // the total materialisation pass can never exceed it.
+          const remaining = materialiseDeadline - Date.now();
+          await withQueryTimeout(
+            db,
+            () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
+            Math.max(1, remaining),
+          );
+        },
+        { deadlineMs: materialiseDeadline },
+      );
+      if (created.ok) {
         result.materialised.push(ds.name);
         if (wasInferred) result.inferred.push(ds.name);
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+      } else {
         console.warn(
-          `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": DuckDB error during CREATE OR REPLACE VIEW (${errMsg})`,
+          `[materialiseModelViews] Skipped dataset "${ds.name}" in model "${model.name}": DuckDB error during CREATE OR REPLACE VIEW (${created.error})`,
         );
-        result.failed.push({ dataset: ds.name, error: errMsg });
+        result.failed.push({ dataset: ds.name, error: created.error });
       }
     }
   } finally {

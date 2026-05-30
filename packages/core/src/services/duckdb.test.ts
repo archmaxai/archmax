@@ -22,6 +22,9 @@ import {
   getProjectInstance,
   disposeProjectInstance,
   materialiseModelViews,
+  isTransientDuckdbError,
+  retryOnTransientDuckdbError,
+  withProjectMaterialiseLock,
   stripScopedSchemaQualifier,
   duckdbFilePath,
   deleteProjectDuckdbFile,
@@ -464,6 +467,165 @@ describe("materialiseModelViews", () => {
     } finally {
       db.disconnectSync();
     }
+  });
+});
+
+describe("isTransientDuckdbError", () => {
+  it("classifies cold-connection / upstream faults as transient", () => {
+    for (const msg of [
+      "Failed to connect to Postgres database",
+      "Connection Error: connection refused",
+      "IO Error: connection reset by peer",
+      "could not connect to server: Connection refused",
+      "server closed the connection unexpectedly",
+      "terminating connection due to administrator command",
+      "Connection timed out",
+      "FATAL: sorry, too many clients already",
+      // Concurrency abort: succeeds on re-run once the competing txn commits.
+      `TransactionContext Error: Catalog write-write conflict on alter with "Schema\0_scope_hr\0View\0_scope_hr\0leave_accounts"`,
+    ]) {
+      expect(isTransientDuckdbError(msg)).toBe(true);
+    }
+  });
+
+  it("matches contextualised network / EOF faults but not bare identifier substrings", () => {
+    expect(isTransientDuckdbError("Network is unreachable")).toBe(true);
+    expect(isTransientDuckdbError("network error while reading from server")).toBe(true);
+    expect(isTransientDuckdbError("unexpected EOF on client connection")).toBe(true);
+
+    // Permanent binder/catalog errors that merely *contain* "network" or
+    // "eof" inside an identifier must not be misclassified as transient.
+    expect(
+      isTransientDuckdbError(`Binder Error: Referenced column "network_bytes" not found`),
+    ).toBe(false);
+    expect(isTransientDuckdbError(`Binder Error: Referenced column "eof" not found`)).toBe(false);
+  });
+
+  it("does NOT classify permanent authoring errors or the query-timeout sentinel as transient", () => {
+    for (const msg of [
+      "Query timed out after 30s",
+      `Binder Error: Referenced column "missing" not found`,
+      `Catalog Error: Table with name "orders" does not exist`,
+      "Parser Error: syntax error at or near SELECT",
+    ]) {
+      expect(isTransientDuckdbError(msg)).toBe(false);
+    }
+  });
+});
+
+describe("retryOnTransientDuckdbError", () => {
+  it("retries a transient failure and succeeds", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        if (calls < 2) throw new Error("Connection Error: connection reset by peer");
+      },
+      { baseDelayMs: 0 },
+    );
+    expect(res).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("does NOT retry a permanent (binder) error and fails fast", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        throw new Error(`Binder Error: Referenced column "missing" not found`);
+      },
+      { baseDelayMs: 0 },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(1);
+    if (!res.ok) expect(res.error).toMatch(/Binder Error/);
+  });
+
+  it("gives up after maxAttempts on a persistent transient fault", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        throw new Error("Failed to connect to Postgres database");
+      },
+      { maxAttempts: 3, baseDelayMs: 0 },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(3);
+  });
+
+  it("stops retrying once the wall-clock deadline has passed", async () => {
+    let calls = 0;
+    const res = await retryOnTransientDuckdbError(
+      async () => {
+        calls++;
+        // Burn past the deadline during the first attempt so the second
+        // attempt is never started.
+        await new Promise((r) => setTimeout(r, 20));
+        throw new Error("Connection Error: connection reset by peer");
+      },
+      { maxAttempts: 5, baseDelayMs: 0, deadlineMs: Date.now() + 10 },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(1);
+  });
+});
+
+describe("withProjectMaterialiseLock", () => {
+  it("serialises concurrent operations for the same project (no overlap)", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const order: number[] = [];
+
+    const make = (id: number) => async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      order.push(id);
+      active--;
+      return id;
+    };
+
+    const results = await Promise.all([
+      withProjectMaterialiseLock("proj-a", make(1)),
+      withProjectMaterialiseLock("proj-a", make(2)),
+      withProjectMaterialiseLock("proj-a", make(3)),
+    ]);
+
+    // Never more than one running at a time, and FIFO order preserved.
+    expect(maxActive).toBe(1);
+    expect(order).toEqual([1, 2, 3]);
+    expect(results).toEqual([1, 2, 3]);
+  });
+
+  it("runs different projects concurrently", async () => {
+    let active = 0;
+    let maxActive = 0;
+
+    const make = () => async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    };
+
+    await Promise.all([
+      withProjectMaterialiseLock("proj-x", make()),
+      withProjectMaterialiseLock("proj-y", make()),
+    ]);
+
+    expect(maxActive).toBe(2);
+  });
+
+  it("does not let a rejected operation wedge the queue", async () => {
+    const failing = withProjectMaterialiseLock("proj-fail", async () => {
+      throw new Error("boom");
+    });
+    await expect(failing).rejects.toThrow("boom");
+
+    // A subsequent op on the same project still runs.
+    const after = await withProjectMaterialiseLock("proj-fail", async () => "ok");
+    expect(after).toBe("ok");
   });
 });
 
