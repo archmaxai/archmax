@@ -68,6 +68,35 @@ async function saveAssistantMessage(
   }
 }
 
+/**
+ * Finalize a conversation whose worker process was killed mid-run.
+ *
+ * A native DuckDB/extension assertion (e.g. the mysql_scanner crash) aborts
+ * the whole worker process, so `processAgentJob`'s own `catch` never runs:
+ * no assistant message is appended and no terminal SSE event is published, so
+ * the client stays stuck in "executing" indefinitely. BullMQ only notices once
+ * the job stalls past `maxStalledCount` and moves it to `failed`. The (now
+ * restarted) worker's `failed` handler calls this so the chat receives a
+ * terminal `error` + `done` event and the run is recorded as failed.
+ *
+ * Safe to call for the crash case only: a job that failed *normally* was
+ * already finalized inside `processAgentJob` before it re-threw, so callers
+ * must gate this on the stalled-failure reason to avoid a duplicate message.
+ */
+export async function finalizeStalledConversation(
+  conversationId: string,
+): Promise<void> {
+  await saveAssistantMessage(
+    conversationId,
+    "The agent stopped unexpectedly — the worker process was terminated mid-run. Please try again.",
+    undefined,
+    undefined,
+    "internal_error",
+  );
+  await publishDone(conversationId, "internal_error");
+  await clearStreamBuffer(conversationId);
+}
+
 export async function processAgentJob(
   job: Job<AgentJobData, AgentJobResult>,
   _token?: string,

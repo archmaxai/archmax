@@ -12,8 +12,8 @@ import {
 } from "@archmax/core/queue/constants";
 import type { AgentJobData, AgentJobResult, TestRunJobData, TestRunJobResult } from "@archmax/core/queue/types";
 import { validateEnvOrSleep } from "@archmax/core/config/env";
-import { processAgentJob } from "./processor";
-import { processTestRunJob } from "./test-processor";
+import { processAgentJob, finalizeStalledConversation } from "./processor";
+import { processTestRunJob, finalizeStalledTestCase } from "./test-processor";
 
 const workerEnv = await validateEnvOrSleep();
 
@@ -40,7 +40,14 @@ async function main() {
       connection,
       concurrency: CONCURRENCY,
       stalledInterval: 60_000,
-      maxStalledCount: 2,
+      // A stalled job is re-run (recovered) `maxStalledCount` times before
+      // BullMQ fails it. A native DuckDB/extension crash that kills the worker
+      // mid-query surfaces as a stall, so each recovery re-runs the SAME
+      // crashing query and aborts the (now supervised, auto-restarting) worker
+      // again. Keeping this at 1 still tolerates a single genuine stall (e.g. a
+      // deploy/restart mid-job) while capping a deterministically-crashing
+      // query at two executions instead of three.
+      maxStalledCount: 1,
     },
   );
 
@@ -63,6 +70,20 @@ async function main() {
       `[worker] Job ${job?.id ?? "unknown"} failed:`,
       err.message,
     );
+    // A "stalled" failure means the worker process was killed mid-run (a native
+    // DuckDB/extension crash aborts the process; JS cannot catch it), so
+    // `processAgentJob` never finalized the conversation and the client SSE
+    // stream is still hanging in "executing". Other failures were already
+    // finalized inside the processor before it re-threw, so we must NOT
+    // re-finalize them or we'd append a duplicate error message.
+    if (job && /stalled/i.test(err.message)) {
+      finalizeStalledConversation(job.data.conversationId).catch((e) => {
+        console.error(
+          `[worker] Failed to finalize stalled conv ${job.data.conversationId}:`,
+          e,
+        );
+      });
+    }
   });
 
   agentWorker.on("stalled", (jobId) => {
@@ -80,7 +101,8 @@ async function main() {
       connection,
       concurrency: CONCURRENCY,
       stalledInterval: 60_000,
-      maxStalledCount: 2,
+      // See the agent worker above: cap a crashing test case at two executions.
+      maxStalledCount: 1,
     },
   );
 
@@ -96,6 +118,18 @@ async function main() {
 
   testWorker.on("failed", (job, err) => {
     console.error(`[worker] Test job ${job?.id ?? "unknown"} failed:`, err.message);
+    // A stalled failure means the worker was killed mid-run, so
+    // `processTestRunJob`'s `finally` never marked the case terminal — it would
+    // stay "running" forever and block the whole run from completing. Other
+    // failures are already finalized inside the processor.
+    if (job && /stalled/i.test(err.message)) {
+      finalizeStalledTestCase(job.data.testRunId, job.data.caseIndex).catch((e) => {
+        console.error(
+          `[worker] Failed to finalize stalled test case ${job.data.testRunId}/${job.data.caseIndex}:`,
+          e,
+        );
+      });
+    }
   });
 
   testWorker.on("error", (err) => {

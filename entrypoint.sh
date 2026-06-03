@@ -72,9 +72,26 @@ if [ -n "$MISSING" ]; then
   exec sleep infinity
 fi
 
-# Start the BullMQ agent worker in the background.
-cd /app/apps/worker && node worker.mjs &
+# Supervise a long-running process: restart it whenever it exits.
+#
+# The BullMQ worker runs DuckDB (and its mysql/postgres/mssql scanner
+# extensions) in-process. A native assertion/segfault inside an extension
+# calls abort() and takes the whole Node process down — JS try/catch cannot
+# intercept it. Without supervision the worker would die permanently and new
+# chat messages would queue forever with nothing to process them. The 2s
+# backoff keeps a hard crash-loop from spinning the CPU.
+supervise() {
+  name="$1"
+  shift
+  while true; do
+    "$@" || echo "[entrypoint] $name exited (code $?); restarting in 2s" >&2
+    sleep 2
+  done
+}
 
-cd /app/apps/api && PORT=3000 node server.mjs &
+# Start the BullMQ agent worker under supervision, in the background.
+( cd /app/apps/worker && supervise worker node worker.mjs ) &
+
+( cd /app/apps/api && supervise api env PORT=3000 node server.mjs ) &
 
 exec nginx -g 'daemon off;'
