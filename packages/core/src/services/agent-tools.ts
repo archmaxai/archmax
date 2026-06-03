@@ -103,7 +103,14 @@ export function makeExecuteQueryTool(projectId: string) {
             }),
         );
       } catch (err) {
-        console.error("[executeQuery] Query error:", err);
+        // The recovery scope above also covers `getProjectInstance` (which runs
+        // `ATTACH` with decrypted connection strings), so a setup/ATTACH failure
+        // can carry `password=…` or an iceberg `TOKEN '…'` in its message.
+        // Redact those secret shapes before logging.
+        console.error(
+          "[executeQuery] Query error:",
+          redactConnectionSecrets(err instanceof Error ? err.message : String(err)),
+        );
         return safeStringify({ error: "Query execution failed." });
       }
     },
