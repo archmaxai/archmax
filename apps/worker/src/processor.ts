@@ -239,9 +239,19 @@ export async function processAgentJob(
         `[worker] Job ${job.id} ${isUserCancel ? "cancelled by user" : "aborted"} after ${Date.now() - startMs}ms (conv=${conversationId})`,
       );
 
+      const hasPartialContent =
+        collector.fullResponse.length > 0 ||
+        collector.toolCalls.length > 0 ||
+        collector.segments.length > 0;
+
       await saveAssistantMessage(
         conversationId,
-        "The agent was cancelled before completing a response.",
+        hasPartialContent
+          ? collector.fullResponse
+          : "The agent was cancelled before completing a response.",
+        collector.toolCalls.length ? collector.toolCalls : undefined,
+        collector.segments.length ? collector.segments : undefined,
+        isUserCancel ? undefined : "internal_error",
       );
       await publishDone(
         conversationId,

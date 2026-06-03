@@ -120,7 +120,7 @@ The system SHALL provide a mechanism for clients to cancel an agent job that is 
 1. The API publishes a cancel signal to `job-cancel:{conversationId}`
 2. The worker subscribes to this channel at job start and aborts the `AbortController` on signal
 3. The abort propagates to the agent pipeline (via the `signal` option on `agent.stream()`)
-4. The assistant message is finalized with partial content preserved
+4. The assistant message is finalized by persisting the current state of the agent's output (accumulated text, tool calls, and segments) rather than replacing it with a generic cancellation message. Only when no partial output was produced does the worker record the fallback text `"The agent was cancelled before completing a response."`. A user-initiated cancellation MUST NOT set the `error` field on the assistant message.
 5. A `done` event is published to Redis
 
 **Queued jobs** — cancellation via persistent Redis flag:
@@ -131,11 +131,20 @@ The system SHALL provide a mechanism for clients to cancel an agent job that is 
 
 #### Scenario: User cancels a running agent
 
-- **GIVEN** an agent job is actively processing for a conversation
+- **GIVEN** an agent job is actively processing for a conversation and has streamed partial output
 - **WHEN** the user calls the cancel endpoint
 - **THEN** the API publishes a cancel signal and sets the persistent cancel flag
 - **AND** the worker aborts the agent pipeline
-- **AND** partial content is preserved on the assistant message
+- **AND** the assistant message is finalized with the current state of the agent's output (text, tool calls, segments) preserved, not replaced by a generic cancellation message
+- **AND** no `error` field is set on the assistant message
+- **AND** a `done` event is published so the SSE stream completes
+
+#### Scenario: User cancels a running agent before any output
+
+- **GIVEN** an agent job is actively processing for a conversation but has not produced any partial output
+- **WHEN** the user calls the cancel endpoint and the worker aborts the pipeline
+- **THEN** the assistant message is finalized with the fallback text `"The agent was cancelled before completing a response."`
+- **AND** no `error` field is set on the assistant message
 - **AND** a `done` event is published so the SSE stream completes
 
 #### Scenario: User cancels a queued job
