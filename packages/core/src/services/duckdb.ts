@@ -1,5 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
@@ -10,19 +10,20 @@ import { validateSqlAst } from "./sql-ast-validation";
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 /**
- * Resolve the persistent DuckDB file path for a project, validating
+ * Resolve the legacy on-disk DuckDB file path for a project, validating
  * `projectId` against the same regex `SemanticModelFileService` uses so we
- * never end up writing outside `<ARCHMAX_DATA_DIR>/projects/`.
+ * never end up touching files outside `<ARCHMAX_DATA_DIR>/projects/`.
+ *
+ * Project instances are now in-memory and per-process (see
+ * `setupProjectInstance`), so nothing creates this file anymore. It is kept
+ * only so `deleteProjectDuckdbFile` can clean up a stale file left behind by
+ * an older, file-backed build.
  */
 export function duckdbFilePath(projectId: string): string {
   if (!projectId || !SAFE_PROJECT_ID.test(projectId)) {
     throw new Error(`Invalid projectId: must be alphanumeric (with ._-), got "${projectId}"`);
   }
   return join(getEnv().projectsDir, projectId, "duckdb.db");
-}
-
-async function ensureDuckdbFileDir(path: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
 }
 
 async function deleteDuckdbFiles(path: string): Promise<void> {
@@ -171,6 +172,58 @@ interface ProjectDuckDB {
   attachedSlugs: Set<string>;
   loadedExtensions: Set<string>;
   readOnly: boolean;
+  /**
+   * Number of in-flight callers (query slots / materialisation passes) that
+   * currently hold a live connection on `instance`. Incremented for the
+   * duration of a `withRecoverableProjectInstance` op and decremented when it
+   * settles. A self-heal `disposeProjectInstance` must NOT `closeSync()` the
+   * native instance while this is non-zero, or those callers hit DuckDB
+   * use-after-close.
+   */
+  refCount: number;
+  /**
+   * Set when `disposeProjectInstance` wanted to close this instance but had
+   * to defer because `refCount > 0`. The last `releaseInstanceRef` then
+   * performs the deferred `closeSync()`.
+   */
+  closePending: boolean;
+}
+
+/**
+ * Take a usage reference on the project's currently-cached instance, but only
+ * if it is the same `DuckDBInstance` the caller is about to run against. The
+ * lookup + increment is synchronous (no `await` between them) so it cannot
+ * race a concurrent dispose. Returns the held entry, or `undefined` if the
+ * cache no longer points at `instance` (in which case the caller simply runs
+ * without a ref — its instance is already detached from the cache).
+ */
+function acquireInstanceRef(
+  projectId: string,
+  instance: DuckDBInstance,
+): ProjectDuckDB | undefined {
+  const entry = projectInstances.get(projectId);
+  if (entry && entry.instance === instance) {
+    entry.refCount++;
+    return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Release a usage reference taken by `acquireInstanceRef`. When the last ref
+ * on an entry that `disposeProjectInstance` already evicted is released, the
+ * deferred `closeSync()` runs here.
+ */
+function releaseInstanceRef(entry: ProjectDuckDB): void {
+  entry.refCount--;
+  if (entry.refCount <= 0 && entry.closePending) {
+    entry.closePending = false;
+    try {
+      entry.instance.closeSync();
+    } catch {
+      // best-effort — instance may already be closed
+    }
+  }
 }
 
 const projectInstances = new Map<string, ProjectDuckDB>();
@@ -231,15 +284,17 @@ export function buildAttachString(conn: IConnectionDocument): string {
 /**
  * Dispose the cached DuckDB instance for a project, if any.
  *
- * Closes the underlying `DuckDBInstance` on a best-effort basis and removes
- * the entry (including its attached-slug and loaded-extension bookkeeping)
- * from the cache so the next `getProjectInstance` call rebuilds from scratch.
- * Used to force re-reading of upstream schemas when they have changed.
+ * Closes the underlying (in-memory) `DuckDBInstance` on a best-effort basis
+ * and removes the entry (including its attached-slug and loaded-extension
+ * bookkeeping) from the cache so the next `getProjectInstance` call rebuilds
+ * from scratch. Used to force re-reading of upstream schemas when they have
+ * changed, and by `withRecoverableProjectInstance` to drop an invalidated
+ * instance.
  *
- * The on-disk `duckdb.db` file is NOT deleted here — the file lock is simply
- * released so a subsequent `getProjectInstance(projectId, …)` reopens the
- * same file with all previously persisted scoped VIEWs intact. Callers that
- * want a clean slate must additionally call `deleteProjectDuckdbFile`.
+ * Because instances are in-memory, disposing simply frees the process's copy:
+ * the next `getProjectInstance(projectId, …)` builds a fresh empty instance,
+ * re-attaches every active connection, and rematerialises scoped VIEWs on the
+ * next query. Nothing persists across dispose.
  */
 export async function disposeProjectInstance(projectId: string): Promise<void> {
   while (setupLocks.has(projectId)) {
@@ -247,7 +302,16 @@ export async function disposeProjectInstance(projectId: string): Promise<void> {
   }
   const entry = projectInstances.get(projectId);
   if (!entry) return;
+  // Evict immediately so the next getProjectInstance rebuilds from scratch,
+  // but only close the native instance once no in-flight caller still holds a
+  // connection on it. Setup locks are drained above; query slots and
+  // materialisation passes are tracked via refCount. Closing under an active
+  // ref would tear DuckDB state out from beneath a running query.
   projectInstances.delete(projectId);
+  if (entry.refCount > 0) {
+    entry.closePending = true;
+    return;
+  }
   try {
     entry.instance.closeSync();
   } catch {
@@ -257,8 +321,8 @@ export async function disposeProjectInstance(projectId: string): Promise<void> {
 
 /**
  * Dispose every cached `DuckDBInstance` and wait for in-flight setup locks
- * to drain. Intended for graceful shutdown handlers (SIGTERM/SIGINT) so the
- * file lock on every project's `duckdb.db` is released before exit.
+ * to drain. Intended for graceful shutdown handlers (SIGTERM/SIGINT) so each
+ * project's in-memory instance is released cleanly before exit.
  */
 export async function disposeAllProjectInstances(): Promise<void> {
   const ids = Array.from(projectInstances.keys());
@@ -266,10 +330,12 @@ export async function disposeAllProjectInstances(): Promise<void> {
 }
 
 /**
- * Delete the on-disk `duckdb.db` (and its WAL/temp side files) for a project.
- * Used by the `connections/reinit?reset=true` flow when an operator wants a
- * clean slate. Safe to call when the file does not exist; safe to call after
- * `disposeProjectInstance` has released the file lock.
+ * Best-effort removal of any legacy on-disk `duckdb.db` (and its WAL/temp side
+ * files) for a project. Project instances are in-memory now, so this no longer
+ * affects live state — it only cleans up a stale file left behind by an older,
+ * file-backed build. Still wired into the `connections/reinit?reset=true` flow
+ * so an operator's "reset" reclaims that disk space. Safe to call when the
+ * file does not exist.
  */
 export async function deleteProjectDuckdbFile(projectId: string): Promise<void> {
   await deleteDuckdbFiles(duckdbFilePath(projectId));
@@ -327,9 +393,19 @@ export async function getProjectInstance(
  * such fault would otherwise wedge every query for that project for the rest
  * of the process lifetime. Callers run their DuckDB work through
  * `withRecoverableProjectInstance` so the cache self-heals on the next call.
+ *
+ * Only the DuckDB *invalidation/restart* phrases are treated as fatal. The
+ * trailing pool phrases (`PooledConnection::GetConnection`, `no connection
+ * available`) are deliberately NOT matched on their own: they also appear in
+ * ordinary, non-fatal upstream/query faults, and classifying those as fatal
+ * would force an unnecessary project-wide dispose + full re-ATTACH (expensive,
+ * and it amplifies the credential-bearing setup-error path). In a genuine
+ * instance-invalidation the pool phrase always rides along with the
+ * invalidation message, so matching the invalidation/restart text is both
+ * sufficient and safe.
  */
 export function isFatalInstanceError(message: string): boolean {
-  return /database has been invalidated|must be restarted prior to being used|no connection available|PooledConnection::GetConnection/i.test(
+  return /database has been invalidated|must be restarted prior to being used/i.test(
     message,
   );
 }
@@ -358,21 +434,35 @@ export async function withRecoverableProjectInstance<T>(
 ): Promise<T> {
   let rebuilt = false;
   for (;;) {
+    // Hold a usage ref on the cached instance for the lifetime of `op` so a
+    // concurrent self-heal (another request hitting a fatal error for the
+    // same project) defers its `closeSync()` until our query/materialisation
+    // has released the instance — never closing native state underneath an
+    // in-flight query. `getProjectInstance` stays inside the try so a fatal
+    // failure during setup/ATTACH still triggers the one-shot rebuild.
+    let held: ProjectDuckDB | undefined;
     try {
       const instance = await getProjectInstance(projectId, connections, options);
+      held = acquireInstanceRef(projectId, instance);
       return await op(instance);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!rebuilt && isFatalInstanceError(message)) {
         rebuilt = true;
-        // Drop the poisoned cached instance so the next getProjectInstance
-        // rebuilds from scratch (re-opening the file + re-attaching every
-        // connection). The on-disk duckdb.db with its persisted scoped VIEWs
-        // is left intact.
+        // Release our ref before disposing so, if we were the last in-flight
+        // user, dispose can close the poisoned instance immediately rather
+        // than deferring. The next getProjectInstance rebuilds from scratch
+        // (fresh in-memory instance + re-attaching every connection).
+        if (held) {
+          releaseInstanceRef(held);
+          held = undefined;
+        }
         await disposeProjectInstance(projectId);
         continue;
       }
       throw err;
+    } finally {
+      if (held) releaseInstanceRef(held);
     }
   }
 }
@@ -412,10 +502,27 @@ async function setupProjectInstance(
   }
 
   if (!entry) {
-    const path = duckdbFilePath(projectId);
-    await ensureDuckdbFileDir(path);
-    const instance = await DuckDBInstance.create(path);
-    entry = { instance, attachedSlugs: new Set(), loadedExtensions: new Set(), readOnly };
+    // In-memory, per-process database. A single persistent `duckdb.db` file
+    // cannot be opened by more than one process at a time — the API and the
+    // BullMQ worker run as separate node processes (see `entrypoint.sh`), and
+    // each keeps its own `projectInstances` cache, so a shared on-disk file
+    // collides with DuckDB's whole-file lock:
+    //   "IO Error: Could not set lock on file ... Conflicting lock is held in
+    //    /usr/local/bin/node (PID …)".
+    // Nothing relies on cross-process or cross-restart persistence: scoped
+    // `_scope_*` VIEWs are rebuilt by `materialiseModelViews` on every query
+    // (no hash cache) and connections are re-attached whenever a fresh
+    // instance is created, so an in-memory database is functionally
+    // equivalent without the lock contention.
+    const instance = await DuckDBInstance.create();
+    entry = {
+      instance,
+      attachedSlugs: new Set(),
+      loadedExtensions: new Set(),
+      readOnly,
+      refCount: 0,
+      closePending: false,
+    };
     projectInstances.set(projectId, entry);
   }
 
@@ -958,6 +1065,33 @@ async function materialiseModelViewsLocked(
   }
 
   return result;
+}
+
+/**
+ * Redact upstream connection secrets from a DuckDB/extension error message
+ * before it crosses any client, log, or LLM boundary.
+ *
+ * `buildAttachString` / `attachIcebergCatalog` interpolate decrypted
+ * credentials into the `ATTACH` / `CREATE SECRET` SQL we hand to DuckDB
+ * (`password=…`, `Password=…;`, a `postgresql://user:pw@host` URI, or an
+ * iceberg bearer `TOKEN '…'`). When ATTACH/setup fails, DuckDB frequently
+ * echoes the offending statement — including those secrets — back in the
+ * error message. The MCP/agent recovery catches surface that message to the
+ * caller and persist it in call logs, so scrub the known secret shapes here
+ * first. This is intentionally conservative (redacts the secret value, keeps
+ * the surrounding error text) so genuine query errors stay actionable.
+ */
+export function redactConnectionSecrets(message: string): string {
+  return message
+    // key=value credential fields. Postgres/MySQL attach strings are
+    // space-delimited (`password=pw`); MSSQL is `;`-delimited
+    // (`Password=pw;`). Stop the value at the first `;` or whitespace.
+    .replace(/\b(password|pwd)\s*=\s*[^;\s]+/gi, "$1=***")
+    // URI userinfo: `scheme://user:password@host` → keep the user, drop the secret.
+    .replace(/(\/\/[^:@/\s]+):[^@/\s]+@/g, "$1:***@")
+    // Iceberg bearer token in `CREATE [TEMPORARY] SECRET … TOKEN '…'`.
+    // The body may contain `''`-escaped quotes, so consume those too.
+    .replace(/(\bTOKEN\s+)'(?:[^']|'')*'/gi, "$1'***'");
 }
 
 /**

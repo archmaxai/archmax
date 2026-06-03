@@ -9,6 +9,7 @@ import {
   materialiseModelViews,
   scopeSchemaName,
   stripScopedSchemaQualifier,
+  redactConnectionSecrets,
   withProjectQuerySlot,
   withQueryTimeout,
   withRecoverableProjectInstance,
@@ -268,8 +269,17 @@ export function makeRunModelQueryTool(projectId: string) {
           },
         );
       } catch (err) {
-        console.error("[runModelQuery] Query error:", err);
-        const raw = err instanceof Error ? err.message : "Query execution failed.";
+        // The recovery scope above now also covers `getProjectInstance`
+        // (which runs `ATTACH` with decrypted connection strings) and view
+        // materialisation. A setup/ATTACH failure can therefore carry
+        // `password=…` or an iceberg `TOKEN '…'` in its message, and this
+        // result is fed back into the model transcript (potentially a
+        // third-party LLM). Redact those secret shapes before logging or
+        // returning the error.
+        const raw = redactConnectionSecrets(
+          err instanceof Error ? err.message : "Query execution failed.",
+        );
+        console.error("[runModelQuery] Query error:", raw);
         const msg = stripScopedSchemaQualifier(raw, modelName);
         return JSON.stringify({ error: msg });
       }

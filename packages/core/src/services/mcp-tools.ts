@@ -7,6 +7,7 @@ import {
   materialiseModelViews,
   scopeSchemaName,
   stripScopedSchemaQualifier,
+  redactConnectionSecrets,
   getAttachedCatalogSlugs,
   hardenConnection,
   withQueryTimeout,
@@ -355,8 +356,15 @@ export async function executeScopedQuery(
       },
     );
   } catch (err) {
-    console.error("[executeScopedQuery] Query error:", err);
-    const raw = err instanceof Error ? err.message : "Query execution failed.";
+    // The recovery scope above now also covers `getProjectInstance`
+    // (which runs `ATTACH` with decrypted connection strings) and view
+    // materialisation, so a setup/ATTACH failure can carry `password=…`
+    // or an iceberg `TOKEN '…'` in its message. Redact those secret
+    // shapes before logging or returning the error to the MCP caller.
+    const raw = redactConnectionSecrets(
+      err instanceof Error ? err.message : "Query execution failed.",
+    );
+    console.error("[executeScopedQuery] Query error:", raw);
     const msg = stripScopedSchemaQualifier(raw, modelName);
     const hint = buildColumnHint(msg, model.datasets);
     return {
