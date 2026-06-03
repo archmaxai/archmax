@@ -4,14 +4,14 @@ import { connectDB } from "@archmax/core/infra/db";
 import { Conversation } from "@archmax/core/models/index";
 import { createSemlayerAgent } from "@archmax/core/services/agent";
 import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
-import { processAgentStream, createStreamCollector } from "@archmax/core/services/agent-stream";
+import { processAgentStream, createStreamCollector, reconstructStreamResult } from "@archmax/core/services/agent-stream";
 import {
   getRedis,
   isCancelFlagSet,
   clearCancelFlag,
 } from "@archmax/core/infra/redis";
 import { JOB_CANCEL_CHANNEL_PREFIX } from "@archmax/core/queue/constants";
-import { publishStreamEvent, clearStreamBuffer } from "@archmax/core/streaming/stream-bridge";
+import { publishStreamEvent, clearStreamBuffer, getBufferedStreamEvents } from "@archmax/core/streaming/stream-bridge";
 import type { AgentJobData, AgentJobResult } from "@archmax/core/queue/types";
 import type { IToolCallRecord, IContentSegment } from "@archmax/core/models/Conversation";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
@@ -86,11 +86,24 @@ async function saveAssistantMessage(
 export async function finalizeStalledConversation(
   conversationId: string,
 ): Promise<void> {
+  // The worker process was killed mid-run, so the in-memory collector is gone.
+  // The events it published before dying survive in the Redis stream buffer,
+  // so replay them to recover the partial assistant response rather than
+  // discarding it for a generic crash message.
+  const { events } = await getBufferedStreamEvents(conversationId, 0);
+  const partial = reconstructStreamResult(events);
+  const hasPartialContent =
+    partial.fullResponse.length > 0 ||
+    partial.toolCalls.length > 0 ||
+    partial.segments.length > 0;
+
   await saveAssistantMessage(
     conversationId,
-    "The agent stopped unexpectedly — the worker process was terminated mid-run. Please try again.",
-    undefined,
-    undefined,
+    hasPartialContent
+      ? partial.fullResponse
+      : "The agent stopped unexpectedly — the worker process was terminated mid-run. Please try again.",
+    partial.toolCalls.length ? partial.toolCalls : undefined,
+    partial.segments.length ? partial.segments : undefined,
     "internal_error",
   );
   await publishDone(conversationId, "internal_error");

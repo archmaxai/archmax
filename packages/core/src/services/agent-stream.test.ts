@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { truncateToolOutput, processAgentStream, createStreamCollector, RESULT_TRUNCATE } from "./agent-stream";
+import { truncateToolOutput, processAgentStream, createStreamCollector, reconstructStreamResult, RESULT_TRUNCATE } from "./agent-stream";
 import type { StreamEmitter } from "./agent-stream";
 
 async function* toAsyncIterable<T>(items: T[]): AsyncIterable<T> {
@@ -242,5 +242,91 @@ describe("processAgentStream", () => {
     const result = await processAgentStream(toAsyncIterable(events), emit, collector);
     expect(result).toBe(collector);
     expect(result.fullResponse).toBe("ok");
+  });
+});
+
+describe("reconstructStreamResult", () => {
+  it("returns an empty result for no events", () => {
+    const result = reconstructStreamResult([]);
+    expect(result.fullResponse).toBe("");
+    expect(result.toolCalls).toEqual([]);
+    expect(result.segments).toEqual([]);
+  });
+
+  it("rebuilds text-only content into fullResponse and one text segment", () => {
+    const result = reconstructStreamResult([
+      { event: "token", data: JSON.stringify({ content: "Hello " }) },
+      { event: "token", data: JSON.stringify({ content: "world" }) },
+    ]);
+    expect(result.fullResponse).toBe("Hello world");
+    expect(result.segments).toEqual([{ type: "text", content: "Hello world" }]);
+    expect(result.toolCalls).toEqual([]);
+  });
+
+  it("rebuilds interleaved text and tool calls with correct ordering", () => {
+    const result = reconstructStreamResult([
+      { event: "token", data: JSON.stringify({ content: "before " }) },
+      { event: "tool_call_start", data: JSON.stringify({ id: "t1", name: "execute_query", args: '{"sql":"SELECT 1"}' }) },
+      { event: "tool_call_end", data: JSON.stringify({ id: "t1", name: "execute_query", result: "result-row" }) },
+      { event: "token", data: JSON.stringify({ content: "after" }) },
+    ]);
+
+    expect(result.fullResponse).toBe("before after");
+    expect(result.segments).toHaveLength(3);
+    expect(result.segments[0]).toEqual({ type: "text", content: "before " });
+    expect(result.segments[1].type).toBe("tool_call");
+    expect(result.segments[1].toolCall?.name).toBe("execute_query");
+    expect(result.segments[2]).toEqual({ type: "text", content: "after" });
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].id).toBe("t1");
+    expect(result.toolCalls[0].args).toBe('{"sql":"SELECT 1"}');
+    expect(result.toolCalls[0].result).toBe("result-row");
+    expect(result.toolCalls[0].status).toBe("completed");
+  });
+
+  it("ignores terminal/diagnostic events that carry no content", () => {
+    const result = reconstructStreamResult([
+      { event: "step", data: JSON.stringify({ name: "agent" }) },
+      { event: "token", data: JSON.stringify({ content: "hi" }) },
+      { event: "error", data: JSON.stringify({ error: "internal_error" }) },
+      { event: "done", data: "{}" },
+    ]);
+    expect(result.fullResponse).toBe("hi");
+    expect(result.segments).toEqual([{ type: "text", content: "hi" }]);
+  });
+
+  it("skips events with malformed JSON data", () => {
+    const result = reconstructStreamResult([
+      { event: "token", data: "not-json" },
+      { event: "token", data: JSON.stringify({ content: "ok" }) },
+    ]);
+    expect(result.fullResponse).toBe("ok");
+  });
+
+  it("leaves a tool call without an end event un-completed", () => {
+    const result = reconstructStreamResult([
+      { event: "tool_call_start", data: JSON.stringify({ id: "t1", name: "query", args: "{}" }) },
+    ]);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].result).toBeUndefined();
+    expect(result.toolCalls[0].status).toBeUndefined();
+  });
+
+  it("round-trips events emitted by processAgentStream", async () => {
+    const events = [
+      { event: "on_chat_model_stream", data: { chunk: { content: "partial " } } },
+      { event: "on_tool_start", data: { input: { sql: "SELECT 1" } }, run_id: "t1", name: "execute_query" },
+      { event: "on_tool_end", data: { output: "row1" }, run_id: "t1", name: "execute_query" },
+      { event: "on_chat_model_stream", data: { chunk: { content: "more" } } },
+    ];
+    const { emit, calls } = createEmitSpy();
+    const original = await processAgentStream(toAsyncIterable(events), emit);
+
+    const reconstructed = reconstructStreamResult(calls);
+
+    expect(reconstructed.fullResponse).toBe(original.fullResponse);
+    expect(reconstructed.toolCalls).toEqual(original.toolCalls);
+    expect(reconstructed.segments).toEqual(original.segments);
   });
 });

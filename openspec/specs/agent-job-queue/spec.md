@@ -181,9 +181,26 @@ When the `REDIS_URL` environment variable is not set, the system SHALL fall back
 
 The system SHALL configure BullMQ stalled job detection with `stalledInterval: 60000` and `maxStalledCount: 2`. When a job is detected as stalled (worker crashed), BullMQ SHALL move it to the failed state. The system SHOULD ensure the assistant message is finalized with an error state so clients are not left waiting.
 
+Because the worker process was killed mid-run, its in-memory accumulator is lost; however, every event it published before dying survives in the Redis stream buffer. The stalled-recovery finalizer SHALL replay those buffered events to reconstruct the partial assistant response (text, tool calls, segments) and persist it alongside the error indicator, rather than discarding the streamed conversation history for a generic crash message. The fallback crash message SHALL be recorded only when no partial content was streamed before the crash.
+
 #### Scenario: Worker crashes during job processing
 
 - **GIVEN** a worker is processing an agent job and crashes
 - **WHEN** BullMQ detects the stalled job
 - **THEN** the job is moved to failed state after max stalled retries
+
+#### Scenario: Stalled recovery preserves streamed partial content
+
+- **GIVEN** a worker streamed partial content (text and/or tool calls) and then crashed mid-run
+- **WHEN** the stalled-recovery finalizer runs
+- **THEN** it reconstructs the partial response from the Redis stream buffer
+- **AND** finalizes the assistant message with that partial content (text, tool calls, segments) preserved plus the `error` indicator set
+- **AND** publishes a `done` event so the SSE stream completes
+
+#### Scenario: Stalled recovery with no streamed content
+
+- **GIVEN** a worker crashed before streaming any content
+- **WHEN** the stalled-recovery finalizer runs and finds an empty stream buffer
+- **THEN** it finalizes the assistant message with the fallback text `"The agent stopped unexpectedly — the worker process was terminated mid-run. Please try again."` and the `error` indicator set
+- **AND** publishes a `done` event so the SSE stream completes
 

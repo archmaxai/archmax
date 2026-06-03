@@ -109,3 +109,66 @@ export async function processAgentStream(
 
   return result;
 }
+
+/**
+ * Rebuild an `AgentStreamResult` from already-emitted SSE events (the shape
+ * produced by `processAgentStream`'s `emit` and buffered in Redis).
+ *
+ * When the worker process is killed mid-run (e.g. a native DuckDB crash) the
+ * in-memory collector is lost with the process, but the published events
+ * survive in the Redis stream buffer. Replaying them here lets the stalled-job
+ * recovery persist the partial assistant response (text, tool calls, segments)
+ * instead of discarding it for a generic crash message.
+ *
+ * Only the content-bearing events are interpreted (`token`, `tool_call_start`,
+ * `tool_call_end`); terminal/diagnostic events (`step`, `error`, `done`,
+ * `ping`) carry no assistant content and are ignored.
+ */
+export function reconstructStreamResult(
+  events: Array<{ event: string; data: string }>,
+): AgentStreamResult {
+  const result = createStreamCollector();
+  let textBuffer = "";
+
+  const flushText = () => {
+    if (textBuffer) {
+      result.segments.push({ type: "text", content: textBuffer });
+      textBuffer = "";
+    }
+  };
+
+  for (const { event, data } of events) {
+    let payload: Record<string, unknown>;
+    try {
+      payload = data ? (JSON.parse(data) as Record<string, unknown>) : {};
+    } catch {
+      continue;
+    }
+
+    if (event === "token") {
+      const content = payload.content;
+      if (typeof content === "string" && content) {
+        result.fullResponse += content;
+        textBuffer += content;
+      }
+    } else if (event === "tool_call_start") {
+      flushText();
+      const tc: IToolCallRecord = {
+        id: String(payload.id ?? ""),
+        name: String(payload.name ?? ""),
+        args: typeof payload.args === "string" ? payload.args : "",
+      };
+      result.toolCalls.push(tc);
+      result.segments.push({ type: "tool_call", toolCall: tc });
+    } else if (event === "tool_call_end") {
+      const existing = result.toolCalls.find((tc) => tc.id === String(payload.id ?? ""));
+      if (existing) {
+        existing.result = typeof payload.result === "string" ? payload.result : "";
+        existing.status = "completed";
+      }
+    }
+  }
+
+  flushText();
+  return result;
+}
