@@ -5,6 +5,7 @@ import { getEnv } from "../config/env";
 import { Connection, Project, type IConnectionDocument } from "../models/index";
 import { connectDB } from "../infra/db";
 import { ValidatingFilesystemBackend } from "./agent-filesystem";
+import { createToolErrorRecoveryMiddleware } from "./agent-middleware";
 import {
   makeExecuteQueryTool,
   makeRunModelQueryTool,
@@ -74,5 +75,9 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
     backend,
     tools: [executeQuery, runModelQuery, rmTool, mvTool, cpTool, readDocTool, revertFileTool, discardAllTool, listTestAgentsTool, listTestCasesTool, deleteTestCaseTool, createTestCaseTool],
     systemPrompt: buildSystemPrompt(connections),
+    // Registered last so it is the innermost `wrapToolCall` layer: turns
+    // malformed tool calls (e.g. `write_file` with missing `file_path`) into a
+    // ToolMessage the model can recover from, instead of aborting the run.
+    middleware: [createToolErrorRecoveryMiddleware()],
   });
 }

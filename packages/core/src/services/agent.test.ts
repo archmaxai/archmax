@@ -270,4 +270,68 @@ describe("ValidatingFilesystemBackend", () => {
       expect(result.error).toMatch(/traversal/i);
     });
   });
+
+  describe("concurrent mutations", () => {
+    it("persists every edit when many edit the same file in parallel", async () => {
+      const path = join(dir, "model.yaml");
+      await backend.write(path, "a: 1\nb: 2\nc: 3\nd: 4\n");
+
+      // Fire all edits at once. Each is a read-modify-write against the same
+      // file; without serialisation they would all read the original content
+      // and the last write would clobber the rest, leaving only one edit.
+      const results = await Promise.all([
+        backend.edit(path, "a: 1", "a: 100"),
+        backend.edit(path, "b: 2", "b: 200"),
+        backend.edit(path, "c: 3", "c: 300"),
+        backend.edit(path, "d: 4", "d: 400"),
+      ]);
+
+      for (const r of results) expect(r.error).toBeUndefined();
+
+      const content = await readFile(path, "utf-8");
+      expect(content).toContain("a: 100");
+      expect(content).toContain("b: 200");
+      expect(content).toContain("c: 300");
+      expect(content).toContain("d: 400");
+    });
+
+    it("persists parallel writes to distinct files", async () => {
+      const results = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          backend.write(join(dir, `f${i}.yaml`), `name: file${i}\n`),
+        ),
+      );
+      for (const r of results) expect(r.error).toBeUndefined();
+
+      for (let i = 0; i < 5; i++) {
+        const content = await readFile(join(dir, `f${i}.yaml`), "utf-8");
+        expect(content).toBe(`name: file${i}\n`);
+      }
+    });
+
+    it("lets exactly one parallel write to the same new path win", async () => {
+      const path = join(dir, "dup.yaml");
+      const results = await Promise.all([
+        backend.write(path, "name: first\n"),
+        backend.write(path, "name: second\n"),
+      ]);
+
+      const succeeded = results.filter((r) => !r.error);
+      const failed = results.filter((r) => r.error);
+      expect(succeeded).toHaveLength(1);
+      expect(failed).toHaveLength(1);
+      expect(failed[0].error).toMatch(/already exists/);
+    });
+
+    it("does not let a failed mutation wedge later mutations", async () => {
+      // A rejected/failed op must not block the queue.
+      const bad = await backend.edit(join(dir, "missing.yaml"), "x", "y");
+      expect(bad.error).toBeDefined();
+
+      const ok = await backend.write(join(dir, "after.yaml"), "name: ok\n");
+      expect(ok.error).toBeUndefined();
+      const content = await readFile(join(dir, "after.yaml"), "utf-8");
+      expect(content).toBe("name: ok\n");
+    });
+  });
 });

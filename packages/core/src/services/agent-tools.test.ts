@@ -7,10 +7,22 @@ import fs from "node:fs";
 
 vi.mock("./duckdb", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
+  const getProjectInstance = vi.fn();
   return {
     ...actual,
     hardenConnection: vi.fn(),
-    getProjectInstance: vi.fn(),
+    getProjectInstance,
+    // Run the op against the mocked instance directly. The real wrapper's
+    // dispose/rebuild-on-fatal-error behaviour is exercised in duckdb.test.ts;
+    // here it only needs to hand the op whatever getProjectInstance resolves to.
+    withRecoverableProjectInstance: vi.fn(
+      async (
+        _projectId: string,
+        _connections: unknown,
+        _options: unknown,
+        op: (instance: unknown) => Promise<unknown>,
+      ) => op(await getProjectInstance()),
+    ),
     materialiseModelViews: vi.fn(),
     getAttachedCatalogSlugs: vi.fn().mockReturnValue([]),
   };

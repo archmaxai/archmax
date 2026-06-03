@@ -23,7 +23,9 @@ import {
   disposeProjectInstance,
   materialiseModelViews,
   isTransientDuckdbError,
+  isFatalInstanceError,
   retryOnTransientDuckdbError,
+  withRecoverableProjectInstance,
   withProjectMaterialiseLock,
   stripScopedSchemaQualifier,
   duckdbFilePath,
@@ -1134,5 +1136,114 @@ describe("disposeProjectInstance", () => {
     } finally {
       closeSpy.mockRestore();
     }
+  });
+});
+
+describe("isFatalInstanceError", () => {
+  it("classifies an invalidated-instance / dead connection-pool fault as fatal", () => {
+    for (const msg of [
+      // The exact shape DuckDB raises when a federated scanner's upstream
+      // connection pool dies.
+      `FATAL Error: Failed: database has been invalidated because of a previous fatal error. The database must be restarted prior to being used again.\nOriginal error: "PooledConnection::GetConnection - no connection available"`,
+      "database has been invalidated because of a previous fatal error",
+      "The database must be restarted prior to being used again.",
+      "PooledConnection::GetConnection - no connection available",
+      "no connection available",
+    ]) {
+      expect(isFatalInstanceError(msg)).toBe(true);
+    }
+  });
+
+  it("does NOT classify per-query / transient faults or permanent authoring errors as fatal", () => {
+    for (const msg of [
+      "Connection Error: connection refused",
+      "Failed to connect to Postgres database",
+      "Query timed out after 30s",
+      `Binder Error: Referenced column "missing" not found`,
+      `Catalog Error: Table with name "orders" does not exist`,
+    ]) {
+      expect(isFatalInstanceError(msg)).toBe(false);
+    }
+  });
+});
+
+describe("withRecoverableProjectInstance", () => {
+  const FATAL =
+    'FATAL Error: database has been invalidated. Original error: "PooledConnection::GetConnection - no connection available"';
+
+  it("returns the op result without rebuilding when the first attempt succeeds", async () => {
+    const projectId = "recover-test-ok";
+    const first = await getProjectInstance(projectId, []);
+    let calls = 0;
+    const seen: unknown[] = [];
+
+    const result = await withRecoverableProjectInstance(projectId, [], undefined, async (instance) => {
+      calls++;
+      seen.push(instance);
+      return "ok";
+    });
+
+    expect(result).toBe("ok");
+    expect(calls).toBe(1);
+    // No rebuild: the cached instance is reused, never disposed.
+    expect(seen[0]).toBe(first);
+    await disposeProjectInstance(projectId);
+  });
+
+  it("disposes the poisoned instance and retries once with a fresh one on a fatal error", async () => {
+    const projectId = "recover-test-heal";
+    const poisoned = await getProjectInstance(projectId, []);
+    const closeSpy = vi.spyOn(poisoned, "closeSync");
+    const seen: unknown[] = [];
+
+    try {
+      const result = await withRecoverableProjectInstance(projectId, [], undefined, async (instance) => {
+        seen.push(instance);
+        if (seen.length === 1) throw new Error(FATAL);
+        return "healed";
+      });
+
+      expect(result).toBe("healed");
+      expect(seen).toHaveLength(2);
+      // First attempt got the poisoned instance; the rebuild handed the op a
+      // brand-new instance reference.
+      expect(seen[0]).toBe(poisoned);
+      expect(seen[1]).not.toBe(poisoned);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSpy.mockRestore();
+      await disposeProjectInstance(projectId);
+    }
+  });
+
+  it("re-throws a non-fatal error immediately without rebuilding", async () => {
+    const projectId = "recover-test-nonfatal";
+    await getProjectInstance(projectId, []);
+    let calls = 0;
+
+    await expect(
+      withRecoverableProjectInstance(projectId, [], undefined, async () => {
+        calls++;
+        throw new Error("Connection Error: connection refused");
+      }),
+    ).rejects.toThrow(/connection refused/);
+    expect(calls).toBe(1);
+    await disposeProjectInstance(projectId);
+  });
+
+  it("gives up after a single rebuild when the fatal error persists", async () => {
+    const projectId = "recover-test-persistent";
+    await getProjectInstance(projectId, []);
+    let calls = 0;
+
+    await expect(
+      withRecoverableProjectInstance(projectId, [], undefined, async () => {
+        calls++;
+        throw new Error(FATAL);
+      }),
+    ).rejects.toThrow(/invalidated/);
+    // One original attempt + one post-rebuild attempt, then propagate.
+    expect(calls).toBe(2);
+    await disposeProjectInstance(projectId);
   });
 });

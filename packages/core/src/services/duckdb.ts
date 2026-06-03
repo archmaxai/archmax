@@ -306,6 +306,77 @@ export async function getProjectInstance(
   }
 }
 
+/**
+ * Detect a *fatal instance-level* DuckDB failure: the entire `DuckDBInstance`
+ * has entered an unrecoverable state and MUST be torn down and rebuilt before
+ * it can serve any further query. This is categorically different from
+ * `isTransientDuckdbError` (a per-connection/per-query fault that a retry on
+ * the SAME instance can clear).
+ *
+ * When DuckDB's federated scanners (postgres/mysql/mssql) lose their upstream
+ * connection pool, DuckDB poisons the whole database and every subsequent
+ * statement — including `instance.connect()` and the `CREATE SCHEMA` issued
+ * during view materialisation — throws the same error until the instance is
+ * recreated:
+ *
+ *   FATAL Error: Failed: database has been invalidated because of a previous
+ *   fatal error. The database must be restarted prior to being used again.
+ *   Original error: "PooledConnection::GetConnection - no connection available"
+ *
+ * Because the instance is cached per project in `projectInstances`, a single
+ * such fault would otherwise wedge every query for that project for the rest
+ * of the process lifetime. Callers run their DuckDB work through
+ * `withRecoverableProjectInstance` so the cache self-heals on the next call.
+ */
+export function isFatalInstanceError(message: string): boolean {
+  return /database has been invalidated|must be restarted prior to being used|no connection available|PooledConnection::GetConnection/i.test(
+    message,
+  );
+}
+
+/**
+ * Run `op` against the project's cached DuckDB instance, transparently
+ * disposing and rebuilding the instance and retrying ONCE when an attempt
+ * fails with a fatal instance-invalidation error (see `isFatalInstanceError`).
+ *
+ * `op` receives a live `DuckDBInstance` and is responsible for opening and
+ * closing its own connection(s). It MUST let DuckDB errors propagate (rather
+ * than swallowing them into a result value) so the fatal-error detection can
+ * fire; non-fatal errors are re-thrown immediately without a rebuild.
+ *
+ * A poisoned instance breaks `instance.connect()` itself, so both the
+ * `getProjectInstance` setup and the `op` body are covered. Only one rebuild
+ * is attempted: if the freshly built instance also fails fatally (e.g. the
+ * upstream database is genuinely down) the error propagates so the caller can
+ * surface it.
+ */
+export async function withRecoverableProjectInstance<T>(
+  projectId: string,
+  connections: IConnectionDocument[],
+  options: { readOnly?: boolean } | undefined,
+  op: (instance: DuckDBInstance) => Promise<T>,
+): Promise<T> {
+  let rebuilt = false;
+  for (;;) {
+    try {
+      const instance = await getProjectInstance(projectId, connections, options);
+      return await op(instance);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!rebuilt && isFatalInstanceError(message)) {
+        rebuilt = true;
+        // Drop the poisoned cached instance so the next getProjectInstance
+        // rebuilds from scratch (re-opening the file + re-attaching every
+        // connection). The on-disk duckdb.db with its persisted scoped VIEWs
+        // is left intact.
+        await disposeProjectInstance(projectId);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 const ICEBERG_EXTENSIONS = ["iceberg", "httpfs"] as const;
 
 function isReady(entry: ProjectDuckDB, connections: IConnectionDocument[]): boolean {

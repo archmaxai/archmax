@@ -7,6 +7,7 @@ import { decrypt } from "../infra/crypto";
 import { getEnv } from "../config/env";
 import { TestAgent, Improvement, type ITestAgentDocument } from "../models/index";
 import { SemanticModelFileService } from "./semantic-model-files";
+import { createToolErrorRecoveryMiddleware } from "./agent-middleware";
 import {
   listSemanticModels,
   getSemanticModelOverview,
@@ -202,5 +203,9 @@ export async function createPlaygroundAgent(
     model: llm,
     tools,
     systemPrompt: agent.systemPrompt,
+    // Registered last so it is the innermost `wrapToolCall` layer: turns
+    // malformed tool calls (e.g. `write_file` with missing `file_path`) into a
+    // ToolMessage the model can recover from, instead of aborting the run.
+    middleware: [createToolErrorRecoveryMiddleware()],
   });
 }

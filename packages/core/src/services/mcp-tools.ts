@@ -4,7 +4,6 @@ import { SemanticModelFileService } from "./semantic-model-files";
 import { SemanticModelDigest, buildSourceMap, type OverviewScope } from "./semantic-model-digest";
 import type { Dataset } from "./semantic-model-schema";
 import {
-  getProjectInstance,
   materialiseModelViews,
   scopeSchemaName,
   stripScopedSchemaQualifier,
@@ -12,6 +11,7 @@ import {
   hardenConnection,
   withQueryTimeout,
   withProjectQuerySlot,
+  withRecoverableProjectInstance,
   getQueryTimeoutMs,
 } from "./duckdb";
 import { validateSqlAst } from "./sql-ast-validation";
@@ -253,101 +253,115 @@ export async function executeScopedQuery(
     return { text: `Semantic model "${modelName}" not found`, isError: true };
   }
 
-  const instance = await getProjectInstance(projectId, connections, { readOnly: true });
-  const materialisation = await materialiseModelViews(instance, projectId, model);
+  // `withRecoverableProjectInstance` self-heals a DuckDB instance that an
+  // unstable upstream connection has invalidated (disposing + rebuilding it
+  // once). Materialisation and query execution both run against the (possibly
+  // rebuilt) instance and must let DuckDB errors propagate so the fatal-error
+  // detection can fire; the outer catch turns any surviving failure into an
+  // `isError` result instead of throwing out of the MCP handler.
+  try {
+    return await withRecoverableProjectInstance(
+      projectId,
+      connections,
+      { readOnly: true },
+      async (instance) => {
+        const materialisation = await materialiseModelViews(instance, projectId, model);
 
-  if (materialisation.missingViewQuery.length > 0) {
-    const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
-    // This error fires only when the dataset has neither an authored
-    // `view_query` nor enough metadata to infer a default mirror view
-    // (no `source`, or no `fields`). The inferred-fallback path covers
-    // the simple cases automatically; landing here means the dataset
-    // definition itself is incomplete. The error is read by downstream
-    // MCP-client LLMs that have no ability to author the semantic
-    // model — we route the fix request to the *authoring agent / model
-    // owner*, never to a "data team" the end user does not have.
-    return {
-      text:
-        `Dataset(s) ${names} in semantic model "${modelName}" are not queryable: the dataset ` +
-        `definition has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` ` +
-        `pair the platform could infer a default view from. This is an authoring gap in the model ` +
-        `itself, not a transient error and not a user-correctable configuration. Ask the agent (or ` +
-        `maintainer) that owns this semantic model to fill in the missing fields/source — or to ` +
-        `author an explicit \`view_query\` — and republish.`,
-      isError: true,
-    };
-  }
-
-  if (materialisation.failed.length > 0) {
-    // `materialiseModelViews()` leaves the previous VIEW in place when
-    // the new body is rejected by the validator or fails at CREATE OR
-    // REPLACE time. Refusing to execute the caller's SQL on this path
-    // closes a stale-VIEW exposure: an MCP token holder cannot keep
-    // querying yesterday's looser body after the maintainer tightened
-    // the `view_query` but the rematerialisation failed. Mirror the
-    // agent-side `runModelQuery` handling: surface the per-dataset
-    // failures with the internal scoped-schema qualifier stripped.
-    const failures = materialisation.failed
-      .map((f) => `  - ${f.dataset}: ${stripScopedSchemaQualifier(f.error, modelName)}`)
-      .join("\n");
-    return {
-      text:
-        `Dataset(s) in semantic model "${modelName}" failed to materialise. ` +
-        `The previous view definitions are not used; ask the model maintainer to ` +
-        `fix the affected \`view_query\` bodies and republish.\n${failures}`,
-      isError: true,
-    };
-  }
-
-  return withProjectQuerySlot(projectId, async () => {
-    const db = await instance.connect();
-    try {
-      const hasIceberg = connections.some((c) => c.type === "iceberg");
-      await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
-
-      const prepared = await db.prepare(sql);
-      if (params.length > 0) {
-        for (let i = 0; i < params.length; i++) {
-          prepared.bindVarchar(i + 1, String(params[i]));
+        if (materialisation.missingViewQuery.length > 0) {
+          const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+          // This error fires only when the dataset has neither an authored
+          // `view_query` nor enough metadata to infer a default mirror view
+          // (no `source`, or no `fields`). The inferred-fallback path covers
+          // the simple cases automatically; landing here means the dataset
+          // definition itself is incomplete. The error is read by downstream
+          // MCP-client LLMs that have no ability to author the semantic
+          // model — we route the fix request to the *authoring agent / model
+          // owner*, never to a "data team" the end user does not have.
+          return {
+            text:
+              `Dataset(s) ${names} in semantic model "${modelName}" are not queryable: the dataset ` +
+              `definition has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` ` +
+              `pair the platform could infer a default view from. This is an authoring gap in the model ` +
+              `itself, not a transient error and not a user-correctable configuration. Ask the agent (or ` +
+              `maintainer) that owns this semantic model to fill in the missing fields/source — or to ` +
+              `author an explicit \`view_query\` — and republish.`,
+            isError: true,
+          };
         }
-      }
 
-      const queryResult = await withQueryTimeout(db, () => prepared.run());
+        if (materialisation.failed.length > 0) {
+          // `materialiseModelViews()` leaves the previous VIEW in place when
+          // the new body is rejected by the validator or fails at CREATE OR
+          // REPLACE time. Refusing to execute the caller's SQL on this path
+          // closes a stale-VIEW exposure: an MCP token holder cannot keep
+          // querying yesterday's looser body after the maintainer tightened
+          // the `view_query` but the rematerialisation failed. Mirror the
+          // agent-side `runModelQuery` handling: surface the per-dataset
+          // failures with the internal scoped-schema qualifier stripped.
+          const failures = materialisation.failed
+            .map((f) => `  - ${f.dataset}: ${stripScopedSchemaQualifier(f.error, modelName)}`)
+            .join("\n");
+          return {
+            text:
+              `Dataset(s) in semantic model "${modelName}" failed to materialise. ` +
+              `The previous view definitions are not used; ask the model maintainer to ` +
+              `fix the affected \`view_query\` bodies and republish.\n${failures}`,
+            isError: true,
+          };
+        }
 
-      const rows: Record<string, unknown>[] = [];
-      const columns = queryResult.columnNames();
-      for await (const chunk of queryResult) {
-        const chunkRows = chunk.getRows();
-        for (const row of chunkRows) {
-          const obj: Record<string, unknown> = {};
-          for (let i = 0; i < columns.length; i++) {
-            obj[columns[i]] = row[i];
+        return withProjectQuerySlot(projectId, async () => {
+          const db = await instance.connect();
+          try {
+            const hasIceberg = connections.some((c) => c.type === "iceberg");
+            await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
+
+            const prepared = await db.prepare(sql);
+            if (params.length > 0) {
+              for (let i = 0; i < params.length; i++) {
+                prepared.bindVarchar(i + 1, String(params[i]));
+              }
+            }
+
+            const queryResult = await withQueryTimeout(db, () => prepared.run());
+
+            const rows: Record<string, unknown>[] = [];
+            const columns = queryResult.columnNames();
+            for await (const chunk of queryResult) {
+              const chunkRows = chunk.getRows();
+              for (const row of chunkRows) {
+                const obj: Record<string, unknown> = {};
+                for (let i = 0; i < columns.length; i++) {
+                  obj[columns[i]] = row[i];
+                }
+                rows.push(obj);
+                if (rows.length >= MAX_ROWS) break;
+              }
+              if (rows.length >= MAX_ROWS) break;
+            }
+
+            const payload = safeStringify({
+              columns,
+              rows,
+              rowCount: rows.length,
+              truncated: rows.length >= MAX_ROWS,
+            });
+
+            return { text: payload, columns, rows, rowCount: rows.length, truncated: rows.length >= MAX_ROWS };
+          } finally {
+            db.disconnectSync();
           }
-          rows.push(obj);
-          if (rows.length >= MAX_ROWS) break;
-        }
-        if (rows.length >= MAX_ROWS) break;
-      }
-
-      const payload = safeStringify({
-        columns,
-        rows,
-        rowCount: rows.length,
-        truncated: rows.length >= MAX_ROWS,
-      });
-
-      return { text: payload, columns, rows, rowCount: rows.length, truncated: rows.length >= MAX_ROWS };
-    } catch (err) {
-      console.error("[executeScopedQuery] Query error:", err);
-      const raw = err instanceof Error ? err.message : "Query execution failed.";
-      const msg = stripScopedSchemaQualifier(raw, modelName);
-      const hint = buildColumnHint(msg, model.datasets);
-      return {
-        text: hint ? `${msg}\n\n${hint}` : msg,
-        isError: true,
-      };
-    } finally {
-      db.disconnectSync();
-    }
-  });
+        });
+      },
+    );
+  } catch (err) {
+    console.error("[executeScopedQuery] Query error:", err);
+    const raw = err instanceof Error ? err.message : "Query execution failed.";
+    const msg = stripScopedSchemaQualifier(raw, modelName);
+    const hint = buildColumnHint(msg, model.datasets);
+    return {
+      text: hint ? `${msg}\n\n${hint}` : msg,
+      isError: true,
+    };
+  }
 }
