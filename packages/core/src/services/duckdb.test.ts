@@ -843,6 +843,34 @@ describe("buildAttachString — postgres", () => {
   });
 });
 
+describe("buildAttachString — mysql", () => {
+  it("produces key=value format with pool options", () => {
+    const conn = fakeConn({
+      type: "mysql",
+      connectionConfig: { host: "my.local", port: 3306, database: "app", user: "admin", password: "pw" },
+    });
+    expect(buildAttachString(conn)).toBe(
+      "host=my.local port=3306 database=app user=admin password=pw mysql_pool_size=32 mysql_pool_acquire_mode=force",
+    );
+  });
+
+  it("defaults port to 3306", () => {
+    const conn = fakeConn({
+      type: "mysql",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    expect(buildAttachString(conn)).toContain("port=3306");
+  });
+
+  it("forces the pool acquire mode so an exhausted pool opens a new connection", () => {
+    const conn = fakeConn({
+      type: "mysql",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    expect(buildAttachString(conn)).toContain("mysql_pool_acquire_mode=force");
+  });
+});
+
 describe("getQueryTimeoutMs", () => {
   const origEnv = process.env.QUERY_TIMEOUT_MS;
   afterEach(() => {

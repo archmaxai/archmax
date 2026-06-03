@@ -334,7 +334,12 @@ export function buildAttachString(conn: IConnectionDocument): string {
     }
     case "mysql": {
       const port = cfg.port ?? 3306;
-      return `host=${cfg.host} port=${port} database=${cfg.database} user=${cfg.user} password=${cfg.password}`;
+      // `mysql_pool_acquire_mode=force` makes DuckDB's client-side MySQL pool
+      // open an extra connection instead of failing with
+      // "PooledConnection::GetConnection - no connection available" when the
+      // pool is exhausted by join fan-out under concurrent agent workloads;
+      // `mysql_pool_size=32` raises the ceiling so it rarely fills.
+      return `host=${cfg.host} port=${port} database=${cfg.database} user=${cfg.user} password=${cfg.password} mysql_pool_size=32 mysql_pool_acquire_mode=force`;
     }
     case "sqlite":
       return cfg.database ?? "";
