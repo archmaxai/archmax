@@ -1254,6 +1254,54 @@ describe("withRecoverableProjectInstance", () => {
     }
   });
 
+  it("on a fatal error closes the poisoned instance, not a concurrently-installed healthy one", async () => {
+    // While our op holds a ref on the poisoned instance, the cache can be
+    // evicted and a fresh healthy instance installed under the same projectId
+    // (concurrent dispose + rebuild / extension reload). The heal must tear
+    // down the *specific* instance the op ran against — disposing by id alone
+    // would wrongly close the healthy replacement.
+    const projectId = "recover-test-wrong-instance";
+    const poisoned = await getProjectInstance(projectId, []);
+    const poisonedClose = vi.spyOn(poisoned, "closeSync");
+    const seen: unknown[] = [];
+    let healthy: unknown;
+    let healthyClose: ReturnType<typeof vi.spyOn> | undefined;
+
+    try {
+      const result = await withRecoverableProjectInstance(
+        projectId,
+        [],
+        undefined,
+        async (instance) => {
+          seen.push(instance);
+          if (seen.length === 1) {
+            // Simulate a concurrent eviction + rebuild: the cache no longer
+            // points at `poisoned` (it is closePending behind our ref) and now
+            // holds a brand-new healthy instance.
+            await disposeProjectInstance(projectId);
+            healthy = await getProjectInstance(projectId, []);
+            healthyClose = vi.spyOn(healthy as DuckDBInstance, "closeSync");
+            throw new Error(FATAL);
+          }
+          return "healed";
+        },
+      );
+
+      expect(result).toBe("healed");
+      // First op ran against the poisoned instance, the retry against the
+      // healthy replacement (never a third, freshly-built one).
+      expect(seen[0]).toBe(poisoned);
+      expect(seen[1]).toBe(healthy);
+      // The poisoned instance is closed; the healthy replacement is untouched.
+      expect(poisonedClose).toHaveBeenCalledTimes(1);
+      expect(healthyClose!).not.toHaveBeenCalled();
+    } finally {
+      poisonedClose.mockRestore();
+      healthyClose?.mockRestore();
+      await disposeProjectInstance(projectId);
+    }
+  });
+
   it("re-throws a non-fatal error immediately without rebuilding", async () => {
     const projectId = "recover-test-nonfatal";
     await getProjectInstance(projectId, []);

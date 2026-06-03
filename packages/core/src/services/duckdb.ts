@@ -229,6 +229,14 @@ function releaseInstanceRef(entry: ProjectDuckDB): void {
 const projectInstances = new Map<string, ProjectDuckDB>();
 const setupLocks = new Map<string, Promise<void>>();
 
+/**
+ * Upper bound on how many times `withRecoverableProjectInstance` will re-fetch
+ * the cached instance when a concurrent dispose/replace keeps detaching it
+ * before the caller can take a usage ref. A single retry is the normal case;
+ * the bound only guards against a pathological dispose storm.
+ */
+const MAX_INSTANCE_ACQUIRE_ATTEMPTS = 16;
+
 export const COMMUNITY_EXTENSIONS = new Set(["mssql"]);
 
 function extensionForType(type: string): string | null {
@@ -433,6 +441,9 @@ export async function withRecoverableProjectInstance<T>(
   op: (instance: DuckDBInstance) => Promise<T>,
 ): Promise<T> {
   let rebuilt = false;
+  // Bounds the acquire-retry path below so a pathological dispose storm cannot
+  // spin forever; in practice the cache stabilises within a single retry.
+  let acquireAttempts = 0;
   for (;;) {
     // Hold a usage ref on the cached instance for the lifetime of `op` so a
     // concurrent self-heal (another request hitting a fatal error for the
@@ -443,21 +454,51 @@ export async function withRecoverableProjectInstance<T>(
     let held: ProjectDuckDB | undefined;
     try {
       const instance = await getProjectInstance(projectId, connections, options);
+      // `getProjectInstance` awaits (setup locks / ATTACH), so between it
+      // resolving and us taking a ref another task could have disposed or
+      // replaced the cached entry. `acquireInstanceRef` increments the ref
+      // synchronously and only succeeds while the cache still points at this
+      // exact `instance`; if it returns `undefined`, our `instance` is already
+      // detached from the cache (and may be mid-close), so running `op` on it
+      // would risk DuckDB use-after-close. Re-fetch a fresh, ref-counted
+      // instance instead of querying a stale one.
       held = acquireInstanceRef(projectId, instance);
+      if (!held) {
+        if (++acquireAttempts > MAX_INSTANCE_ACQUIRE_ATTEMPTS) {
+          throw new Error(
+            `Could not acquire a stable DuckDB instance for project ${projectId} after repeated disposals`,
+          );
+        }
+        continue;
+      }
+      acquireAttempts = 0;
       return await op(instance);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!rebuilt && isFatalInstanceError(message)) {
         rebuilt = true;
-        // Release our ref before disposing so, if we were the last in-flight
-        // user, dispose can close the poisoned instance immediately rather
-        // than deferring. The next getProjectInstance rebuilds from scratch
-        // (fresh in-memory instance + re-attaching every connection).
         if (held) {
+          // Tear down the *specific* instance we ran against — not whatever is
+          // cached now. While we held a ref, a concurrent dispose/extension
+          // rebuild could have evicted our (poisoned) entry and installed a
+          // fresh healthy instance under this projectId; disposing by id alone
+          // would wrongly close that healthy instance. Evict our entry only if
+          // the cache still points at it, mark it `closePending`, then release
+          // our ref so the close happens now if we are the last in-flight user
+          // (otherwise the last releaser closes it). The next iteration's
+          // getProjectInstance rebuilds from scratch.
+          if (projectInstances.get(projectId) === held) {
+            projectInstances.delete(projectId);
+          }
+          held.closePending = true;
           releaseInstanceRef(held);
           held = undefined;
+        } else {
+          // No ref was ever taken — the fatal failure happened during
+          // setup/ATTACH (before acquisition), so fall back to disposing by id
+          // to clear any partially-built cached entry.
+          await disposeProjectInstance(projectId);
         }
-        await disposeProjectInstance(projectId);
         continue;
       }
       throw err;
