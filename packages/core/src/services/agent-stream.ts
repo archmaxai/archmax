@@ -30,6 +30,7 @@ export async function processAgentStream(
   events: AsyncIterable<{ event: string; data?: any; run_id?: string; name?: string }>,
   emit: StreamEmitter,
   collector?: AgentStreamResult,
+  signal?: AbortSignal,
 ): Promise<AgentStreamResult> {
   const result = collector ?? createStreamCollector();
   let textBuffer = "";
@@ -43,6 +44,10 @@ export async function processAgentStream(
 
   try {
     for await (const event of events) {
+      // Stop consuming and emitting as soon as the run is cancelled. The graph
+      // iterator also rejects on abort, but breaking here guarantees we never
+      // forward a buffered event after the user pressed stop.
+      if (signal?.aborted) break;
       if (event.event === "on_chat_model_stream") {
         const chunk = event.data?.chunk;
         if (!chunk) continue;

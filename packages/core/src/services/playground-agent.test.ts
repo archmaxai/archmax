@@ -206,6 +206,9 @@ describe("createPlaygroundAgent", () => {
       "shopify",
       "SELECT 1",
       [],
+      // Trailing AbortSignal threaded from the tool's RunnableConfig; undefined
+      // here because the test invokes the handler without a run config.
+      undefined,
     );
   });
 

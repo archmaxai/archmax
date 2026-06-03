@@ -88,8 +88,9 @@ function makeGetDatasetsTool(fileSvc: SemanticModelFileService, projectId: strin
 
 function makeExecuteQueryTool(fileSvc: SemanticModelFileService, projectId: string, scopes: string[]) {
   return tool(
-    async ({ modelName, sql, params }) => {
-      const r = await executeScopedQuery(fileSvc, projectId, scopes, modelName, sql, params);
+    async ({ modelName, sql, params }, config) => {
+      const signal = (config as { signal?: AbortSignal } | undefined)?.signal;
+      const r = await executeScopedQuery(fileSvc, projectId, scopes, modelName, sql, params, signal);
       return r.text;
     },
     {
@@ -144,12 +145,15 @@ function withToolBudget(tools: StructuredTool[], maxCalls: number): StructuredTo
   const counter = { value: 0 };
   return tools.map((t) =>
     tool(
-      async (input: Record<string, unknown>) => {
+      async (input: Record<string, unknown>, config) => {
         counter.value++;
         if (counter.value > maxCalls) {
           return `Tool call budget of ${maxCalls} reached. You MUST provide your final answer now using the information already gathered. Do NOT call any more tools.`;
         }
-        return String(await t.invoke(input));
+        // Forward the run config (notably `config.signal`) so the wrapped tool
+        // still sees the cancellation signal — otherwise a budgeted run could
+        // not be interrupted mid tool execution.
+        return String(await t.invoke(input, config));
       },
       { name: t.name, description: t.description, schema: t.schema as z.ZodObject<any> },
     ),

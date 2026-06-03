@@ -14,6 +14,7 @@ import {
   withProjectQuerySlot,
   withRecoverableProjectInstance,
   getQueryTimeoutMs,
+  isQueryCancelledError,
 } from "./duckdb";
 import { validateSqlAst } from "./sql-ast-validation";
 
@@ -227,6 +228,7 @@ export async function executeScopedQuery(
   modelName: string,
   sql: string,
   params: string[] = [],
+  signal?: AbortSignal,
 ): Promise<ExecuteQueryResult> {
   if (!scopes.includes(modelName)) {
     return { text: `Access denied: token does not have access to model "${modelName}"`, isError: true };
@@ -266,7 +268,7 @@ export async function executeScopedQuery(
       connections,
       { readOnly: true },
       async (instance) => {
-        const materialisation = await materialiseModelViews(instance, projectId, model);
+        const materialisation = await materialiseModelViews(instance, projectId, model, signal);
 
         if (materialisation.missingViewQuery.length > 0) {
           const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
@@ -324,11 +326,12 @@ export async function executeScopedQuery(
               }
             }
 
-            const queryResult = await withQueryTimeout(db, () => prepared.run());
+            const queryResult = await withQueryTimeout(db, () => prepared.run(), undefined, signal);
 
             const rows: Record<string, unknown>[] = [];
             const columns = queryResult.columnNames();
             for await (const chunk of queryResult) {
+              if (signal?.aborted) throw new Error("Query cancelled");
               const chunkRows = chunk.getRows();
               for (const row of chunkRows) {
                 const obj: Record<string, unknown> = {};
@@ -356,6 +359,11 @@ export async function executeScopedQuery(
       },
     );
   } catch (err) {
+    // A user cancellation (only possible when a `signal` is supplied, i.e. the
+    // playground agent) must abort the run rather than be returned as a
+    // recoverable query result. MCP HTTP callers never pass a signal, so this
+    // never changes their behaviour. Re-throw so it propagates to the graph.
+    if (isQueryCancelledError(err) || signal?.aborted) throw err;
     // The recovery scope above now also covers `getProjectInstance`
     // (which runs `ATTACH` with decrypted connection strings) and view
     // materialisation, so a setup/ATTACH failure can carry `password=…`

@@ -13,6 +13,7 @@ import {
   withProjectQuerySlot,
   withQueryTimeout,
   withRecoverableProjectInstance,
+  isQueryCancelledError,
 } from "./duckdb";
 import { validateSqlAst } from "./sql-ast-validation";
 import { DocumentFileService } from "./document-files";
@@ -27,11 +28,26 @@ function safeStringify(value: unknown): string {
   );
 }
 
+/**
+ * LangChain passes a `RunnableConfig` as the second argument to a tool's
+ * implementation. When the agent run is started with an `AbortSignal` (the
+ * worker wires the user "stop" / cancel signal into `agent.streamEvents`),
+ * LangGraph propagates that signal here as `config.signal`. Pulling it out
+ * lets long-running tools (DuckDB queries, view materialisation) be aborted
+ * mid-flight instead of blocking the run until they finish.
+ */
+type ToolConfig = { signal?: AbortSignal } | undefined;
+
+function getSignal(config: ToolConfig): AbortSignal | undefined {
+  return config?.signal;
+}
+
 const MAX_ROWS = 1000;
 
 export function makeExecuteQueryTool(projectId: string) {
   return tool(
-    async ({ sql, params }: { sql: string; params: unknown[] }) => {
+    async ({ sql, params }: { sql: string; params: unknown[] }, config: ToolConfig) => {
+      const signal = getSignal(config);
       // Sole SQL-safety layer for agent schema exploration. 'agent'
       // mode skips BASE_TABLE catalog/schema rules so the agent can
       // legitimately query `information_schema.tables` and
@@ -74,11 +90,12 @@ export function makeExecuteQueryTool(projectId: string) {
                   }
                 }
 
-                const result = await withQueryTimeout(db, () => prepared.run());
+                const result = await withQueryTimeout(db, () => prepared.run(), undefined, signal);
 
                 const rows: Record<string, unknown>[] = [];
                 const columns = result.columnNames();
                 for await (const chunk of result) {
+                  if (signal?.aborted) throw new Error("Query cancelled");
                   const chunkRows = chunk.getRows();
                   for (const row of chunkRows) {
                     const obj: Record<string, unknown> = {};
@@ -103,6 +120,10 @@ export function makeExecuteQueryTool(projectId: string) {
             }),
         );
       } catch (err) {
+        // A user cancellation must abort the whole run, not be swallowed into a
+        // recoverable tool result the model would keep working from. Re-throw
+        // so it propagates up to the graph (which is already aborting).
+        if (isQueryCancelledError(err) || signal?.aborted) throw err;
         // The recovery scope above also covers `getProjectInstance` (which runs
         // `ATTACH` with decrypted connection strings), so a setup/ATTACH failure
         // can carry `password=…` or an iceberg `TOKEN '…'` in its message.
@@ -155,7 +176,8 @@ export function makeRunModelQueryTool(projectId: string) {
       modelName: string;
       sql: string;
       params: unknown[];
-    }) => {
+    }, config: ToolConfig) => {
+      const signal = getSignal(config);
       const fileSvc = new SemanticModelFileService(getEnv().projectsDir);
 
       await connectDB();
@@ -195,7 +217,7 @@ export function makeRunModelQueryTool(projectId: string) {
           connections,
           { readOnly: true },
           async (instance) => {
-            const materialisation = await materialiseModelViews(instance, projectId, model);
+            const materialisation = await materialiseModelViews(instance, projectId, model, signal);
 
             if (materialisation.missingViewQuery.length > 0) {
               const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
@@ -246,11 +268,12 @@ export function makeRunModelQueryTool(projectId: string) {
                   }
                 }
 
-                const result = await withQueryTimeout(db, () => prepared.run());
+                const result = await withQueryTimeout(db, () => prepared.run(), undefined, signal);
 
                 const rows: Record<string, unknown>[] = [];
                 const columns = result.columnNames();
                 for await (const chunk of result) {
+                  if (signal?.aborted) throw new Error("Query cancelled");
                   const chunkRows = chunk.getRows();
                   for (const row of chunkRows) {
                     const obj: Record<string, unknown> = {};
@@ -276,6 +299,10 @@ export function makeRunModelQueryTool(projectId: string) {
           },
         );
       } catch (err) {
+        // A user cancellation must abort the whole run rather than be reflected
+        // back to the model as a recoverable query error. Re-throw so it
+        // propagates to the graph (which is already aborting).
+        if (isQueryCancelledError(err) || signal?.aborted) throw err;
         // The recovery scope above now also covers `getProjectInstance`
         // (which runs `ATTACH` with decrypted connection strings) and view
         // materialisation. A setup/ATTACH failure can therefore carry

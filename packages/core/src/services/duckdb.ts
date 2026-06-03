@@ -40,17 +40,52 @@ export function getQueryTimeoutMs(): number {
 }
 
 /**
- * Run an async operation against a DuckDB connection with a hard timeout.
+ * Raised when an in-flight DuckDB operation is aborted via an `AbortSignal`
+ * (e.g. the user pressed "stop" on an agent run). Distinct from the
+ * timeout error so callers can tell a user-cancellation apart from a
+ * slow query and re-throw it to abort the whole run rather than swallowing
+ * it into a recoverable tool result.
+ */
+export class QueryCancelledError extends Error {
+  constructor(message = "Query cancelled") {
+    super(message);
+    this.name = "QueryCancelledError";
+  }
+}
+
+/**
+ * True for any error that represents a user/abort cancellation rather than a
+ * genuine query failure. Matches our own `QueryCancelledError` as well as the
+ * standard `AbortError` (`DOMException`/`Error` with `name === "AbortError"`)
+ * that LangChain/LangGraph and `fetch` raise when an `AbortSignal` fires.
+ */
+export function isQueryCancelledError(err: unknown): boolean {
+  if (err instanceof QueryCancelledError) return true;
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === "QueryCancelledError" || name === "AbortError";
+}
+
+/**
+ * Run an async operation against a DuckDB connection with a hard timeout and
+ * optional cooperative cancellation.
+ *
  * On timeout, `connection.interrupt()` is called to cancel the in-flight
  * query inside DuckDB, then the promise rejects with a timeout error.
- * The timer is always cleaned up regardless of outcome.
+ *
+ * When an aborted `signal` is supplied, `connection.interrupt()` is likewise
+ * called immediately so a long-running query stops promptly (rather than
+ * blocking the agent run for up to the full timeout), and the promise rejects
+ * with a `QueryCancelledError`. The timer and abort listener are always
+ * cleaned up regardless of outcome.
  */
 export async function withQueryTimeout<T>(
   connection: DuckDBConnection,
   operation: () => Promise<T>,
   timeoutMs: number = getQueryTimeoutMs(),
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
 
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -59,10 +94,29 @@ export async function withQueryTimeout<T>(
     }, timeoutMs);
   });
 
+  const racers: Array<Promise<T>> = [operation(), timeoutPromise];
+
+  if (signal) {
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+      if (signal.aborted) {
+        try { connection.interrupt(); } catch { /* best-effort */ }
+        reject(new QueryCancelledError());
+        return;
+      }
+      onAbort = () => {
+        try { connection.interrupt(); } catch { /* best-effort */ }
+        reject(new QueryCancelledError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    racers.push(abortPromise);
+  }
+
   try {
-    return await Promise.race([operation(), timeoutPromise]);
+    return await Promise.race(racers);
   } finally {
     clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -975,18 +1029,20 @@ export async function materialiseModelViews(
   instance: DuckDBInstance,
   projectId: string,
   model: SemanticModel,
+  signal?: AbortSignal,
 ): Promise<MaterialiseViewsResult> {
   // Serialise per project: concurrent passes racing on the same scoped
   // VIEWs abort with a DuckDB catalog write-write conflict (see
   // `withProjectMaterialiseLock`).
   return withProjectMaterialiseLock(projectId, () =>
-    materialiseModelViewsLocked(instance, model),
+    materialiseModelViewsLocked(instance, model, signal),
   );
 }
 
 async function materialiseModelViewsLocked(
   instance: DuckDBInstance,
   model: SemanticModel,
+  signal?: AbortSignal,
 ): Promise<MaterialiseViewsResult> {
   const result: MaterialiseViewsResult = {
     materialised: [],
@@ -1029,8 +1085,12 @@ async function materialiseModelViewsLocked(
 
   const db = await instance.connect();
   try {
-    await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000);
+    await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000, signal);
     for (const ds of model.datasets) {
+      // Stop promptly when the agent run was cancelled mid-materialisation
+      // instead of grinding through the remaining datasets (each of which can
+      // pay a cold-connection cost up to the shared deadline).
+      if (signal?.aborted) throw new QueryCancelledError();
       // Reject embedded NULs / control characters that would corrupt
       // the resulting `CREATE OR REPLACE VIEW` even after quote
       // doubling. Any other character is safely handled by
@@ -1087,10 +1147,15 @@ async function materialiseModelViewsLocked(
             db,
             () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
             Math.max(1, remaining),
+            signal,
           );
         },
         { deadlineMs: materialiseDeadline },
       );
+      // A cancellation surfaces as a non-transient failure from the retry
+      // helper; re-raise it so the run aborts instead of being recorded as a
+      // per-dataset materialisation failure.
+      if (signal?.aborted) throw new QueryCancelledError();
       if (created.ok) {
         result.materialised.push(ds.name);
         if (wasInferred) result.inferred.push(ds.name);

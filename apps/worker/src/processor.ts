@@ -185,6 +185,7 @@ export async function processAgentJob(
       events,
       (event, data) => publishStreamEvent(conversationId, { event, data }),
       collector,
+      abortController.signal,
     );
 
     cleanup();
