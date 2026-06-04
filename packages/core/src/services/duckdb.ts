@@ -334,12 +334,7 @@ export function buildAttachString(conn: IConnectionDocument): string {
     }
     case "mysql": {
       const port = cfg.port ?? 3306;
-      // `mysql_pool_acquire_mode=force` makes DuckDB's client-side MySQL pool
-      // open an extra connection instead of failing with
-      // "PooledConnection::GetConnection - no connection available" when the
-      // pool is exhausted by join fan-out under concurrent agent workloads;
-      // `mysql_pool_size=32` raises the ceiling so it rarely fills.
-      return `host=${cfg.host} port=${port} database=${cfg.database} user=${cfg.user} password=${cfg.password} mysql_pool_size=32 mysql_pool_acquire_mode=force`;
+      return `host=${cfg.host} port=${port} database=${cfg.database} user=${cfg.user} password=${cfg.password}`;
     }
     case "sqlite":
       return cfg.database ?? "";
@@ -648,6 +643,25 @@ async function installAndLoadExtension(
     const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
     await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
+    if (ext === "mysql") {
+      // These are DuckDB *settings* registered by the mysql extension (set via
+      // `SET`), NOT ATTACH connection-string keys — putting them in the DSN
+      // makes the connection-string parser reject the attach. `force` makes an
+      // exhausted client-side pool open an extra connection instead of failing
+      // with "PooledConnection::GetConnection - no connection available" under
+      // join fan-out + concurrent agent workloads; 32 raises the ceiling. Set
+      // GLOBAL so the per-query connections (not just this one) inherit it, and
+      // before any ATTACH so the catalog's pool is created with these values.
+      // Already the modern extension defaults, but pinned here so behavior is
+      // stable across extension versions. Guarded for older builds that may not
+      // expose these settings.
+      try {
+        await db.run("SET GLOBAL mysql_pool_acquire_mode = 'force'");
+        await db.run("SET GLOBAL mysql_pool_size = 32");
+      } catch (err) {
+        console.warn("[duckdb] Failed to apply mysql pool settings:", err);
+      }
+    }
   } finally {
     db.disconnectSync();
   }

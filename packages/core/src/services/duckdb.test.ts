@@ -844,13 +844,15 @@ describe("buildAttachString — postgres", () => {
 });
 
 describe("buildAttachString — mysql", () => {
-  it("produces key=value format with pool options", () => {
+  it("produces key=value format with only connection-string keys", () => {
     const conn = fakeConn({
       type: "mysql",
       connectionConfig: { host: "my.local", port: 3306, database: "app", user: "admin", password: "pw" },
     });
+    // Pool tuning (mysql_pool_size / mysql_pool_acquire_mode) are DuckDB
+    // settings applied via `SET`, not DSN keys, so they must NOT appear here.
     expect(buildAttachString(conn)).toBe(
-      "host=my.local port=3306 database=app user=admin password=pw mysql_pool_size=32 mysql_pool_acquire_mode=force",
+      "host=my.local port=3306 database=app user=admin password=pw",
     );
   });
 
@@ -862,12 +864,12 @@ describe("buildAttachString — mysql", () => {
     expect(buildAttachString(conn)).toContain("port=3306");
   });
 
-  it("forces the pool acquire mode so an exhausted pool opens a new connection", () => {
+  it("does not embed pool settings in the connection string", () => {
     const conn = fakeConn({
       type: "mysql",
       connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
     });
-    expect(buildAttachString(conn)).toContain("mysql_pool_acquire_mode=force");
+    expect(buildAttachString(conn)).not.toContain("mysql_pool");
   });
 });
 
