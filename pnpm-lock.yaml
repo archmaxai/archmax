@@ -226,8 +226,8 @@ importers:
   packages/core:
     dependencies:
       '@duckdb/node-api':
-        specifier: 1.5.1-r.2
-        version: 1.5.1-r.2
+        specifier: 1.5.3-r.3
+        version: 1.5.3-r.3
       '@langchain/anthropic':
         specifier: ^1.4.0
         version: 1.4.0(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@6.39.0(ws@8.20.0)(zod@4.4.3))(ws@8.20.0))
@@ -631,41 +631,55 @@ packages:
   '@date-fns/tz@1.4.1':
     resolution: {integrity: sha512-P5LUNhtbj6YfI3iJjw5EL9eUAG6OitD0W3fWQcpQjDRc/QIsL0tRNuO1PcDvPccWL1fSTXXdE1ds+l95DV/OFA==}
 
-  '@duckdb/node-api@1.5.1-r.2':
-    resolution: {integrity: sha512-WF2CnGcvIix4gik322dKa+pvvOOZ3ZS6I0NplY4RJGGaIKvWIPsg4v3+7o2D2KlpS7SsJyE2c/wXPtuLGSwzyQ==}
+  '@duckdb/node-api@1.5.3-r.3':
+    resolution: {integrity: sha512-FzuL6sevuFfEFwkgiUMRMUAj4TaVqV//L0oo2FVZ9s9oYpLpALF9qZyQv2ucclTNQZwDCkm8+e6yLMc6t8IjlA==}
 
-  '@duckdb/node-bindings-darwin-arm64@1.5.1-r.2':
-    resolution: {integrity: sha512-SHvnTwJxp8BYMNxkHZs0RDdWK0fvghsMNtuxOkeMTQTh1AIv/rINWE+X9eIjU6IvlSBps5D2X0l6cbW7butomQ==}
+  '@duckdb/node-bindings-darwin-arm64@1.5.3-r.3':
+    resolution: {integrity: sha512-ttD8QBesgzHu7Sc4qouuIGLM7PWedLW8GvFbnZEyMqk24mQz1HWFgaT0ivw6nDRaDPUQLB9QnAOq8MZUh1zWHQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@duckdb/node-bindings-darwin-x64@1.5.1-r.2':
-    resolution: {integrity: sha512-D/ofaglTRnhK76gDevO+xfXspprOHa7qwuwIX2Hwvv9Vz3yJt/y/gre3g6miwU4RJZ+hHxzGYTwGsL832cEjbg==}
+  '@duckdb/node-bindings-darwin-x64@1.5.3-r.3':
+    resolution: {integrity: sha512-Vp9MYtoYf6zUWHdCmHXwUcJlHq3YaaIeULWeSiPUM1hsDflLiZKXtz5i250Ulz03VsfWBjpO4wdM99sjjrYKkg==}
     cpu: [x64]
     os: [darwin]
 
-  '@duckdb/node-bindings-linux-arm64@1.5.1-r.2':
-    resolution: {integrity: sha512-Sf8840uIDwFVw7ALp+eImYlreGRMYhu815t1xvE6L1wiLRkjWJUDECNRLQ/GviORScrOKj5WVvOgZNPAlItgYw==}
+  '@duckdb/node-bindings-linux-arm64-musl@1.5.3-r.3':
+    resolution: {integrity: sha512-IadRyx+98FEynKLXAk2MzReinFgduiDXgNd5Z8c5VKch+8FgBfqkEUYGOnBMMUPT8kuheKdLj23vpWXaCzOgoQ==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
-  '@duckdb/node-bindings-linux-x64@1.5.1-r.2':
-    resolution: {integrity: sha512-UN/Mly9S53o2LCnIyH8almwcKejxpdSenjqsLtmf3fOrDkP8KcrDL3ln4MSKEj3fIoJjyvbl1IyVqWKYPBTrLA==}
+  '@duckdb/node-bindings-linux-arm64@1.5.3-r.3':
+    resolution: {integrity: sha512-3HLcrzQE83947JS51UVR7C9qnXQMltCOk4Dnhiz1CD+9u32DGLMgPTIIxclk7O+Q7EwfqzD8JV86Ud+LT1crcQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@duckdb/node-bindings-linux-x64-musl@1.5.3-r.3':
+    resolution: {integrity: sha512-5bulS16YhftXcarki4tvCufVslntpQDLOEF6RZ+FSMOGiv5d7SDXqklmVRy4DKW3C5ekgN7S2oYzuGL/ss9BuA==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
-  '@duckdb/node-bindings-win32-arm64@1.5.1-r.2':
-    resolution: {integrity: sha512-o0R4POcc4ZvYdM3ydCtQDYZRAPPk5d1rZAMgJ85wcZUF8Tf1jP6YDpTrTm1oghXEUtsZ0pwsTuZ8PijYhG2/5Q==}
+  '@duckdb/node-bindings-linux-x64@1.5.3-r.3':
+    resolution: {integrity: sha512-TXndAL0ZoETq17Df6wB+SUZjLGDmOsKuDSySxB+wy6sHfpRtbDgQibyXRlajVeUkRDwSzBFC5ymy16YG0Fl4iw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@duckdb/node-bindings-win32-arm64@1.5.3-r.3':
+    resolution: {integrity: sha512-55Vu13S0jUudiAGlNWJd7UvlW1iKjwWehD8s93jBCNm0AdE/EJN4nz5rQ0IuWzPWXpMjAYuKu00yE7NdtbTyug==}
     cpu: [arm64]
     os: [win32]
 
-  '@duckdb/node-bindings-win32-x64@1.5.1-r.2':
-    resolution: {integrity: sha512-rT9YU/FwWR3XHXDTnEJthEiMemr3GFIvYCuR58nQfPhjv8qnZ4c0sUu6HOkl+fXYNTkDeTzE6//Ydr1BF2ixdA==}
+  '@duckdb/node-bindings-win32-x64@1.5.3-r.3':
+    resolution: {integrity: sha512-rlOc9ltWQNHuDq99Ah8XaD80nN1ucrSK5AcH/7ibSp9ogX/jswPYlRVE7ODFJAjnQNf8bVvs++Mp+wyGvuG7ag==}
     cpu: [x64]
     os: [win32]
 
-  '@duckdb/node-bindings@1.5.1-r.2':
-    resolution: {integrity: sha512-ifURcVwVEfR7H1LC2X+RQ6AFFI+oQznfzBYb8tOR50gzqAGCbYJy4tsF8jb/1k3L4lMte/pfH9cI8uW6xG7U9Q==}
+  '@duckdb/node-bindings@1.5.3-r.3':
+    resolution: {integrity: sha512-Dphw1a9kKXZnCiWX1YCEAJsQ7WJQO2Ikgxy7m8jy0QVXqAwB9esr5NGsuEL3vMKL7velZHeZCjGOMnHZEcIsdg==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -5911,36 +5925,46 @@ snapshots:
 
   '@date-fns/tz@1.4.1': {}
 
-  '@duckdb/node-api@1.5.1-r.2':
+  '@duckdb/node-api@1.5.3-r.3':
     dependencies:
-      '@duckdb/node-bindings': 1.5.1-r.2
+      '@duckdb/node-bindings': 1.5.3-r.3
 
-  '@duckdb/node-bindings-darwin-arm64@1.5.1-r.2':
+  '@duckdb/node-bindings-darwin-arm64@1.5.3-r.3':
     optional: true
 
-  '@duckdb/node-bindings-darwin-x64@1.5.1-r.2':
+  '@duckdb/node-bindings-darwin-x64@1.5.3-r.3':
     optional: true
 
-  '@duckdb/node-bindings-linux-arm64@1.5.1-r.2':
+  '@duckdb/node-bindings-linux-arm64-musl@1.5.3-r.3':
     optional: true
 
-  '@duckdb/node-bindings-linux-x64@1.5.1-r.2':
+  '@duckdb/node-bindings-linux-arm64@1.5.3-r.3':
     optional: true
 
-  '@duckdb/node-bindings-win32-arm64@1.5.1-r.2':
+  '@duckdb/node-bindings-linux-x64-musl@1.5.3-r.3':
     optional: true
 
-  '@duckdb/node-bindings-win32-x64@1.5.1-r.2':
+  '@duckdb/node-bindings-linux-x64@1.5.3-r.3':
     optional: true
 
-  '@duckdb/node-bindings@1.5.1-r.2':
+  '@duckdb/node-bindings-win32-arm64@1.5.3-r.3':
+    optional: true
+
+  '@duckdb/node-bindings-win32-x64@1.5.3-r.3':
+    optional: true
+
+  '@duckdb/node-bindings@1.5.3-r.3':
+    dependencies:
+      detect-libc: 2.1.2
     optionalDependencies:
-      '@duckdb/node-bindings-darwin-arm64': 1.5.1-r.2
-      '@duckdb/node-bindings-darwin-x64': 1.5.1-r.2
-      '@duckdb/node-bindings-linux-arm64': 1.5.1-r.2
-      '@duckdb/node-bindings-linux-x64': 1.5.1-r.2
-      '@duckdb/node-bindings-win32-arm64': 1.5.1-r.2
-      '@duckdb/node-bindings-win32-x64': 1.5.1-r.2
+      '@duckdb/node-bindings-darwin-arm64': 1.5.3-r.3
+      '@duckdb/node-bindings-darwin-x64': 1.5.3-r.3
+      '@duckdb/node-bindings-linux-arm64': 1.5.3-r.3
+      '@duckdb/node-bindings-linux-arm64-musl': 1.5.3-r.3
+      '@duckdb/node-bindings-linux-x64': 1.5.3-r.3
+      '@duckdb/node-bindings-linux-x64-musl': 1.5.3-r.3
+      '@duckdb/node-bindings-win32-arm64': 1.5.3-r.3
+      '@duckdb/node-bindings-win32-x64': 1.5.3-r.3
 
   '@emnapi/core@1.10.0':
     dependencies:
