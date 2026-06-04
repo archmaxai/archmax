@@ -5,13 +5,15 @@ import { Connection, TestAgent, TestCase, type IConnectionDocument } from "../mo
 import { connectDB } from "../infra/db";
 import {
   getAttachedCatalogSlugs,
-  getProjectInstance,
   hardenConnection,
   materialiseModelViews,
   scopeSchemaName,
   stripScopedSchemaQualifier,
+  redactConnectionSecrets,
   withProjectQuerySlot,
   withQueryTimeout,
+  withRecoverableProjectInstance,
+  isQueryCancelledError,
 } from "./duckdb";
 import { validateSqlAst } from "./sql-ast-validation";
 import { DocumentFileService } from "./document-files";
@@ -26,11 +28,26 @@ function safeStringify(value: unknown): string {
   );
 }
 
+/**
+ * LangChain passes a `RunnableConfig` as the second argument to a tool's
+ * implementation. When the agent run is started with an `AbortSignal` (the
+ * worker wires the user "stop" / cancel signal into `agent.streamEvents`),
+ * LangGraph propagates that signal here as `config.signal`. Pulling it out
+ * lets long-running tools (DuckDB queries, view materialisation) be aborted
+ * mid-flight instead of blocking the run until they finish.
+ */
+type ToolConfig = { signal?: AbortSignal } | undefined;
+
+function getSignal(config: ToolConfig): AbortSignal | undefined {
+  return config?.signal;
+}
+
 const MAX_ROWS = 1000;
 
 export function makeExecuteQueryTool(projectId: string) {
   return tool(
-    async ({ sql, params }: { sql: string; params: unknown[] }) => {
+    async ({ sql, params }: { sql: string; params: unknown[] }, config: ToolConfig) => {
+      const signal = getSignal(config);
       // Sole SQL-safety layer for agent schema exploration. 'agent'
       // mode skips BASE_TABLE catalog/schema rules so the agent can
       // legitimately query `information_schema.tables` and
@@ -49,50 +66,74 @@ export function makeExecuteQueryTool(projectId: string) {
         isActive: true,
       }).lean()) as IConnectionDocument[];
 
-      const instance = await getProjectInstance(projectId, connections, { readOnly: true });
+      // `withRecoverableProjectInstance` self-heals a DuckDB instance that an
+      // unstable upstream connection has invalidated (disposing + rebuilding
+      // it once). DuckDB errors must propagate out of the inner block — not be
+      // swallowed into a result value — so the fatal-error detection can fire;
+      // the outer catch then turns any surviving failure into a recoverable
+      // tool result instead of aborting the whole agent run.
+      try {
+        return await withRecoverableProjectInstance(
+          projectId,
+          connections,
+          { readOnly: true },
+          (instance) =>
+            withProjectQuerySlot(projectId, async () => {
+              const db = await instance.connect();
+              try {
+                const hasIceberg = connections.some((c) => c.type === "iceberg");
+                await hardenConnection(db, undefined, { allowExternalAccess: hasIceberg });
+                const prepared = await db.prepare(sql);
+                if (params.length > 0) {
+                  for (let i = 0; i < params.length; i++) {
+                    prepared.bindVarchar(i + 1, String(params[i]));
+                  }
+                }
 
-      return withProjectQuerySlot(projectId, async () => {
-        const db = await instance.connect();
-        try {
-          const hasIceberg = connections.some((c) => c.type === "iceberg");
-          await hardenConnection(db, undefined, { allowExternalAccess: hasIceberg });
-          const prepared = await db.prepare(sql);
-          if (params.length > 0) {
-            for (let i = 0; i < params.length; i++) {
-              prepared.bindVarchar(i + 1, String(params[i]));
-            }
-          }
+                const result = await withQueryTimeout(db, () => prepared.run(), undefined, signal);
 
-          const result = await withQueryTimeout(db, () => prepared.run());
+                const rows: Record<string, unknown>[] = [];
+                const columns = result.columnNames();
+                for await (const chunk of result) {
+                  if (signal?.aborted) throw new Error("Query cancelled");
+                  const chunkRows = chunk.getRows();
+                  for (const row of chunkRows) {
+                    const obj: Record<string, unknown> = {};
+                    for (let i = 0; i < columns.length; i++) {
+                      obj[columns[i]] = row[i];
+                    }
+                    rows.push(obj);
+                    if (rows.length >= MAX_ROWS) break;
+                  }
+                  if (rows.length >= MAX_ROWS) break;
+                }
 
-          const rows: Record<string, unknown>[] = [];
-          const columns = result.columnNames();
-          for await (const chunk of result) {
-            const chunkRows = chunk.getRows();
-            for (const row of chunkRows) {
-              const obj: Record<string, unknown> = {};
-              for (let i = 0; i < columns.length; i++) {
-                obj[columns[i]] = row[i];
+                return safeStringify({
+                  columns,
+                  rows,
+                  rowCount: rows.length,
+                  truncated: rows.length >= MAX_ROWS,
+                });
+              } finally {
+                db.disconnectSync();
               }
-              rows.push(obj);
-              if (rows.length >= MAX_ROWS) break;
-            }
-            if (rows.length >= MAX_ROWS) break;
-          }
-
-          return safeStringify({
-            columns,
-            rows,
-            rowCount: rows.length,
-            truncated: rows.length >= MAX_ROWS,
-          });
-        } catch (err) {
-          console.error("[executeQuery] Query error:", err);
-          return safeStringify({ error: "Query execution failed." });
-        } finally {
-          db.disconnectSync();
-        }
-      });
+            }),
+        );
+      } catch (err) {
+        // A user cancellation must abort the whole run, not be swallowed into a
+        // recoverable tool result the model would keep working from. Re-throw
+        // so it propagates up to the graph (which is already aborting).
+        if (isQueryCancelledError(err) || signal?.aborted) throw err;
+        // The recovery scope above also covers `getProjectInstance` (which runs
+        // `ATTACH` with decrypted connection strings), so a setup/ATTACH failure
+        // can carry `password=…` or an iceberg `TOKEN '…'` in its message.
+        // Redact those secret shapes before logging.
+        console.error(
+          "[executeQuery] Query error:",
+          redactConnectionSecrets(err instanceof Error ? err.message : String(err)),
+        );
+        return safeStringify({ error: "Query execution failed." });
+      }
     },
     {
       name: "executeQuery",
@@ -135,7 +176,8 @@ export function makeRunModelQueryTool(projectId: string) {
       modelName: string;
       sql: string;
       params: unknown[];
-    }) => {
+    }, config: ToolConfig) => {
+      const signal = getSignal(config);
       const fileSvc = new SemanticModelFileService(getEnv().projectsDir);
 
       await connectDB();
@@ -162,90 +204,119 @@ export function makeRunModelQueryTool(projectId: string) {
         });
       }
 
-      const instance = await getProjectInstance(projectId, connections, { readOnly: true });
-      const materialisation = await materialiseModelViews(instance, projectId, model);
+      // `withRecoverableProjectInstance` self-heals a DuckDB instance that an
+      // unstable upstream connection has invalidated (disposing + rebuilding
+      // it once). Materialisation and query execution both run against the
+      // (possibly rebuilt) instance and must let DuckDB errors propagate so
+      // the fatal-error detection can fire; the outer catch turns any
+      // surviving failure into a recoverable tool result instead of aborting
+      // the whole agent run.
+      try {
+        return await withRecoverableProjectInstance(
+          projectId,
+          connections,
+          { readOnly: true },
+          async (instance) => {
+            const materialisation = await materialiseModelViews(instance, projectId, model, signal);
 
-      if (materialisation.missingViewQuery.length > 0) {
-        const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
-        // This error fires only when the dataset has neither an authored
-        // `view_query` nor enough metadata to infer a default mirror view
-        // (no `source`, or no `fields`). The inferred-fallback path
-        // already covers the simple "I just declared fields and a source"
-        // shape automatically; landing here means the dataset YAML
-        // itself is incomplete. Phrase it as a self-correction prompt
-        // so the agent re-enters the authoring loop instead of
-        // surfacing the gap to the human.
-        return JSON.stringify({
-          error:
-            `Cannot test model "${modelName}" yet — dataset(s) ${names} are incomplete: the YAML ` +
-            `has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` pair ` +
-            `the platform could infer a default mirror view from. This is your job, not the ` +
-            `operator's: open each affected dataset's YAML and either (a) add the missing ` +
-            `\`fields\` / \`source\`, which lets the platform auto-derive a default mirror view, ` +
-            `or (b) author an explicit \`view_query\` in its COMMON custom extension when you ` +
-            `need filters / joins / computed columns (see workflow step 4f for the three concrete ` +
-            `shapes), then call \`runModelQuery\` again.`,
-        });
-      }
-
-      if (materialisation.failed.length > 0) {
-        const failures = materialisation.failed.map((f) => ({
-          dataset: f.dataset,
-          error: stripScopedSchemaQualifier(f.error, modelName),
-        }));
-        return JSON.stringify({
-          error:
-            `One or more datasets in "${modelName}" failed to materialise. ` +
-            `Fix their \`view_query\` and retry.`,
-          failures,
-        });
-      }
-
-      return withProjectQuerySlot(projectId, async () => {
-        const db = await instance.connect();
-        try {
-          const hasIceberg = connections.some((c) => c.type === "iceberg");
-          await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
-
-          const prepared = await db.prepare(sql);
-          if (params.length > 0) {
-            for (let i = 0; i < params.length; i++) {
-              prepared.bindVarchar(i + 1, String(params[i]));
+            if (materialisation.missingViewQuery.length > 0) {
+              const names = materialisation.missingViewQuery.map((n) => `"${n}"`).join(", ");
+              // This error fires only when the dataset has neither an authored
+              // `view_query` nor enough metadata to infer a default mirror view
+              // (no `source`, or no `fields`). The inferred-fallback path
+              // already covers the simple "I just declared fields and a source"
+              // shape automatically; landing here means the dataset YAML
+              // itself is incomplete. Phrase it as a self-correction prompt
+              // so the agent re-enters the authoring loop instead of
+              // surfacing the gap to the human.
+              return JSON.stringify({
+                error:
+                  `Cannot test model "${modelName}" yet — dataset(s) ${names} are incomplete: the YAML ` +
+                  `has neither an authored \`view_query\` nor a populated \`fields\` + \`source\` pair ` +
+                  `the platform could infer a default mirror view from. This is your job, not the ` +
+                  `operator's: open each affected dataset's YAML and either (a) add the missing ` +
+                  `\`fields\` / \`source\`, which lets the platform auto-derive a default mirror view, ` +
+                  `or (b) author an explicit \`view_query\` in its COMMON custom extension when you ` +
+                  `need filters / joins / computed columns (see workflow step 4f for the three concrete ` +
+                  `shapes), then call \`runModelQuery\` again.`,
+              });
             }
-          }
 
-          const result = await withQueryTimeout(db, () => prepared.run());
+            if (materialisation.failed.length > 0) {
+              const failures = materialisation.failed.map((f) => ({
+                dataset: f.dataset,
+                error: stripScopedSchemaQualifier(f.error, modelName),
+              }));
+              return JSON.stringify({
+                error:
+                  `One or more datasets in "${modelName}" failed to materialise. ` +
+                  `Fix their \`view_query\` and retry.`,
+                failures,
+              });
+            }
 
-          const rows: Record<string, unknown>[] = [];
-          const columns = result.columnNames();
-          for await (const chunk of result) {
-            const chunkRows = chunk.getRows();
-            for (const row of chunkRows) {
-              const obj: Record<string, unknown> = {};
-              for (let i = 0; i < columns.length; i++) {
-                obj[columns[i]] = row[i];
+            return withProjectQuerySlot(projectId, async () => {
+              const db = await instance.connect();
+              try {
+                const hasIceberg = connections.some((c) => c.type === "iceberg");
+                await hardenConnection(db, scopeSchemaName(modelName), { allowExternalAccess: hasIceberg });
+
+                const prepared = await db.prepare(sql);
+                if (params.length > 0) {
+                  for (let i = 0; i < params.length; i++) {
+                    prepared.bindVarchar(i + 1, String(params[i]));
+                  }
+                }
+
+                const result = await withQueryTimeout(db, () => prepared.run(), undefined, signal);
+
+                const rows: Record<string, unknown>[] = [];
+                const columns = result.columnNames();
+                for await (const chunk of result) {
+                  if (signal?.aborted) throw new Error("Query cancelled");
+                  const chunkRows = chunk.getRows();
+                  for (const row of chunkRows) {
+                    const obj: Record<string, unknown> = {};
+                    for (let i = 0; i < columns.length; i++) {
+                      obj[columns[i]] = row[i];
+                    }
+                    rows.push(obj);
+                    if (rows.length >= MAX_ROWS) break;
+                  }
+                  if (rows.length >= MAX_ROWS) break;
+                }
+
+                return safeStringify({
+                  columns,
+                  rows,
+                  rowCount: rows.length,
+                  truncated: rows.length >= MAX_ROWS,
+                });
+              } finally {
+                db.disconnectSync();
               }
-              rows.push(obj);
-              if (rows.length >= MAX_ROWS) break;
-            }
-            if (rows.length >= MAX_ROWS) break;
-          }
-
-          return safeStringify({
-            columns,
-            rows,
-            rowCount: rows.length,
-            truncated: rows.length >= MAX_ROWS,
-          });
-        } catch (err) {
-          console.error("[runModelQuery] Query error:", err);
-          const raw = err instanceof Error ? err.message : "Query execution failed.";
-          const msg = stripScopedSchemaQualifier(raw, modelName);
-          return JSON.stringify({ error: msg });
-        } finally {
-          db.disconnectSync();
-        }
-      });
+            });
+          },
+        );
+      } catch (err) {
+        // A user cancellation must abort the whole run rather than be reflected
+        // back to the model as a recoverable query error. Re-throw so it
+        // propagates to the graph (which is already aborting).
+        if (isQueryCancelledError(err) || signal?.aborted) throw err;
+        // The recovery scope above now also covers `getProjectInstance`
+        // (which runs `ATTACH` with decrypted connection strings) and view
+        // materialisation. A setup/ATTACH failure can therefore carry
+        // `password=…` or an iceberg `TOKEN '…'` in its message, and this
+        // result is fed back into the model transcript (potentially a
+        // third-party LLM). Redact those secret shapes before logging or
+        // returning the error.
+        const raw = redactConnectionSecrets(
+          err instanceof Error ? err.message : "Query execution failed.",
+        );
+        console.error("[runModelQuery] Query error:", raw);
+        const msg = stripScopedSchemaQualifier(raw, modelName);
+        return JSON.stringify({ error: msg });
+      }
     },
     {
       name: "runModelQuery",

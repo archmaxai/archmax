@@ -96,18 +96,18 @@ The API SHALL expose CRUD endpoints for connections at `/api/projects/:projectId
 
 ### Requirement: DuckDB Federation
 
-The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. The DuckDB instance SHALL be backed by a per-project file at `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db`, opened via `DuckDBInstance.create(path)` so that platform-managed objects (notably the per-model scoped VIEWs created by the MCP server) persist across process restarts. The parent directory SHALL be created (mkdir -p) before opening if absent, and the `projectId` segment SHALL be validated against the same safe-path regex used by `SemanticModelFileService`. The persistent DuckDB file is build output, not source: it SHALL be excluded from Git via the project's `.gitignore` and the `project-git-versioning` ignore list, and the system MUST recover gracefully when it is missing or corrupt by recreating it on the next call to `getProjectInstance` (every scoped VIEW is rematerialised from the project's `view_query` extensions on first use). The API process SHALL close every cached `DuckDBInstance` during graceful shutdown (SIGTERM / SIGINT) so that file locks are released before exit and an immediate restart can re-open the same files.
+The system SHALL maintain a DuckDB instance per project that attaches all active connections as named schemas, enabling cross-connection SQL queries. Each instance SHALL be an **in-memory, per-process** database opened via `DuckDBInstance.create()` (no path argument). A single persistent on-disk database file MUST NOT be used: the API and the BullMQ worker run as separate processes (see `entrypoint.sh`), each holding its own per-process `projectInstances` cache, and DuckDB's whole-file lock allows only one process to open a given database file at a time — a shared file therefore deadlocks the second process with `IO Error: Could not set lock on file ... Conflicting lock is held`. An in-memory database is functionally equivalent because nothing relies on cross-process or cross-restart persistence: the per-model scoped VIEWs created by the MCP server are rematerialised by `materialiseModelViews` on every model-scoped query (no hash cache), and all active connections are re-attached whenever a fresh instance is constructed. The `projectId` segment SHALL still be validated against the same safe-path regex used by `SemanticModelFileService` wherever a project path is derived (e.g. legacy-file cleanup). The API process SHALL close every cached `DuckDBInstance` during graceful shutdown (SIGTERM / SIGINT) to release engine resources before exit.
 
 The connection's `slug` field SHALL be used as the schema alias when attaching to DuckDB. The MSSQL extension SHALL be installed from the DuckDB community extension registry (`INSTALL mssql FROM community`). The MSSQL attach string SHALL use ADO.NET format (`Server=host,port;Database=db;User Id=user;Password=pass;Encrypt=yes|no`) when structured connection parameters are provided, or pass through the raw URI/connection string when `connectionConfig.uri` is set.
 
-For iceberg connections, the system SHALL use a two-step attach process: (1) create a DuckDB **temporary** secret with `TYPE iceberg` containing the bearer token (or OAuth2 credentials in future) — temporary so the secret stays in process memory and is never persisted to the project's `duckdb.db` file — and (2) attach the catalog with `TYPE iceberg, ENDPOINT, SECRET` options. The `iceberg` and `httpfs` extensions SHALL be installed and loaded before attaching iceberg connections. The Docker image SHALL pre-install the `iceberg` and `httpfs` extensions alongside the existing pre-installed extensions.
+For iceberg connections, the system SHALL use a two-step attach process: (1) create a DuckDB **temporary** secret with `TYPE iceberg` containing the bearer token (or OAuth2 credentials in future) — temporary so the secret stays in process memory and is never written to disk — and (2) attach the catalog with `TYPE iceberg, ENDPOINT, SECRET` options. The `iceberg` and `httpfs` extensions SHALL be installed and loaded before attaching iceberg connections. The Docker image SHALL pre-install the `iceberg` and `httpfs` extensions alongside the existing pre-installed extensions.
 
 ATTACH operations SHALL be subject to a 30-second timeout; on timeout, the DuckDB connection is interrupted and the error is propagated. The connection test endpoint SHALL enforce a 15-second timeout on the `SELECT 1` verification query. Data browser queries SHALL be subject to the same `QUERY_TIMEOUT_MS` timeout as MCP queries, with cancellation via `connection.interrupt()`. ATTACH statements for non-iceberg sources SHALL continue to use `READ_ONLY`, and `enable_external_access = false` SHALL be applied at session start whenever no iceberg connection is attached.
 
 #### Scenario: Attach a postgres connection
 
 - **WHEN** a postgres connection with `slug: "shopify_prod"` is activated within a project
-- **THEN** the project's DuckDB instance is opened from `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db`
+- **THEN** the project's in-memory DuckDB instance is created (if absent) via `DuckDBInstance.create()`
 - **AND** the connection is attached via the `postgres_scanner` extension using `shopify_prod` as the schema alias
 
 #### Scenario: Attach a mysql connection
@@ -132,7 +132,7 @@ ATTACH operations SHALL be subject to a 30-second timeout; on timeout, the DuckD
 - **THEN** the `iceberg` and `httpfs` extensions are installed and loaded
 - **AND** a DuckDB **temporary** secret named `lake_secret` is created with `TYPE iceberg, TOKEN '<decrypted_token>'`
 - **AND** the catalog is attached using `ATTACH 'analytics' AS lake (TYPE iceberg, ENDPOINT 'https://catalog.example.com', SECRET 'lake_secret')`
-- **AND** opening `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db` in a fresh DuckDB process and running `SELECT name FROM duckdb_secrets()` returns zero rows
+- **AND** because the secret is `TEMPORARY` and the instance is in-memory, the token is never written to disk (no `~/.duckdb/stored_secrets/` entry and no persistent database file)
 
 #### Scenario: Attach timeout for unreachable database
 
@@ -166,23 +166,21 @@ ATTACH operations SHALL be subject to a 30-second timeout; on timeout, the DuckD
 #### Scenario: Lazy initialization
 
 - **WHEN** the first query is made against a project's DuckDB instance
-- **THEN** the DuckDB file is created on disk (if absent) and all active connections are attached
-- **AND** subsequent queries reuse the existing instance and the on-disk file
+- **THEN** an in-memory instance is created (if absent) via `DuckDBInstance.create()` and all active connections are attached
+- **AND** subsequent queries reuse the existing in-memory instance
+- **AND** no `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db` file is written to disk
 
-#### Scenario: Persisted scoped VIEWs survive process restart
+#### Scenario: Separate processes do not contend for a file lock
 
-- **WHEN** the API process exits gracefully and a new process opens the same `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db`
-- **THEN** every cached `DuckDBInstance` was closed during shutdown and the file lock was released before exit
-- **AND** the new process can open the file without an `IO Error: Could not set lock on file`
-- **AND** the per-model scoped VIEWs (`_scope_<modelName>."<datasetName>"`) created in the previous session are still present
-- **AND** an MCP `execute_query` against an unchanged model returns the same rows; the next call rematerialises every VIEW from `view_query` (per the MCP server's "Scoped DuckDB VIEWs" requirement)
+- **WHEN** the worker process opens its in-memory instance for a project and the API process opens its own in-memory instance for the same project
+- **THEN** neither process raises `IO Error: Could not set lock on file ... Conflicting lock is held`
+- **AND** each process maintains its own `projectInstances` cache and its own scoped VIEWs, independently rematerialised per query
 
-#### Scenario: Persistent DuckDB file is gitignored and recoverable
+#### Scenario: Scoped VIEWs are rebuilt, not persisted across instances
 
-- **WHEN** an operator inspects the project repo
-- **THEN** `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db` is matched by `.gitignore` and the `project-git-versioning` ignore list
-- **AND** deleting the file while the API process is stopped does not break the project
-- **AND** the next call to `getProjectInstance` recreates the file and the next `execute_query` rematerialises every scoped VIEW from the project's `view_query` extensions
+- **WHEN** a project's DuckDB instance is disposed (or the process restarts) and a fresh in-memory instance is later constructed
+- **THEN** the previous instance's `_scope_<modelName>."<datasetName>"` VIEWs and attached state do not carry over
+- **AND** the next model-scoped call (`execute_query` / `runModelQuery`) rematerialises every VIEW from the model's `view_query` extensions before running the query (per the MCP server's "Scoped DuckDB VIEWs" requirement)
 
 #### Scenario: Test iceberg connection
 
@@ -303,22 +301,27 @@ The system SHALL encrypt sensitive credential fields in `connectionConfig` befor
 
 ### Requirement: Project DuckDB Instance Disposal
 
-The DuckDB service SHALL expose `disposeProjectInstance(projectId)` that removes the project's cached `ProjectDuckDB` entry from the in-memory instance map and closes the underlying `DuckDBInstance` on a best-effort basis, releasing the file lock on `<ARCHMAX_DATA_DIR>/projects/<projectId>/duckdb.db`. The on-disk file SHALL NOT be deleted by `disposeProjectInstance` — the next call to `getProjectInstance(projectId, connections)` for the same project MUST be able to re-open the same file with all previously persisted scoped VIEWs intact and re-attach every active connection (no stale `attachedSlugs` or `loadedExtensions` carried over).
+The DuckDB service SHALL expose `disposeProjectInstance(projectId)` that removes the project's cached `ProjectDuckDB` entry from the in-memory instance map and closes the underlying `DuckDBInstance` on a best-effort basis. Because instances are in-memory, disposing simply frees the process's copy; the next call to `getProjectInstance(projectId, connections)` for the same project MUST construct a fresh, empty instance and re-attach every active connection (no stale `attachedSlugs` or `loadedExtensions` carried over). The service SHALL additionally expose `withRecoverableProjectInstance(projectId, connections, options, op)`, which runs `op` against the project instance and, when it fails with a fatal instance-invalidation error (e.g. `database has been invalidated`, `PooledConnection::GetConnection - no connection available`), disposes the poisoned instance and retries `op` once against a freshly built instance so an unstable upstream connection cannot wedge the cached instance for the rest of the process lifetime.
 
-#### Scenario: Dispose clears the cached instance and releases the file lock
+#### Scenario: Dispose clears the cached instance
 
 - **WHEN** `disposeProjectInstance("p1")` is called after `getProjectInstance("p1", conns)` previously cached an instance
 - **THEN** the `projectInstances` map no longer contains an entry for `"p1"`
-- **AND** opening the same `<ARCHMAX_DATA_DIR>/projects/p1/duckdb.db` from a fresh `DuckDBInstance.create(path)` succeeds without an `IO Error: Could not set lock on file`
+- **AND** the underlying in-memory `DuckDBInstance` is closed
 - **AND** the next call to `getProjectInstance("p1", conns)` returns a freshly constructed instance whose reference differs from the disposed one
 - **AND** every connection in `conns` is re-attached on the new instance
 
-#### Scenario: Dispose preserves persisted VIEWs
+#### Scenario: Dispose yields a clean slate (no carry-over)
 
-- **WHEN** `disposeProjectInstance("p1")` is called and the project's DuckDB file contains scoped VIEWs from a previous session
-- **THEN** the file on disk is not deleted
-- **AND** the next call to `getProjectInstance("p1", conns)` re-opens the same file
-- **AND** the previously persisted scoped VIEWs are observable via `SHOW ALL VIEWS`
+- **WHEN** `disposeProjectInstance("p1")` is called and the disposed instance had scoped VIEWs materialised
+- **THEN** the next call to `getProjectInstance("p1", conns)` returns a fresh, empty in-memory instance with none of the previous VIEWs present
+- **AND** callers rematerialise scoped VIEWs on demand before the next model-scoped query
+
+#### Scenario: Invalidated instance self-heals
+
+- **WHEN** an operation run through `withRecoverableProjectInstance` fails with a fatal instance-invalidation error
+- **THEN** the poisoned instance is disposed and the operation is retried once against a freshly built instance
+- **AND** if the retry succeeds the caller receives its result; if it fails fatally again the error propagates
 
 #### Scenario: Dispose is safe when no instance is cached
 
@@ -327,11 +330,11 @@ The DuckDB service SHALL expose `disposeProjectInstance(projectId)` that removes
 
 ### Requirement: Connections Reinit Endpoint
 
-The API SHALL expose `POST /api/projects/:projectId/connections/reinit` that disposes the project's cached DuckDB instance, rebuilds it by attaching every active connection, runs a schema probe, and returns the visible table count. The endpoint SHALL accept an optional `?reset=true` query parameter that, in addition to dispose-and-rebuild, deletes the on-disk `duckdb.db` file before reattaching — useful when the persistent file is corrupt or the operator wants a clean slate. When `reset` is omitted or `false`, the on-disk file SHALL be preserved and previously persisted scoped VIEWs remain observable until the next model-scoped call rematerialises them. The endpoint SHALL:
+The API SHALL expose `POST /api/projects/:projectId/connections/reinit` that disposes the project's cached DuckDB instance, rebuilds it by attaching every active connection, runs a schema probe, and returns the visible table count. Because dispose already yields a clean in-memory slate, `reinit` always rebuilds from scratch. The endpoint SHALL accept an optional `?reset=true` query parameter that, in addition to dispose-and-rebuild, best-effort deletes any legacy on-disk `duckdb.db` file left behind by an older file-backed build — instances are in-memory now, so this only reclaims stale disk space and does not affect live state. The endpoint SHALL:
 
 - Return `404` if the project does not exist.
 - On success, respond with HTTP `200` and body `{ ok: true, tableCount: <number> }` where `tableCount` is the number of rows returned by `SHOW ALL TABLES` against the rebuilt instance.
-- On any failure during dispose, file delete (if `reset=true`), re-attach, or probe, respond with HTTP `400` and body `{ ok: false, error: <string> }` where `error` is the underlying error message.
+- On any failure during dispose, legacy-file delete (if `reset=true`), re-attach, or probe, respond with HTTP `400` and body `{ ok: false, error: <string> }` where `error` is the underlying error message.
 - Apply the standard query timeout via `withQueryTimeout` to the schema probe.
 
 #### Scenario: Successful re-init returns table count
@@ -347,18 +350,17 @@ The API SHALL expose `POST /api/projects/:projectId/connections/reinit` that dis
 - **THEN** the response `tableCount` includes the newly added table
 - **AND** subsequent data-browser requests for the same project see the new table
 
-#### Scenario: Reinit with reset=true deletes the persistent file
+#### Scenario: Reinit with reset=true cleans up a legacy on-disk file
 
-- **WHEN** a client calls `POST /api/projects/:projectId/connections/reinit?reset=true` for a project whose `duckdb.db` contains previously materialised scoped VIEWs
-- **THEN** the cached instance is disposed, the on-disk file is deleted, and a fresh instance is created
-- **AND** previously persisted scoped VIEWs are gone after the call returns
-- **AND** the next model-scoped call rematerialises them from `view_query`
+- **WHEN** a client calls `POST /api/projects/:projectId/connections/reinit?reset=true` for a project that has a stale `duckdb.db` file from an older file-backed build
+- **THEN** the cached in-memory instance is disposed, the legacy on-disk file is deleted, and a fresh in-memory instance is created
+- **AND** the next model-scoped call rematerialises scoped VIEWs from `view_query`
 
-#### Scenario: Reinit without reset preserves persisted VIEWs
+#### Scenario: Reinit without reset rebuilds a clean instance
 
 - **WHEN** a client calls `POST /api/projects/:projectId/connections/reinit` (no `reset` query parameter)
-- **THEN** the on-disk file is preserved
-- **AND** previously persisted scoped VIEWs remain observable after the call returns
+- **THEN** the cached instance is disposed and a fresh in-memory instance is rebuilt with every active connection re-attached
+- **AND** no legacy on-disk file is deleted
 
 #### Scenario: Unreachable connection returns an error
 

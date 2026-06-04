@@ -4,14 +4,21 @@ import { connectDB } from "@archmax/core/infra/db";
 import { Conversation } from "@archmax/core/models/index";
 import { createSemlayerAgent } from "@archmax/core/services/agent";
 import { createPlaygroundAgent, getTestAgentRecursionLimit } from "@archmax/core/services/playground-agent";
-import { processAgentStream, createStreamCollector } from "@archmax/core/services/agent-stream";
+import { processAgentStream, createStreamCollector, reconstructStreamResult } from "@archmax/core/services/agent-stream";
 import {
   getRedis,
   isCancelFlagSet,
   clearCancelFlag,
 } from "@archmax/core/infra/redis";
 import { JOB_CANCEL_CHANNEL_PREFIX } from "@archmax/core/queue/constants";
-import { publishStreamEvent, clearStreamBuffer } from "@archmax/core/streaming/stream-bridge";
+import {
+  publishStreamEvent,
+  clearStreamBuffer,
+  archiveStreamBuffer,
+  getBufferedStreamEvents,
+  getArchivedStreamEvents,
+} from "@archmax/core/streaming/stream-bridge";
+import type { AgentStreamResult } from "@archmax/core/services/agent-stream";
 import type { AgentJobData, AgentJobResult } from "@archmax/core/queue/types";
 import type { IToolCallRecord, IContentSegment } from "@archmax/core/models/Conversation";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
@@ -68,6 +75,69 @@ async function saveAssistantMessage(
   }
 }
 
+/**
+ * Finalize a conversation whose worker process was killed mid-run.
+ *
+ * A native DuckDB/extension assertion (e.g. the mysql_scanner crash) aborts
+ * the whole worker process, so `processAgentJob`'s own `catch` never runs:
+ * no assistant message is appended and no terminal SSE event is published, so
+ * the client stays stuck in "executing" indefinitely. BullMQ only notices once
+ * the job stalls past `maxStalledCount` and moves it to `failed`. The (now
+ * restarted) worker's `failed` handler calls this so the chat receives a
+ * terminal `error` + `done` event and the run is recorded as failed.
+ *
+ * Safe to call for the crash case only: a job that failed *normally* was
+ * already finalized inside `processAgentJob` before it re-threw, so callers
+ * must gate this on the stalled-failure reason to avoid a duplicate message.
+ */
+/** Rough byte size of the assistant content recovered from a partial run. */
+function partialContentSize(result: AgentStreamResult): number {
+  let size = result.fullResponse.length;
+  for (const tc of result.toolCalls) {
+    size += (tc.name?.length ?? 0) + (tc.args?.length ?? 0) + (tc.result?.length ?? 0);
+  }
+  return size;
+}
+
+export async function finalizeStalledConversation(
+  conversationId: string,
+): Promise<void> {
+  // The worker process was killed mid-run, so the in-memory collector is gone.
+  // The events it published before dying survive in the Redis stream buffer,
+  // so replay them to recover the partial assistant response rather than
+  // discarding it for a generic crash message.
+  //
+  // A stalled job may have run twice (maxStalledCount=1): when the retry
+  // started, the first crashed attempt's events were moved aside into the
+  // archive buffer and the retry streamed into a fresh live buffer.
+  // Concatenating both would merge two attempts into one garbled message, so
+  // reconstruct each independently and keep whichever got furthest.
+  const [{ events }, archivedEvents] = await Promise.all([
+    getBufferedStreamEvents(conversationId, 0),
+    getArchivedStreamEvents(conversationId),
+  ]);
+  const live = reconstructStreamResult(events);
+  const archived = reconstructStreamResult(archivedEvents);
+  const partial =
+    partialContentSize(archived) > partialContentSize(live) ? archived : live;
+  const hasPartialContent =
+    partial.fullResponse.length > 0 ||
+    partial.toolCalls.length > 0 ||
+    partial.segments.length > 0;
+
+  await saveAssistantMessage(
+    conversationId,
+    hasPartialContent
+      ? partial.fullResponse
+      : "The agent stopped unexpectedly — the worker process was terminated mid-run. Please try again.",
+    partial.toolCalls.length ? partial.toolCalls : undefined,
+    partial.segments.length ? partial.segments : undefined,
+    "internal_error",
+  );
+  await publishDone(conversationId, "internal_error");
+  await clearStreamBuffer(conversationId);
+}
+
 export async function processAgentJob(
   job: Job<AgentJobData, AgentJobResult>,
   _token?: string,
@@ -104,6 +174,15 @@ export async function processAgentJob(
   };
 
   try {
+    // Start every attempt from a fresh live replay buffer. When BullMQ retries
+    // a stalled job (the previous attempt's worker crashed mid-run without
+    // clearing the buffer), the crashed attempt's events would otherwise still
+    // be present and get appended to — merging two attempts into one replay and
+    // one reconstructed assistant message in `finalizeStalledConversation`.
+    // Archive (rather than delete) the leftover buffer so that attempt's partial
+    // output can still be recovered if the retry also crashes.
+    await archiveStreamBuffer(conversationId);
+
     if (bullmqSignal) {
       if (bullmqSignal.aborted) {
         abortController.abort(bullmqSignal.reason);
@@ -185,6 +264,7 @@ export async function processAgentJob(
       events,
       (event, data) => publishStreamEvent(conversationId, { event, data }),
       collector,
+      abortController.signal,
     );
 
     cleanup();
@@ -209,9 +289,19 @@ export async function processAgentJob(
         `[worker] Job ${job.id} ${isUserCancel ? "cancelled by user" : "aborted"} after ${Date.now() - startMs}ms (conv=${conversationId})`,
       );
 
+      const hasPartialContent =
+        collector.fullResponse.length > 0 ||
+        collector.toolCalls.length > 0 ||
+        collector.segments.length > 0;
+
       await saveAssistantMessage(
         conversationId,
-        "The agent was cancelled before completing a response.",
+        hasPartialContent
+          ? collector.fullResponse
+          : "The agent was cancelled before completing a response.",
+        collector.toolCalls.length ? collector.toolCalls : undefined,
+        collector.segments.length ? collector.segments : undefined,
+        isUserCancel ? undefined : "internal_error",
       );
       await publishDone(
         conversationId,

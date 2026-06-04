@@ -7,6 +7,7 @@ const mockClient = {
   publish: vi.fn(),
   expire: vi.fn(),
   del: vi.fn(),
+  rename: vi.fn(),
   duplicate: vi.fn(),
   subscribe: vi.fn(),
   unsubscribe: vi.fn(),
@@ -22,6 +23,8 @@ import { getRedis } from "../infra/redis";
 import {
   isStreamActive,
   getBufferedStreamEvents,
+  getArchivedStreamEvents,
+  archiveStreamBuffer,
   publishStreamEvent,
   clearStreamBuffer,
   subscribeToStream,
@@ -136,16 +139,90 @@ describe("publishStreamEvent", () => {
 });
 
 describe("clearStreamBuffer", () => {
-  it("deletes the buffer key", async () => {
+  it("deletes the buffer key and the archived prior-attempt key", async () => {
     mockClient.del.mockResolvedValue(1);
     await clearStreamBuffer("conv-1");
-    expect(mockClient.del).toHaveBeenCalledWith("stream-buffer:conv-1");
+    expect(mockClient.del).toHaveBeenCalledWith(
+      "stream-buffer:conv-1",
+      "stream-buffer:conv-1:prev",
+    );
   });
 
   it("no-ops when redis is unavailable", async () => {
     mockedGetRedis.mockReturnValue(null);
     await clearStreamBuffer("conv-1");
     expect(mockClient.del).not.toHaveBeenCalled();
+  });
+});
+
+describe("archiveStreamBuffer", () => {
+  it("renames the live buffer to the archive key when non-empty", async () => {
+    mockClient.llen.mockResolvedValue(3);
+    mockClient.del.mockResolvedValue(1);
+    mockClient.rename.mockResolvedValue("OK");
+    mockClient.expire.mockResolvedValue(1);
+
+    await archiveStreamBuffer("conv-1");
+
+    expect(mockClient.del).toHaveBeenCalledWith("stream-buffer:conv-1:prev");
+    expect(mockClient.rename).toHaveBeenCalledWith(
+      "stream-buffer:conv-1",
+      "stream-buffer:conv-1:prev",
+    );
+    expect(mockClient.expire).toHaveBeenCalledWith(
+      "stream-buffer:conv-1:prev",
+      300,
+    );
+  });
+
+  it("no-ops when the live buffer is empty (first attempt)", async () => {
+    mockClient.llen.mockResolvedValue(0);
+    await archiveStreamBuffer("conv-1");
+    expect(mockClient.rename).not.toHaveBeenCalled();
+  });
+
+  it("falls back to clearing when rename fails", async () => {
+    mockClient.llen.mockResolvedValue(2);
+    mockClient.del.mockResolvedValue(1);
+    mockClient.rename.mockRejectedValue(new Error("no such key"));
+
+    await archiveStreamBuffer("conv-1");
+
+    expect(mockClient.del).toHaveBeenCalledWith(
+      "stream-buffer:conv-1",
+      "stream-buffer:conv-1:prev",
+    );
+  });
+
+  it("no-ops when redis is unavailable", async () => {
+    mockedGetRedis.mockReturnValue(null);
+    await archiveStreamBuffer("conv-1");
+    expect(mockClient.rename).not.toHaveBeenCalled();
+  });
+});
+
+describe("getArchivedStreamEvents", () => {
+  it("returns parsed archived events", async () => {
+    mockClient.lrange.mockResolvedValue([
+      JSON.stringify({ event: "token", data: "hi" }),
+    ]);
+    const events = await getArchivedStreamEvents("conv-1");
+    expect(events).toEqual([{ event: "token", data: "hi" }]);
+    expect(mockClient.lrange).toHaveBeenCalledWith(
+      "stream-buffer:conv-1:prev",
+      0,
+      -1,
+    );
+  });
+
+  it("returns empty when redis is unavailable", async () => {
+    mockedGetRedis.mockReturnValue(null);
+    expect(await getArchivedStreamEvents("conv-1")).toEqual([]);
+  });
+
+  it("returns empty when redis throws", async () => {
+    mockClient.lrange.mockRejectedValue(new Error("Connection is closed."));
+    expect(await getArchivedStreamEvents("conv-1")).toEqual([]);
   });
 });
 

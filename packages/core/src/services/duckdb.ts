@@ -1,5 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import type { IConnectionDocument } from "../models/Connection";
 import type { SemanticModel } from "./semantic-model-schema";
@@ -10,19 +10,20 @@ import { validateSqlAst } from "./sql-ast-validation";
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 /**
- * Resolve the persistent DuckDB file path for a project, validating
+ * Resolve the legacy on-disk DuckDB file path for a project, validating
  * `projectId` against the same regex `SemanticModelFileService` uses so we
- * never end up writing outside `<ARCHMAX_DATA_DIR>/projects/`.
+ * never end up touching files outside `<ARCHMAX_DATA_DIR>/projects/`.
+ *
+ * Project instances are now in-memory and per-process (see
+ * `setupProjectInstance`), so nothing creates this file anymore. It is kept
+ * only so `deleteProjectDuckdbFile` can clean up a stale file left behind by
+ * an older, file-backed build.
  */
 export function duckdbFilePath(projectId: string): string {
   if (!projectId || !SAFE_PROJECT_ID.test(projectId)) {
     throw new Error(`Invalid projectId: must be alphanumeric (with ._-), got "${projectId}"`);
   }
   return join(getEnv().projectsDir, projectId, "duckdb.db");
-}
-
-async function ensureDuckdbFileDir(path: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
 }
 
 async function deleteDuckdbFiles(path: string): Promise<void> {
@@ -39,17 +40,52 @@ export function getQueryTimeoutMs(): number {
 }
 
 /**
- * Run an async operation against a DuckDB connection with a hard timeout.
+ * Raised when an in-flight DuckDB operation is aborted via an `AbortSignal`
+ * (e.g. the user pressed "stop" on an agent run). Distinct from the
+ * timeout error so callers can tell a user-cancellation apart from a
+ * slow query and re-throw it to abort the whole run rather than swallowing
+ * it into a recoverable tool result.
+ */
+export class QueryCancelledError extends Error {
+  constructor(message = "Query cancelled") {
+    super(message);
+    this.name = "QueryCancelledError";
+  }
+}
+
+/**
+ * True for any error that represents a user/abort cancellation rather than a
+ * genuine query failure. Matches our own `QueryCancelledError` as well as the
+ * standard `AbortError` (`DOMException`/`Error` with `name === "AbortError"`)
+ * that LangChain/LangGraph and `fetch` raise when an `AbortSignal` fires.
+ */
+export function isQueryCancelledError(err: unknown): boolean {
+  if (err instanceof QueryCancelledError) return true;
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === "QueryCancelledError" || name === "AbortError";
+}
+
+/**
+ * Run an async operation against a DuckDB connection with a hard timeout and
+ * optional cooperative cancellation.
+ *
  * On timeout, `connection.interrupt()` is called to cancel the in-flight
  * query inside DuckDB, then the promise rejects with a timeout error.
- * The timer is always cleaned up regardless of outcome.
+ *
+ * When an aborted `signal` is supplied, `connection.interrupt()` is likewise
+ * called immediately so a long-running query stops promptly (rather than
+ * blocking the agent run for up to the full timeout), and the promise rejects
+ * with a `QueryCancelledError`. The timer and abort listener are always
+ * cleaned up regardless of outcome.
  */
 export async function withQueryTimeout<T>(
   connection: DuckDBConnection,
   operation: () => Promise<T>,
   timeoutMs: number = getQueryTimeoutMs(),
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
 
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -58,10 +94,29 @@ export async function withQueryTimeout<T>(
     }, timeoutMs);
   });
 
+  const racers: Array<Promise<T>> = [operation(), timeoutPromise];
+
+  if (signal) {
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+      if (signal.aborted) {
+        try { connection.interrupt(); } catch { /* best-effort */ }
+        reject(new QueryCancelledError());
+        return;
+      }
+      onAbort = () => {
+        try { connection.interrupt(); } catch { /* best-effort */ }
+        reject(new QueryCancelledError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    racers.push(abortPromise);
+  }
+
   try {
-    return await Promise.race([operation(), timeoutPromise]);
+    return await Promise.race(racers);
   } finally {
     clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -171,10 +226,70 @@ interface ProjectDuckDB {
   attachedSlugs: Set<string>;
   loadedExtensions: Set<string>;
   readOnly: boolean;
+  /**
+   * Number of in-flight callers (query slots / materialisation passes) that
+   * currently hold a live connection on `instance`. Incremented for the
+   * duration of a `withRecoverableProjectInstance` op and decremented when it
+   * settles. A self-heal `disposeProjectInstance` must NOT `closeSync()` the
+   * native instance while this is non-zero, or those callers hit DuckDB
+   * use-after-close.
+   */
+  refCount: number;
+  /**
+   * Set when `disposeProjectInstance` wanted to close this instance but had
+   * to defer because `refCount > 0`. The last `releaseInstanceRef` then
+   * performs the deferred `closeSync()`.
+   */
+  closePending: boolean;
+}
+
+/**
+ * Take a usage reference on the project's currently-cached instance, but only
+ * if it is the same `DuckDBInstance` the caller is about to run against. The
+ * lookup + increment is synchronous (no `await` between them) so it cannot
+ * race a concurrent dispose. Returns the held entry, or `undefined` if the
+ * cache no longer points at `instance` (in which case the caller simply runs
+ * without a ref — its instance is already detached from the cache).
+ */
+function acquireInstanceRef(
+  projectId: string,
+  instance: DuckDBInstance,
+): ProjectDuckDB | undefined {
+  const entry = projectInstances.get(projectId);
+  if (entry && entry.instance === instance) {
+    entry.refCount++;
+    return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Release a usage reference taken by `acquireInstanceRef`. When the last ref
+ * on an entry that `disposeProjectInstance` already evicted is released, the
+ * deferred `closeSync()` runs here.
+ */
+function releaseInstanceRef(entry: ProjectDuckDB): void {
+  entry.refCount--;
+  if (entry.refCount <= 0 && entry.closePending) {
+    entry.closePending = false;
+    try {
+      entry.instance.closeSync();
+    } catch {
+      // best-effort — instance may already be closed
+    }
+  }
 }
 
 const projectInstances = new Map<string, ProjectDuckDB>();
 const setupLocks = new Map<string, Promise<void>>();
+
+/**
+ * Upper bound on how many times `withRecoverableProjectInstance` will re-fetch
+ * the cached instance when a concurrent dispose/replace keeps detaching it
+ * before the caller can take a usage ref. A single retry is the normal case;
+ * the bound only guards against a pathological dispose storm.
+ */
+const MAX_INSTANCE_ACQUIRE_ATTEMPTS = 16;
 
 export const COMMUNITY_EXTENSIONS = new Set(["mssql"]);
 
@@ -231,15 +346,17 @@ export function buildAttachString(conn: IConnectionDocument): string {
 /**
  * Dispose the cached DuckDB instance for a project, if any.
  *
- * Closes the underlying `DuckDBInstance` on a best-effort basis and removes
- * the entry (including its attached-slug and loaded-extension bookkeeping)
- * from the cache so the next `getProjectInstance` call rebuilds from scratch.
- * Used to force re-reading of upstream schemas when they have changed.
+ * Closes the underlying (in-memory) `DuckDBInstance` on a best-effort basis
+ * and removes the entry (including its attached-slug and loaded-extension
+ * bookkeeping) from the cache so the next `getProjectInstance` call rebuilds
+ * from scratch. Used to force re-reading of upstream schemas when they have
+ * changed, and by `withRecoverableProjectInstance` to drop an invalidated
+ * instance.
  *
- * The on-disk `duckdb.db` file is NOT deleted here — the file lock is simply
- * released so a subsequent `getProjectInstance(projectId, …)` reopens the
- * same file with all previously persisted scoped VIEWs intact. Callers that
- * want a clean slate must additionally call `deleteProjectDuckdbFile`.
+ * Because instances are in-memory, disposing simply frees the process's copy:
+ * the next `getProjectInstance(projectId, …)` builds a fresh empty instance,
+ * re-attaches every active connection, and rematerialises scoped VIEWs on the
+ * next query. Nothing persists across dispose.
  */
 export async function disposeProjectInstance(projectId: string): Promise<void> {
   while (setupLocks.has(projectId)) {
@@ -247,7 +364,16 @@ export async function disposeProjectInstance(projectId: string): Promise<void> {
   }
   const entry = projectInstances.get(projectId);
   if (!entry) return;
+  // Evict immediately so the next getProjectInstance rebuilds from scratch,
+  // but only close the native instance once no in-flight caller still holds a
+  // connection on it. Setup locks are drained above; query slots and
+  // materialisation passes are tracked via refCount. Closing under an active
+  // ref would tear DuckDB state out from beneath a running query.
   projectInstances.delete(projectId);
+  if (entry.refCount > 0) {
+    entry.closePending = true;
+    return;
+  }
   try {
     entry.instance.closeSync();
   } catch {
@@ -257,8 +383,8 @@ export async function disposeProjectInstance(projectId: string): Promise<void> {
 
 /**
  * Dispose every cached `DuckDBInstance` and wait for in-flight setup locks
- * to drain. Intended for graceful shutdown handlers (SIGTERM/SIGINT) so the
- * file lock on every project's `duckdb.db` is released before exit.
+ * to drain. Intended for graceful shutdown handlers (SIGTERM/SIGINT) so each
+ * project's in-memory instance is released cleanly before exit.
  */
 export async function disposeAllProjectInstances(): Promise<void> {
   const ids = Array.from(projectInstances.keys());
@@ -266,10 +392,12 @@ export async function disposeAllProjectInstances(): Promise<void> {
 }
 
 /**
- * Delete the on-disk `duckdb.db` (and its WAL/temp side files) for a project.
- * Used by the `connections/reinit?reset=true` flow when an operator wants a
- * clean slate. Safe to call when the file does not exist; safe to call after
- * `disposeProjectInstance` has released the file lock.
+ * Best-effort removal of any legacy on-disk `duckdb.db` (and its WAL/temp side
+ * files) for a project. Project instances are in-memory now, so this no longer
+ * affects live state — it only cleans up a stale file left behind by an older,
+ * file-backed build. Still wired into the `connections/reinit?reset=true` flow
+ * so an operator's "reset" reclaims that disk space. Safe to call when the
+ * file does not exist.
  */
 export async function deleteProjectDuckdbFile(projectId: string): Promise<void> {
   await deleteDuckdbFiles(duckdbFilePath(projectId));
@@ -303,6 +431,134 @@ export async function getProjectInstance(
   } finally {
     setupLocks.delete(projectId);
     resolve();
+  }
+}
+
+/**
+ * Detect a *fatal instance-level* DuckDB failure: the entire `DuckDBInstance`
+ * has entered an unrecoverable state and MUST be torn down and rebuilt before
+ * it can serve any further query. This is categorically different from
+ * `isTransientDuckdbError` (a per-connection/per-query fault that a retry on
+ * the SAME instance can clear).
+ *
+ * When DuckDB's federated scanners (postgres/mysql/mssql) lose their upstream
+ * connection pool, DuckDB poisons the whole database and every subsequent
+ * statement — including `instance.connect()` and the `CREATE SCHEMA` issued
+ * during view materialisation — throws the same error until the instance is
+ * recreated:
+ *
+ *   FATAL Error: Failed: database has been invalidated because of a previous
+ *   fatal error. The database must be restarted prior to being used again.
+ *   Original error: "PooledConnection::GetConnection - no connection available"
+ *
+ * Because the instance is cached per project in `projectInstances`, a single
+ * such fault would otherwise wedge every query for that project for the rest
+ * of the process lifetime. Callers run their DuckDB work through
+ * `withRecoverableProjectInstance` so the cache self-heals on the next call.
+ *
+ * Only the DuckDB *invalidation/restart* phrases are treated as fatal. The
+ * trailing pool phrases (`PooledConnection::GetConnection`, `no connection
+ * available`) are deliberately NOT matched on their own: they also appear in
+ * ordinary, non-fatal upstream/query faults, and classifying those as fatal
+ * would force an unnecessary project-wide dispose + full re-ATTACH (expensive,
+ * and it amplifies the credential-bearing setup-error path). In a genuine
+ * instance-invalidation the pool phrase always rides along with the
+ * invalidation message, so matching the invalidation/restart text is both
+ * sufficient and safe.
+ */
+export function isFatalInstanceError(message: string): boolean {
+  return /database has been invalidated|must be restarted prior to being used/i.test(
+    message,
+  );
+}
+
+/**
+ * Run `op` against the project's cached DuckDB instance, transparently
+ * disposing and rebuilding the instance and retrying ONCE when an attempt
+ * fails with a fatal instance-invalidation error (see `isFatalInstanceError`).
+ *
+ * `op` receives a live `DuckDBInstance` and is responsible for opening and
+ * closing its own connection(s). It MUST let DuckDB errors propagate (rather
+ * than swallowing them into a result value) so the fatal-error detection can
+ * fire; non-fatal errors are re-thrown immediately without a rebuild.
+ *
+ * A poisoned instance breaks `instance.connect()` itself, so both the
+ * `getProjectInstance` setup and the `op` body are covered. Only one rebuild
+ * is attempted: if the freshly built instance also fails fatally (e.g. the
+ * upstream database is genuinely down) the error propagates so the caller can
+ * surface it.
+ */
+export async function withRecoverableProjectInstance<T>(
+  projectId: string,
+  connections: IConnectionDocument[],
+  options: { readOnly?: boolean } | undefined,
+  op: (instance: DuckDBInstance) => Promise<T>,
+): Promise<T> {
+  let rebuilt = false;
+  // Bounds the acquire-retry path below so a pathological dispose storm cannot
+  // spin forever; in practice the cache stabilises within a single retry.
+  let acquireAttempts = 0;
+  for (;;) {
+    // Hold a usage ref on the cached instance for the lifetime of `op` so a
+    // concurrent self-heal (another request hitting a fatal error for the
+    // same project) defers its `closeSync()` until our query/materialisation
+    // has released the instance — never closing native state underneath an
+    // in-flight query. `getProjectInstance` stays inside the try so a fatal
+    // failure during setup/ATTACH still triggers the one-shot rebuild.
+    let held: ProjectDuckDB | undefined;
+    try {
+      const instance = await getProjectInstance(projectId, connections, options);
+      // `getProjectInstance` awaits (setup locks / ATTACH), so between it
+      // resolving and us taking a ref another task could have disposed or
+      // replaced the cached entry. `acquireInstanceRef` increments the ref
+      // synchronously and only succeeds while the cache still points at this
+      // exact `instance`; if it returns `undefined`, our `instance` is already
+      // detached from the cache (and may be mid-close), so running `op` on it
+      // would risk DuckDB use-after-close. Re-fetch a fresh, ref-counted
+      // instance instead of querying a stale one.
+      held = acquireInstanceRef(projectId, instance);
+      if (!held) {
+        if (++acquireAttempts > MAX_INSTANCE_ACQUIRE_ATTEMPTS) {
+          throw new Error(
+            `Could not acquire a stable DuckDB instance for project ${projectId} after repeated disposals`,
+          );
+        }
+        continue;
+      }
+      acquireAttempts = 0;
+      return await op(instance);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!rebuilt && isFatalInstanceError(message)) {
+        rebuilt = true;
+        if (held) {
+          // Tear down the *specific* instance we ran against — not whatever is
+          // cached now. While we held a ref, a concurrent dispose/extension
+          // rebuild could have evicted our (poisoned) entry and installed a
+          // fresh healthy instance under this projectId; disposing by id alone
+          // would wrongly close that healthy instance. Evict our entry only if
+          // the cache still points at it, mark it `closePending`, then release
+          // our ref so the close happens now if we are the last in-flight user
+          // (otherwise the last releaser closes it). The next iteration's
+          // getProjectInstance rebuilds from scratch.
+          if (projectInstances.get(projectId) === held) {
+            projectInstances.delete(projectId);
+          }
+          held.closePending = true;
+          releaseInstanceRef(held);
+          held = undefined;
+        } else {
+          // No ref was ever taken — the fatal failure happened during
+          // setup/ATTACH (before acquisition), so fall back to disposing by id
+          // to clear any partially-built cached entry.
+          await disposeProjectInstance(projectId);
+        }
+        continue;
+      }
+      throw err;
+    } finally {
+      if (held) releaseInstanceRef(held);
+    }
   }
 }
 
@@ -341,10 +597,27 @@ async function setupProjectInstance(
   }
 
   if (!entry) {
-    const path = duckdbFilePath(projectId);
-    await ensureDuckdbFileDir(path);
-    const instance = await DuckDBInstance.create(path);
-    entry = { instance, attachedSlugs: new Set(), loadedExtensions: new Set(), readOnly };
+    // In-memory, per-process database. A single persistent `duckdb.db` file
+    // cannot be opened by more than one process at a time — the API and the
+    // BullMQ worker run as separate node processes (see `entrypoint.sh`), and
+    // each keeps its own `projectInstances` cache, so a shared on-disk file
+    // collides with DuckDB's whole-file lock:
+    //   "IO Error: Could not set lock on file ... Conflicting lock is held in
+    //    /usr/local/bin/node (PID …)".
+    // Nothing relies on cross-process or cross-restart persistence: scoped
+    // `_scope_*` VIEWs are rebuilt by `materialiseModelViews` on every query
+    // (no hash cache) and connections are re-attached whenever a fresh
+    // instance is created, so an in-memory database is functionally
+    // equivalent without the lock contention.
+    const instance = await DuckDBInstance.create();
+    entry = {
+      instance,
+      attachedSlugs: new Set(),
+      loadedExtensions: new Set(),
+      readOnly,
+      refCount: 0,
+      closePending: false,
+    };
     projectInstances.set(projectId, entry);
   }
 
@@ -370,6 +643,25 @@ async function installAndLoadExtension(
     const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
     await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
+    if (ext === "mysql") {
+      // These are DuckDB *settings* registered by the mysql extension (set via
+      // `SET`), NOT ATTACH connection-string keys — putting them in the DSN
+      // makes the connection-string parser reject the attach. `force` makes an
+      // exhausted client-side pool open an extra connection instead of failing
+      // with "PooledConnection::GetConnection - no connection available" under
+      // join fan-out + concurrent agent workloads; 32 raises the ceiling. Set
+      // GLOBAL so the per-query connections (not just this one) inherit it, and
+      // before any ATTACH so the catalog's pool is created with these values.
+      // Already the modern extension defaults, but pinned here so behavior is
+      // stable across extension versions. Guarded for older builds that may not
+      // expose these settings.
+      try {
+        await db.run("SET GLOBAL mysql_pool_acquire_mode = 'force'");
+        await db.run("SET GLOBAL mysql_pool_size = 32");
+      } catch (err) {
+        console.warn("[duckdb] Failed to apply mysql pool settings:", err);
+      }
+    }
   } finally {
     db.disconnectSync();
   }
@@ -756,18 +1048,20 @@ export async function materialiseModelViews(
   instance: DuckDBInstance,
   projectId: string,
   model: SemanticModel,
+  signal?: AbortSignal,
 ): Promise<MaterialiseViewsResult> {
   // Serialise per project: concurrent passes racing on the same scoped
   // VIEWs abort with a DuckDB catalog write-write conflict (see
   // `withProjectMaterialiseLock`).
   return withProjectMaterialiseLock(projectId, () =>
-    materialiseModelViewsLocked(instance, model),
+    materialiseModelViewsLocked(instance, model, signal),
   );
 }
 
 async function materialiseModelViewsLocked(
   instance: DuckDBInstance,
   model: SemanticModel,
+  signal?: AbortSignal,
 ): Promise<MaterialiseViewsResult> {
   const result: MaterialiseViewsResult = {
     materialised: [],
@@ -810,8 +1104,12 @@ async function materialiseModelViewsLocked(
 
   const db = await instance.connect();
   try {
-    await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000);
+    await withQueryTimeout(db, () => db.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`), 5_000, signal);
     for (const ds of model.datasets) {
+      // Stop promptly when the agent run was cancelled mid-materialisation
+      // instead of grinding through the remaining datasets (each of which can
+      // pay a cold-connection cost up to the shared deadline).
+      if (signal?.aborted) throw new QueryCancelledError();
       // Reject embedded NULs / control characters that would corrupt
       // the resulting `CREATE OR REPLACE VIEW` even after quote
       // doubling. Any other character is safely handled by
@@ -868,10 +1166,15 @@ async function materialiseModelViewsLocked(
             db,
             () => db.run(`CREATE OR REPLACE VIEW ${viewName} AS ${viewQuery}`),
             Math.max(1, remaining),
+            signal,
           );
         },
         { deadlineMs: materialiseDeadline },
       );
+      // A cancellation surfaces as a non-transient failure from the retry
+      // helper; re-raise it so the run aborts instead of being recorded as a
+      // per-dataset materialisation failure.
+      if (signal?.aborted) throw new QueryCancelledError();
       if (created.ok) {
         result.materialised.push(ds.name);
         if (wasInferred) result.inferred.push(ds.name);
@@ -887,6 +1190,33 @@ async function materialiseModelViewsLocked(
   }
 
   return result;
+}
+
+/**
+ * Redact upstream connection secrets from a DuckDB/extension error message
+ * before it crosses any client, log, or LLM boundary.
+ *
+ * `buildAttachString` / `attachIcebergCatalog` interpolate decrypted
+ * credentials into the `ATTACH` / `CREATE SECRET` SQL we hand to DuckDB
+ * (`password=…`, `Password=…;`, a `postgresql://user:pw@host` URI, or an
+ * iceberg bearer `TOKEN '…'`). When ATTACH/setup fails, DuckDB frequently
+ * echoes the offending statement — including those secrets — back in the
+ * error message. The MCP/agent recovery catches surface that message to the
+ * caller and persist it in call logs, so scrub the known secret shapes here
+ * first. This is intentionally conservative (redacts the secret value, keeps
+ * the surrounding error text) so genuine query errors stay actionable.
+ */
+export function redactConnectionSecrets(message: string): string {
+  return message
+    // key=value credential fields. Postgres/MySQL attach strings are
+    // space-delimited (`password=pw`); MSSQL is `;`-delimited
+    // (`Password=pw;`). Stop the value at the first `;` or whitespace.
+    .replace(/\b(password|pwd)\s*=\s*[^;\s]+/gi, "$1=***")
+    // URI userinfo: `scheme://user:password@host` → keep the user, drop the secret.
+    .replace(/(\/\/[^:@/\s]+):[^@/\s]+@/g, "$1:***@")
+    // Iceberg bearer token in `CREATE [TEMPORARY] SECRET … TOKEN '…'`.
+    // The body may contain `''`-escaped quotes, so consume those too.
+    .replace(/(\bTOKEN\s+)'(?:[^']|'')*'/gi, "$1'***'");
 }
 
 /**

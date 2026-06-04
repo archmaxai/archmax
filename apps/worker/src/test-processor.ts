@@ -7,6 +7,59 @@ import { TEST_RUN_CANCEL_CHANNEL_PREFIX } from "@archmax/core/queue/constants";
 import type { TestRunJobData, TestRunJobResult } from "@archmax/core/queue/types";
 import { processTestCase } from "@archmax/core/services/test-runner";
 
+/**
+ * Re-check whether every case of a run has reached a terminal state and, if so,
+ * flip the run to `completed`. Mirrors the `finally` block in
+ * `processTestRunJob` so both the happy path and the stalled-recovery path
+ * converge on the same finalisation.
+ */
+async function maybeCompleteRun(testRunId: string): Promise<void> {
+  const run = await TestRun.findById(testRunId).lean();
+  if (run && run.status !== "cancelled") {
+    const allDone = run.cases.every(
+      (c) => c.status !== "pending" && c.status !== "running",
+    );
+    if (allDone) {
+      await TestRun.updateOne(
+        { _id: testRunId },
+        { status: "completed", completedAt: new Date() },
+      );
+    }
+  }
+}
+
+/**
+ * Finalize a single test case whose worker process was killed mid-run.
+ *
+ * Like the chat path, a native DuckDB/extension assertion aborts the worker
+ * process, so `processTestRunJob`'s `finally` never runs and the case stays
+ * stuck in `running` — which also blocks the run from ever reaching
+ * `completed`. Called from the test worker's `failed` handler when the failure
+ * reason is a stall. Only a `pending`/`running` case is touched, so a case that
+ * already recorded a real result (e.g. on an earlier attempt) is left intact.
+ */
+export async function finalizeStalledTestCase(
+  testRunId: string,
+  caseIndex: number,
+): Promise<void> {
+  await connectDB();
+  const run = await TestRun.findById(testRunId).lean();
+  const current = run?.cases?.[caseIndex]?.status;
+  if (current === "pending" || current === "running") {
+    await TestRun.updateOne(
+      { _id: testRunId },
+      {
+        $set: {
+          [`cases.${caseIndex}.status`]: "error",
+          [`cases.${caseIndex}.errorMessage`]:
+            "The test worker was terminated mid-run (likely a database engine crash). This case did not complete.",
+        },
+      },
+    );
+  }
+  await maybeCompleteRun(testRunId);
+}
+
 export async function processTestRunJob(
   job: Job<TestRunJobData, TestRunJobResult>,
 ): Promise<TestRunJobResult> {
@@ -62,13 +115,7 @@ export async function processTestRunJob(
 
     try {
       await connectDB();
-      const run = await TestRun.findById(testRunId).lean();
-      if (run && run.status !== "cancelled") {
-        const allDone = run.cases.every((c) => c.status !== "pending" && c.status !== "running");
-        if (allDone) {
-          await TestRun.updateOne({ _id: testRunId }, { status: "completed", completedAt: new Date() });
-        }
-      }
+      await maybeCompleteRun(testRunId);
     } catch (finalizeErr) {
       console.error(`[test-processor] Failed to finalize run ${testRunId}:`, finalizeErr);
     }

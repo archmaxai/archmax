@@ -21,6 +21,15 @@ vi.mock("./duckdb", async (importOriginal) => {
   return {
     ...actual,
     getProjectInstance: (...args: unknown[]) => mockGetProjectInstance(...args),
+    // Run the op against the mocked instance directly. The real wrapper's
+    // dispose/rebuild-on-fatal-error behaviour is exercised in duckdb.test.ts;
+    // here we only need it to hand the op the mock DuckDB instance.
+    withRecoverableProjectInstance: async (
+      _projectId: string,
+      _connections: unknown,
+      _options: unknown,
+      op: (instance: unknown) => Promise<unknown>,
+    ) => op(await mockGetProjectInstance()),
     materialiseModelViews: (...args: unknown[]) => mockMaterialiseModelViews(...args),
     getAttachedCatalogSlugs: vi.fn(() => []),
     hardenConnection: (...args: unknown[]) => mockHardenConnection(...args),

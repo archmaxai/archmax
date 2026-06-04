@@ -23,9 +23,12 @@ import {
   disposeProjectInstance,
   materialiseModelViews,
   isTransientDuckdbError,
+  isFatalInstanceError,
   retryOnTransientDuckdbError,
+  withRecoverableProjectInstance,
   withProjectMaterialiseLock,
   stripScopedSchemaQualifier,
+  redactConnectionSecrets,
   duckdbFilePath,
   deleteProjectDuckdbFile,
   inferDefaultViewQuery,
@@ -651,6 +654,50 @@ describe("stripScopedSchemaQualifier", () => {
   });
 });
 
+describe("redactConnectionSecrets", () => {
+  it("redacts a postgres/mysql key=value password (space-delimited)", () => {
+    const out = redactConnectionSecrets(
+      'IO Error: failed to attach "host=pg.local port=5432 dbname=app user=admin password=s3cret"',
+    );
+    expect(out).not.toContain("s3cret");
+    expect(out).toContain("password=***");
+    // Surrounding, non-secret context is preserved so the error stays useful.
+    expect(out).toContain("host=pg.local");
+    expect(out).toContain("user=admin");
+  });
+
+  it("redacts an MSSQL Password=...; field (semicolon-delimited)", () => {
+    const out = redactConnectionSecrets(
+      "Server=db,1433;Database=mydb;User Id=sa;Password=p@ss;Encrypt=yes failed",
+    );
+    expect(out).not.toContain("p@ss");
+    expect(out).toContain("Password=***");
+    // The value stops at the `;` — later fields survive intact.
+    expect(out).toContain("Encrypt=yes");
+  });
+
+  it("redacts the password in a connection URI while keeping the user and host", () => {
+    const out = redactConnectionSecrets(
+      "could not connect to postgresql://admin:topsecret@db.example.com:5432/app",
+    );
+    expect(out).not.toContain("topsecret");
+    expect(out).toContain("postgresql://admin:***@db.example.com");
+  });
+
+  it("redacts an iceberg bearer TOKEN '...'", () => {
+    const out = redactConnectionSecrets(
+      "Failed: CREATE TEMPORARY SECRET cat_secret (TYPE iceberg, TOKEN 'abc123.def') at line 1",
+    );
+    expect(out).not.toContain("abc123.def");
+    expect(out).toContain("TOKEN '***'");
+  });
+
+  it("leaves a secret-free message untouched", () => {
+    const msg = `Catalog Error: Table with name "orders" does not exist`;
+    expect(redactConnectionSecrets(msg)).toBe(msg);
+  });
+});
+
 describe("duckdbFilePath", () => {
   it("rejects unsafe project ids", () => {
     expect(() => duckdbFilePath("../etc")).toThrow(/Invalid projectId/);
@@ -670,29 +717,20 @@ describe("deleteProjectDuckdbFile", () => {
   });
 });
 
-describe("file-backed project instance", () => {
-  it("creates the duckdb.db file on disk", async () => {
+describe("in-memory project instance", () => {
+  it("does NOT create a duckdb.db file on disk", async () => {
     const fs = await import("node:fs/promises");
-    const projectId = "file-backed-test-create";
+    const projectId = "in-memory-test-no-file";
     await getProjectInstance(projectId, []);
-    const path = duckdbFilePath(projectId);
-    const stat = await fs.stat(path);
-    expect(stat.isFile()).toBe(true);
+    // The instance is in-memory and per-process, so no persistent file is
+    // ever written — this is what keeps the api and worker processes from
+    // deadlocking on DuckDB's whole-file lock.
+    await expect(fs.stat(duckdbFilePath(projectId))).rejects.toMatchObject({ code: "ENOENT" });
     await disposeProjectInstance(projectId);
-    await deleteProjectDuckdbFile(projectId);
   });
 
-  it("releases the file lock on dispose so a fresh instance can re-open the same file", async () => {
-    const projectId = "file-backed-test-lock";
-    await getProjectInstance(projectId, []);
-    await disposeProjectInstance(projectId);
-    const fresh = await DuckDBInstance.create(duckdbFilePath(projectId));
-    fresh.closeSync();
-    await deleteProjectDuckdbFile(projectId);
-  });
-
-  it("persists materialised views across re-opens of the same duckdb.db file", async () => {
-    const projectId = "file-backed-test-persist";
+  it("rebuilds a clean, empty instance after dispose (no cross-dispose persistence)", async () => {
+    const projectId = "in-memory-test-clean-slate";
     const instance = await getProjectInstance(projectId, []);
     const setup = await instance.connect();
     try {
@@ -708,28 +746,19 @@ describe("file-backed project instance", () => {
     expect(result.materialised).toEqual(["orders"]);
 
     await disposeProjectInstance(projectId);
+
+    // The next instance is a brand-new in-memory database: the table and the
+    // scoped VIEW from the disposed instance are gone (callers rematerialise
+    // views on demand before querying).
     const reopened = await getProjectInstance(projectId, []);
+    expect(reopened).not.toBe(instance);
     const db = await reopened.connect();
     try {
-      const out = await db.run('SELECT * FROM _scope_persist."orders"');
-      const rows: unknown[][] = [];
-      for await (const chunk of out) rows.push(...chunk.getRows());
-      expect(rows).toHaveLength(2);
+      await expect(db.run('SELECT * FROM _scope_persist."orders"')).rejects.toThrow();
     } finally {
       db.disconnectSync();
     }
     await disposeProjectInstance(projectId);
-    await deleteProjectDuckdbFile(projectId);
-  });
-
-  it("deleteProjectDuckdbFile removes the file (clean slate)", async () => {
-    const fs = await import("node:fs/promises");
-    const projectId = "file-backed-test-delete";
-    await getProjectInstance(projectId, []);
-    await disposeProjectInstance(projectId);
-    const path = duckdbFilePath(projectId);
-    await deleteProjectDuckdbFile(projectId);
-    await expect(fs.stat(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -811,6 +840,36 @@ describe("buildAttachString — postgres", () => {
       connectionConfig: { host: "pg.local", port: 5432, database: "app", user: "admin", password: "pw" },
     });
     expect(buildAttachString(conn)).toBe("host=pg.local port=5432 dbname=app user=admin password=pw");
+  });
+});
+
+describe("buildAttachString — mysql", () => {
+  it("produces key=value format with only connection-string keys", () => {
+    const conn = fakeConn({
+      type: "mysql",
+      connectionConfig: { host: "my.local", port: 3306, database: "app", user: "admin", password: "pw" },
+    });
+    // Pool tuning (mysql_pool_size / mysql_pool_acquire_mode) are DuckDB
+    // settings applied via `SET`, not DSN keys, so they must NOT appear here.
+    expect(buildAttachString(conn)).toBe(
+      "host=my.local port=3306 database=app user=admin password=pw",
+    );
+  });
+
+  it("defaults port to 3306", () => {
+    const conn = fakeConn({
+      type: "mysql",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    expect(buildAttachString(conn)).toContain("port=3306");
+  });
+
+  it("does not embed pool settings in the connection string", () => {
+    const conn = fakeConn({
+      type: "mysql",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    expect(buildAttachString(conn)).not.toContain("mysql_pool");
   });
 });
 
@@ -1134,5 +1193,210 @@ describe("disposeProjectInstance", () => {
     } finally {
       closeSpy.mockRestore();
     }
+  });
+});
+
+describe("isFatalInstanceError", () => {
+  it("classifies an invalidated-instance fault as fatal via the invalidation/restart phrase", () => {
+    for (const msg of [
+      // The exact shape DuckDB raises when a federated scanner's upstream
+      // connection pool dies — the invalidation + restart phrases ride along
+      // with the pool phrase here.
+      `FATAL Error: Failed: database has been invalidated because of a previous fatal error. The database must be restarted prior to being used again.\nOriginal error: "PooledConnection::GetConnection - no connection available"`,
+      "database has been invalidated because of a previous fatal error",
+      "The database must be restarted prior to being used again.",
+    ]) {
+      expect(isFatalInstanceError(msg)).toBe(true);
+    }
+  });
+
+  it("does NOT classify a bare pool phrase as fatal (avoids project-wide dispose on non-fatal faults)", () => {
+    // `PooledConnection::GetConnection` / `no connection available` also show
+    // up in ordinary, recoverable upstream/query errors. On their own they
+    // must NOT force a dispose + full re-ATTACH of the whole project instance.
+    for (const msg of [
+      "PooledConnection::GetConnection - no connection available",
+      "no connection available",
+    ]) {
+      expect(isFatalInstanceError(msg)).toBe(false);
+    }
+  });
+
+  it("does NOT classify per-query / transient faults or permanent authoring errors as fatal", () => {
+    for (const msg of [
+      "Connection Error: connection refused",
+      "Failed to connect to Postgres database",
+      "Query timed out after 30s",
+      `Binder Error: Referenced column "missing" not found`,
+      `Catalog Error: Table with name "orders" does not exist`,
+    ]) {
+      expect(isFatalInstanceError(msg)).toBe(false);
+    }
+  });
+});
+
+describe("withRecoverableProjectInstance", () => {
+  const FATAL =
+    'FATAL Error: database has been invalidated. Original error: "PooledConnection::GetConnection - no connection available"';
+
+  it("returns the op result without rebuilding when the first attempt succeeds", async () => {
+    const projectId = "recover-test-ok";
+    const first = await getProjectInstance(projectId, []);
+    let calls = 0;
+    const seen: unknown[] = [];
+
+    const result = await withRecoverableProjectInstance(projectId, [], undefined, async (instance) => {
+      calls++;
+      seen.push(instance);
+      return "ok";
+    });
+
+    expect(result).toBe("ok");
+    expect(calls).toBe(1);
+    // No rebuild: the cached instance is reused, never disposed.
+    expect(seen[0]).toBe(first);
+    await disposeProjectInstance(projectId);
+  });
+
+  it("disposes the poisoned instance and retries once with a fresh one on a fatal error", async () => {
+    const projectId = "recover-test-heal";
+    const poisoned = await getProjectInstance(projectId, []);
+    const closeSpy = vi.spyOn(poisoned, "closeSync");
+    const seen: unknown[] = [];
+
+    try {
+      const result = await withRecoverableProjectInstance(projectId, [], undefined, async (instance) => {
+        seen.push(instance);
+        if (seen.length === 1) throw new Error(FATAL);
+        return "healed";
+      });
+
+      expect(result).toBe("healed");
+      expect(seen).toHaveLength(2);
+      // First attempt got the poisoned instance; the rebuild handed the op a
+      // brand-new instance reference.
+      expect(seen[0]).toBe(poisoned);
+      expect(seen[1]).not.toBe(poisoned);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSpy.mockRestore();
+      await disposeProjectInstance(projectId);
+    }
+  });
+
+  it("on a fatal error closes the poisoned instance, not a concurrently-installed healthy one", async () => {
+    // While our op holds a ref on the poisoned instance, the cache can be
+    // evicted and a fresh healthy instance installed under the same projectId
+    // (concurrent dispose + rebuild / extension reload). The heal must tear
+    // down the *specific* instance the op ran against — disposing by id alone
+    // would wrongly close the healthy replacement.
+    const projectId = "recover-test-wrong-instance";
+    const poisoned = await getProjectInstance(projectId, []);
+    const poisonedClose = vi.spyOn(poisoned, "closeSync");
+    const seen: unknown[] = [];
+    let healthy: unknown;
+    let healthyClose: ReturnType<typeof vi.spyOn> | undefined;
+
+    try {
+      const result = await withRecoverableProjectInstance(
+        projectId,
+        [],
+        undefined,
+        async (instance) => {
+          seen.push(instance);
+          if (seen.length === 1) {
+            // Simulate a concurrent eviction + rebuild: the cache no longer
+            // points at `poisoned` (it is closePending behind our ref) and now
+            // holds a brand-new healthy instance.
+            await disposeProjectInstance(projectId);
+            healthy = await getProjectInstance(projectId, []);
+            healthyClose = vi.spyOn(healthy as DuckDBInstance, "closeSync");
+            throw new Error(FATAL);
+          }
+          return "healed";
+        },
+      );
+
+      expect(result).toBe("healed");
+      // First op ran against the poisoned instance, the retry against the
+      // healthy replacement (never a third, freshly-built one).
+      expect(seen[0]).toBe(poisoned);
+      expect(seen[1]).toBe(healthy);
+      // The poisoned instance is closed; the healthy replacement is untouched.
+      expect(poisonedClose).toHaveBeenCalledTimes(1);
+      expect(healthyClose!).not.toHaveBeenCalled();
+    } finally {
+      poisonedClose.mockRestore();
+      healthyClose?.mockRestore();
+      await disposeProjectInstance(projectId);
+    }
+  });
+
+  it("re-throws a non-fatal error immediately without rebuilding", async () => {
+    const projectId = "recover-test-nonfatal";
+    await getProjectInstance(projectId, []);
+    let calls = 0;
+
+    await expect(
+      withRecoverableProjectInstance(projectId, [], undefined, async () => {
+        calls++;
+        throw new Error("Connection Error: connection refused");
+      }),
+    ).rejects.toThrow(/connection refused/);
+    expect(calls).toBe(1);
+    await disposeProjectInstance(projectId);
+  });
+
+  it("gives up after a single rebuild when the fatal error persists", async () => {
+    const projectId = "recover-test-persistent";
+    await getProjectInstance(projectId, []);
+    let calls = 0;
+
+    await expect(
+      withRecoverableProjectInstance(projectId, [], undefined, async () => {
+        calls++;
+        throw new Error(FATAL);
+      }),
+    ).rejects.toThrow(/invalidated/);
+    // One original attempt + one post-rebuild attempt, then propagate.
+    expect(calls).toBe(2);
+    await disposeProjectInstance(projectId);
+  });
+
+  it("defers closeSync while an op holds the instance, then closes once it releases", async () => {
+    // A concurrent self-heal (or operator-triggered dispose) must NOT
+    // closeSync() the native instance out from under an in-flight query.
+    const projectId = "recover-test-refcount";
+    const instance = await getProjectInstance(projectId, []);
+    const closeSpy = vi.spyOn(instance, "closeSync");
+
+    let releaseOp!: () => void;
+    const opGate = new Promise<void>((r) => { releaseOp = r; });
+    let opStarted!: () => void;
+    const started = new Promise<void>((r) => { opStarted = r; });
+
+    const running = withRecoverableProjectInstance(projectId, [], undefined, async () => {
+      opStarted();
+      await opGate;
+      return "done";
+    });
+
+    // Wait until the op is actually running (and thus holds a ref).
+    await started;
+
+    // Dispose mid-flight: it should evict the cache entry but defer the close.
+    await disposeProjectInstance(projectId);
+    expect(closeSpy).not.toHaveBeenCalled();
+    // A fresh getProjectInstance already hands out a brand-new instance.
+    const rebuilt = await getProjectInstance(projectId, []);
+    expect(rebuilt).not.toBe(instance);
+
+    // Let the in-flight op finish — the deferred close now fires exactly once.
+    releaseOp();
+    await expect(running).resolves.toBe("done");
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+
+    closeSpy.mockRestore();
+    await disposeProjectInstance(projectId);
   });
 });
