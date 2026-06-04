@@ -16,6 +16,7 @@ import mcpTokens from "./routes/mcp-tokens";
 import mcpLogs from "./routes/mcp-logs";
 import agentChat from "./routes/agent";
 import dataBrowser from "./routes/data-browser";
+import duckdbConsole from "./routes/duckdb-console";
 import documents from "./routes/documents";
 import publish from "./routes/publish";
 import gitRoutes from "./routes/git";
@@ -83,6 +84,7 @@ const app = new Hono()
   .route("/api/projects/:projectId/mcp-logs", mcpLogs)
   .route("/api/projects/:projectId/agent", agentChat)
   .route("/api/projects/:projectId/data-browser", dataBrowser)
+  .route("/api/projects/:projectId/duckdb-console", duckdbConsole)
   .route("/api/projects/:projectId/documents", documents)
   .route("/api/projects/:projectId/publish", publish)
   .route("/api/projects/:projectId/git", gitRoutes)
