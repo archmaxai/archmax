@@ -166,6 +166,12 @@ The admin UI includes a chat-based AI agent that can build semantic models for y
 
 You can also create and edit models manually through the YAML files or the admin UI editor.
 
+### Project Instructions (`AGENTS.md`)
+
+You can give the builder agent durable, project-specific guidance by adding an optional `AGENTS.md` file at the **root of the project directory** (`<ARCHMAX_DATA_DIR>/projects/<projectId>/AGENTS.md`). When present, its contents are loaded into the agent's instructions at the start of every conversation, so it is a good place for a domain glossary, naming conventions, or standing rules like "always add an `ai_context` description to every field". The file is optional — if it is absent the agent simply uses its defaults — and it is treated as authoritative for the project, taking precedence over the agent's general defaults when they conflict.
+
+This file is versioned alongside the rest of the project, and it is **not** auto-generated — it is yours to author and edit.
+
 ## Publishing
 
 After editing a model, click **Publish** to make it available to MCP clients. Publishing assembles the split source files (`src/`) into optimized single-file YAMLs in the `build/` directory. MCP tools in production always read from the published build.

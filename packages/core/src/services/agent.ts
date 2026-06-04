@@ -74,6 +74,11 @@ export async function createSemlayerAgent(projectId: string): Promise<ReturnType
     model: llm,
     backend,
     tools: [executeQuery, runModelQuery, rmTool, mvTool, cpTool, readDocTool, revertFileTool, discardAllTool, listTestAgentsTool, listTestCasesTool, deleteTestCaseTool, createTestCaseTool],
+    // Loads an optional project-root `AGENTS.md` (relative to the backend root,
+    // which is `projectDir`) into the system prompt via the Deep Agents memory
+    // middleware. The middleware tolerates a missing file, so the file stays
+    // optional and no custom file-reading is needed.
+    memory: ["AGENTS.md"],
     systemPrompt: buildSystemPrompt(connections),
     // Registered last so it is the innermost `wrapToolCall` layer: turns
     // malformed tool calls (e.g. `write_file` with missing `file_path`) into a

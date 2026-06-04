@@ -166,16 +166,6 @@ All YAML files SHALL be validated against Zod schemas on read. Invalid files SHA
 - **WHEN** a custom extension has `data: '{}'`
 - **THEN** Zod validation succeeds
 
-### Requirement: AGENTS.md Auto-Generation
-
-After every `write()` or `delete()` operation, the file service SHALL regenerate an `AGENTS.md` file in the project root directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/AGENTS.md`) summarizing all semantic models, their datasets, and metrics for AI assistant discovery.
-
-#### Scenario: AGENTS.md regenerated after write
-
-- **WHEN** a semantic model is written
-- **THEN** `<ARCHMAX_DATA_DIR>/projects/<projectId>/AGENTS.md` is regenerated at the project root
-- **AND** it lists all models with their datasets and metrics
-
 ### Requirement: Path Safety
 
 All path segments (projectId, model name, dataset name) SHALL be validated against a safe character pattern (`/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/`) to prevent path traversal.
@@ -921,4 +911,23 @@ The system SHALL provide a one-time migration script at `apps/api/src/scripts/mi
 - **THEN** the migration prints a WARN line naming the project, model, and dataset, with the message "Dataset has no fields and will not be queryable until you add either fields or an explicit `view_query` to its COMMON extension"
 - **AND** the dataset is counted under "errored" (not "skipped") in the summary so a CI run of the migration fails non-zero
 - **AND** no `.yaml.bak` is written and no `view_query` is added — the dataset is left exactly as it was
+
+### Requirement: Legacy Auto-Generated AGENTS.md Cleanup
+
+On application startup, the system SHALL remove any project-root `AGENTS.md` file that was produced by the former auto-generator, identified by its generated header signature (the file begins with `# Semantic Models`). Files at the project root that do not match this signature (i.e. user-authored `AGENTS.md`) SHALL be left untouched. The cleanup SHALL be idempotent and SHALL run per existing project directory.
+
+#### Scenario: Auto-generated file is removed
+
+- **WHEN** a project root contains an `AGENTS.md` whose content begins with `# Semantic Models`
+- **THEN** startup removes that `AGENTS.md` file
+
+#### Scenario: User-authored file is preserved
+
+- **WHEN** a project root contains an `AGENTS.md` whose content does not begin with `# Semantic Models`
+- **THEN** startup leaves the file unchanged
+
+#### Scenario: Cleanup is idempotent
+
+- **WHEN** startup runs again on a project whose `AGENTS.md` was already removed or never existed
+- **THEN** no error occurs and no file is created
 

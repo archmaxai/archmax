@@ -69,6 +69,13 @@ function hasConflictMarkers(content: string): boolean {
 
 const SAFE_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
+/**
+ * Header that the former `regenerateAgentsMd` always emitted as the first line
+ * of the auto-generated project-root `AGENTS.md`. Used to distinguish stale
+ * auto-generated files from user-authored instructions during cleanup.
+ */
+const LEGACY_AGENTS_MD_SIGNATURE = "# Semantic Models";
+
 export function assertSafeSegment(value: string, label: string): void {
   if (!value || !SAFE_SEGMENT.test(value)) {
     throw new Error(`Invalid ${label}: must be alphanumeric (with ._-), got "${value}"`);
@@ -296,8 +303,6 @@ export class SemanticModelFileService {
         await unlink(join(dsDir, file)).catch(() => {});
       }
     }
-
-    await this.regenerateAgentsMd(projectId);
   }
 
   async delete(projectId: string, name: string): Promise<boolean> {
@@ -311,7 +316,6 @@ export class SemanticModelFileService {
 
     await rm(join(dir, name), { recursive: true, force: true }).catch(() => {});
 
-    await this.regenerateAgentsMd(projectId);
     return true;
   }
 
@@ -391,34 +395,39 @@ export class SemanticModelFileService {
     return true;
   }
 
-  async regenerateAgentsMd(projectId: string): Promise<void> {
-    const models = await this.list(projectId);
-    const rootDir = this.projectRootDir(projectId);
-    await this.ensureDir(rootDir);
-
-    const lines: string[] = [
-      "# Semantic Models",
-      "",
-      `This project contains ${models.length} semantic model${models.length === 1 ? "" : "s"}.`,
-      "",
-    ];
-
-    for (const model of models) {
-      lines.push(`## ${model.name}`);
-      if (model.description) lines.push("", model.description);
-
-      if (model.datasets.length > 0) {
-        lines.push("", "**Datasets:**", ...model.datasets.map((d) => `- ${d.name}`));
-      }
-
-      if (model.metrics.length > 0) {
-        lines.push("", "**Metrics:**", ...model.metrics.map((m) => `- ${m.name}`));
-      }
-
-      lines.push("");
+  /**
+   * One-time cleanup of the formerly auto-generated project-root `AGENTS.md`
+   * summary. The `AGENTS.md` slot is now reserved for optional user-authored
+   * agent instructions loaded via the Deep Agents `memory` feature, so any
+   * stale auto-generated file (identified by its generated header signature)
+   * is removed to avoid being injected as instructions. User-authored files
+   * (without the signature) are left untouched. Idempotent.
+   *
+   * @returns the number of legacy files removed
+   */
+  async cleanupLegacyAgentsMd(): Promise<number> {
+    let projectIds: string[];
+    try {
+      projectIds = await readdir(this.baseDir);
+    } catch {
+      return 0;
     }
 
-    const content = lines.join("\n");
-    await this.atomicWrite(join(rootDir, "AGENTS.md"), content);
+    let removed = 0;
+    for (const projectId of projectIds) {
+      if (!SAFE_SEGMENT.test(projectId)) continue;
+      const agentsPath = join(this.baseDir, projectId, "AGENTS.md");
+      let content: string;
+      try {
+        content = await readFile(agentsPath, "utf-8");
+      } catch {
+        continue;
+      }
+      if (content.startsWith(LEGACY_AGENTS_MD_SIGNATURE)) {
+        await unlink(agentsPath).catch(() => {});
+        removed++;
+      }
+    }
+    return removed;
   }
 }
