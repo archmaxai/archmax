@@ -146,6 +146,13 @@ export async function processAgentJob(
   };
 
   try {
+    // Start every attempt from a clean replay buffer. When BullMQ retries a
+    // stalled job (the previous attempt's worker crashed mid-run without
+    // clearing the buffer), the crashed attempt's events would otherwise still
+    // be present and get appended to — merging two attempts into one replay and
+    // one reconstructed assistant message in `finalizeStalledConversation`.
+    await clearStreamBuffer(conversationId);
+
     if (bullmqSignal) {
       if (bullmqSignal.aborted) {
         abortController.abort(bullmqSignal.reason);
