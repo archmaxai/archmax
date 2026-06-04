@@ -81,15 +81,11 @@ This is used internally by:
 
 ## Federation Console
 
-Under **Data Federation → Console** (`/<projectId>/connections/console`), you can run read-oriented SQL directly against the project's federated DuckDB instance (`SELECT`, `WITH`, `SHOW`, `DESCRIBE`, `EXPLAIN`). Unlike MCP `execute_query`, the console uses **raw connection slugs** (e.g. `shopify.public.orders`) — it does not go through scoped VIEWs.
+Under **Data Federation → Console** (`/<projectId>/connections/console`), a single SQL editor runs read-oriented SQL directly against the project's federated DuckDB instance (`SELECT`, `WITH`, `SHOW`, `DESCRIBE`, `EXPLAIN`). Unlike MCP `execute_query`, the console uses **raw connection slugs** (e.g. `shopify.public.orders`) — it does not go through scoped VIEWs.
 
-The left **Setup commands** panel lists copyable examples:
+The same editor also manages extensions: enter a single `INSTALL <name> [FROM community]` or `LOAD <name>` statement and press **Run** to install/load a DuckDB extension. The pre-installed extensions are `postgres`, `mysql`, `sqlite`, `mssql` (community), `iceberg`, `httpfs`, and `avro`. Extension state is held on the **API process** in-memory instance; the BullMQ worker maintains its own instance and will not see extensions installed from the console until its cache is rebuilt (e.g. after **Re-explore schemas** or a process restart).
 
-- Pre-installed `INSTALL` / `LOAD` pairs (`postgres`, `mysql`, `sqlite`, `mssql FROM community`, `iceberg`, `httpfs`, `avro`)
-- Per-connection **redacted** `ATTACH` strings (passwords and tokens shown as `********`)
-- An example federation query when connections are active
-
-Use **Install / Load** to run a single `INSTALL <name> [FROM community]` or `LOAD <name>` statement for additional community extensions. Extension state is held on the **API process** in-memory instance; the BullMQ worker maintains its own instance and will not see extensions installed from the console until its cache is rebuilt (e.g. after **Re-explore schemas** or a process restart).
+Press **Run** (or ⌘/Ctrl + Enter) to execute. Write statements (`INSERT`, `UPDATE`, `DELETE`, `ATTACH`, …) are rejected — attached upstream catalogs are read-only.
 
 ## Scoped VIEWs
 

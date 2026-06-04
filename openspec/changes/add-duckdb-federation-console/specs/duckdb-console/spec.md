@@ -97,11 +97,12 @@ On success, the extension SHALL be loaded on the project's DuckDB instance using
 
 The frontend SHALL render a federation console page at `/$projectId/connections/console` accessible from the **Data Federation** sidebar group.
 
-The page SHALL include:
+The page SHALL present a **single SQL editor** (textarea is sufficient) and a page-header **Run** control. Run SHALL route the submitted statement based on its leading keyword:
 
-- A SQL editor (textarea is sufficient) and a **Run** control that calls `POST .../duckdb-console/query` and displays results in a table with column headers
-- A **Setup commands** panel that loads `GET .../duckdb-console/setup` and displays copyable commands grouped by pre-installed extensions, per-connection attach examples, and the example query
-- An **Install extension** control that submits `POST .../duckdb-console/extensions` with the operator-provided `INSTALL` or `LOAD` statement
+- Statements beginning with `INSTALL` or `LOAD` SHALL be submitted to `POST .../duckdb-console/extensions`; on success a `toast.success` SHALL confirm the loaded extension.
+- All other statements SHALL be submitted to `POST .../duckdb-console/query` and the results rendered in a table with column headers.
+
+The page SHALL NOT render a separate setup-commands panel or a separate extension-install control; the one editor serves both purposes. The page MAY load `GET .../duckdb-console/setup` to determine whether the project has active connections.
 
 When the project has no active connections, the page SHALL show an empty state directing the user to add connections under Data Sources, and the **Run** control SHALL be disabled.
 
@@ -109,12 +110,13 @@ When the project has no active connections, the page SHALL show an empty state d
 
 - **WHEN** the user enters `SELECT 1` and clicks **Run**
 - **THEN** the results table shows one row
-- **AND** a success toast is not required for query success (results are sufficient); errors use `toast.error` with the server message
+- **AND** a success toast is not shown for query success (results are sufficient); errors use `toast.error` with the server message
 
-#### Scenario: Copy setup command
+#### Scenario: Install extension from the same editor
 
-- **WHEN** the user copies an attach example from the setup panel
-- **THEN** the clipboard receives the redacted `attachSql` string from the API
+- **WHEN** the user enters `INSTALL spatial FROM community` and clicks **Run**
+- **THEN** the statement is sent to the extensions endpoint
+- **AND** a `toast.success` confirms the extension was loaded
 
 #### Scenario: Navigate from sidebar
 
