@@ -11,7 +11,14 @@ import {
   clearCancelFlag,
 } from "@archmax/core/infra/redis";
 import { JOB_CANCEL_CHANNEL_PREFIX } from "@archmax/core/queue/constants";
-import { publishStreamEvent, clearStreamBuffer, getBufferedStreamEvents } from "@archmax/core/streaming/stream-bridge";
+import {
+  publishStreamEvent,
+  clearStreamBuffer,
+  archiveStreamBuffer,
+  getBufferedStreamEvents,
+  getArchivedStreamEvents,
+} from "@archmax/core/streaming/stream-bridge";
+import type { AgentStreamResult } from "@archmax/core/services/agent-stream";
 import type { AgentJobData, AgentJobResult } from "@archmax/core/queue/types";
 import type { IToolCallRecord, IContentSegment } from "@archmax/core/models/Conversation";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
@@ -83,6 +90,15 @@ async function saveAssistantMessage(
  * already finalized inside `processAgentJob` before it re-threw, so callers
  * must gate this on the stalled-failure reason to avoid a duplicate message.
  */
+/** Rough byte size of the assistant content recovered from a partial run. */
+function partialContentSize(result: AgentStreamResult): number {
+  let size = result.fullResponse.length;
+  for (const tc of result.toolCalls) {
+    size += (tc.name?.length ?? 0) + (tc.args?.length ?? 0) + (tc.result?.length ?? 0);
+  }
+  return size;
+}
+
 export async function finalizeStalledConversation(
   conversationId: string,
 ): Promise<void> {
@@ -90,8 +106,20 @@ export async function finalizeStalledConversation(
   // The events it published before dying survive in the Redis stream buffer,
   // so replay them to recover the partial assistant response rather than
   // discarding it for a generic crash message.
-  const { events } = await getBufferedStreamEvents(conversationId, 0);
-  const partial = reconstructStreamResult(events);
+  //
+  // A stalled job may have run twice (maxStalledCount=1): when the retry
+  // started, the first crashed attempt's events were moved aside into the
+  // archive buffer and the retry streamed into a fresh live buffer.
+  // Concatenating both would merge two attempts into one garbled message, so
+  // reconstruct each independently and keep whichever got furthest.
+  const [{ events }, archivedEvents] = await Promise.all([
+    getBufferedStreamEvents(conversationId, 0),
+    getArchivedStreamEvents(conversationId),
+  ]);
+  const live = reconstructStreamResult(events);
+  const archived = reconstructStreamResult(archivedEvents);
+  const partial =
+    partialContentSize(archived) > partialContentSize(live) ? archived : live;
   const hasPartialContent =
     partial.fullResponse.length > 0 ||
     partial.toolCalls.length > 0 ||
@@ -146,12 +174,14 @@ export async function processAgentJob(
   };
 
   try {
-    // Start every attempt from a clean replay buffer. When BullMQ retries a
-    // stalled job (the previous attempt's worker crashed mid-run without
+    // Start every attempt from a fresh live replay buffer. When BullMQ retries
+    // a stalled job (the previous attempt's worker crashed mid-run without
     // clearing the buffer), the crashed attempt's events would otherwise still
     // be present and get appended to — merging two attempts into one replay and
     // one reconstructed assistant message in `finalizeStalledConversation`.
-    await clearStreamBuffer(conversationId);
+    // Archive (rather than delete) the leftover buffer so that attempt's partial
+    // output can still be recovered if the retry also crashes.
+    await archiveStreamBuffer(conversationId);
 
     if (bullmqSignal) {
       if (bullmqSignal.aborted) {

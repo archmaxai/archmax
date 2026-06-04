@@ -42,6 +42,57 @@ export async function publishStreamEvent(
 }
 
 /**
+ * Move the current (crashed attempt's) buffer aside so the next attempt streams
+ * into a fresh buffer without merging the two attempts' events.
+ *
+ * When a stalled agent job is retried (the previous attempt's worker crashed
+ * mid-run without clearing the buffer), appending the retry's events onto the
+ * leftover buffer would merge two attempts into one replay. Simply clearing the
+ * buffer instead loses the first attempt's partial output if the retry also
+ * crashes. Archiving preserves the prior attempt's events under a side key so
+ * `finalizeStalledConversation` can recover whichever attempt got furthest.
+ *
+ * Only the most recent prior attempt is retained (the archive is replaced each
+ * time), which is sufficient given `maxStalledCount: 1` caps a job at two runs.
+ */
+export async function archiveStreamBuffer(
+  conversationId: string,
+): Promise<void> {
+  const client = getRedis();
+  if (!client) return;
+  const bufferKey = `${STREAM_BUFFER_PREFIX}${conversationId}`;
+  const archiveKey = `${STREAM_BUFFER_PREFIX}${conversationId}:prev`;
+  try {
+    const len = await client.llen(bufferKey);
+    if (len === 0) return;
+    await client.del(archiveKey);
+    await client.rename(bufferKey, archiveKey);
+    await client.expire(archiveKey, STREAM_BUFFER_TTL_SECONDS);
+  } catch {
+    // Best effort: if archiving fails, fall back to clearing so we at least
+    // never merge two attempts into one garbled message.
+    await clearStreamBuffer(conversationId).catch(() => {});
+  }
+}
+
+/**
+ * Read the archived (previous crashed attempt's) buffered stream events.
+ */
+export async function getArchivedStreamEvents(
+  conversationId: string,
+): Promise<StreamEvent[]> {
+  const client = getRedis();
+  if (!client) return [];
+  try {
+    const archiveKey = `${STREAM_BUFFER_PREFIX}${conversationId}:prev`;
+    const raw = await client.lrange(archiveKey, 0, -1);
+    return raw.map((s) => JSON.parse(s) as StreamEvent);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Read buffered stream events starting from a given index.
  * Returns the events and the new cursor position.
  */
@@ -80,7 +131,8 @@ export async function isStreamActive(
 }
 
 /**
- * Delete the stream buffer after the stream completes and the message is saved.
+ * Delete the stream buffer (and any archived prior-attempt buffer) after the
+ * stream completes and the message is saved.
  */
 export async function clearStreamBuffer(
   conversationId: string,
@@ -88,7 +140,8 @@ export async function clearStreamBuffer(
   const client = getRedis();
   if (!client) return;
   const bufferKey = `${STREAM_BUFFER_PREFIX}${conversationId}`;
-  await client.del(bufferKey);
+  const archiveKey = `${STREAM_BUFFER_PREFIX}${conversationId}:prev`;
+  await client.del(bufferKey, archiveKey);
 }
 
 /**
