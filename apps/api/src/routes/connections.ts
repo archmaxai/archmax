@@ -5,7 +5,7 @@ import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
 import { deleteProjectDuckdbFile, disposeProjectInstance, getProjectInstance, testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
-import { getEnv } from "@archmax/core/config/env";
+import { customFirebirdEnabled, getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
 
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -20,6 +20,7 @@ const connectionConfigSchema = z.object({
   password: z.string().optional(),
   uri: z.string().optional(),
   encrypt: z.boolean().optional(),
+  charset: z.string().optional(),
   endpoint: z.url("Endpoint must be a valid URL").optional(),
   warehouse: z.string().optional(),
   token: z.string().optional(),
@@ -181,6 +182,9 @@ const app = new Hono()
     if (!project) throw AppError.notFound("Project not found");
 
     const body = c.req.valid("json");
+    if (body.type === "firebird" && !customFirebirdEnabled()) {
+      throw AppError.badRequest("Firebird connections are not enabled on this server");
+    }
     const slug = body.slug || slugifyConnectionName(body.name);
     const encryptedConfig = encryptConnectionCredentials(
       body.connectionConfig as Record<string, unknown>,
@@ -196,6 +200,13 @@ const app = new Hono()
     if (!existing) throw AppError.notFound("Connection not found");
 
     const body = c.req.valid("json");
+    // `updateSchema` is partial, so a PUT can omit `type`. Resolve the
+    // effective type (incoming override, else the stored one) so a partial
+    // update of an existing Firebird connection still hits the gate.
+    const effectiveType = body.type ?? existing.type;
+    if (effectiveType === "firebird" && !customFirebirdEnabled()) {
+      throw AppError.badRequest("Firebird connections are not enabled on this server");
+    }
     if (body.connectionConfig) {
       body.connectionConfig = mergeConnectionConfig(
         body.connectionConfig as Record<string, unknown>,
@@ -226,6 +237,13 @@ const app = new Hono()
       project: projectId,
     });
     if (!conn) throw AppError.notFound("Connection not found");
+    // `testSingleConnection` runs the firebird install/attach branch, which
+    // loads the unsigned extension. Gate it the same way create/update do so a
+    // stored firebird connection cannot load the extension while the capability
+    // is disabled.
+    if (conn.type === "firebird" && !customFirebirdEnabled()) {
+      throw AppError.badRequest("Firebird connections are not enabled on this server");
+    }
 
     try {
       const instance = await testSingleConnection(conn as IConnectionDocument);

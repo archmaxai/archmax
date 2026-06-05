@@ -57,6 +57,15 @@ describe("parseExtensionSql", () => {
   it("rejects SELECT", () => {
     expect(() => parseExtensionSql("SELECT 1")).toThrow();
   });
+
+  it("rejects INSTALL FROM '<arbitrary source>' (unsigned custom-source installs are not supported)", () => {
+    expect(() =>
+      parseExtensionSql("INSTALL myext FROM 'https://example.com/repo'"),
+    ).toThrow(/must be INSTALL/i);
+    expect(() =>
+      parseExtensionSql("INSTALL myext FROM 'a''b'"),
+    ).toThrow(/must be INSTALL/i);
+  });
 });
 
 describe("buildRedactedAttachSql", () => {

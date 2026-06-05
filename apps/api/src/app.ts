@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "hono/logger";
-import { getEnv } from "@archmax/core/config/env";
+import { customFirebirdEnabled, getEnv } from "@archmax/core/config/env";
 import { runHealthChecks } from "@archmax/core/infra/health";
 import { corsMiddleware } from "./middleware/cors";
 import { csrfMiddleware } from "./middleware/csrf";
@@ -62,6 +62,7 @@ const app = new Hono()
     const env = getEnv();
     return c.json({
       agentConfigured: !!env.AGENT_API_KEY,
+      firebirdEnabled: customFirebirdEnabled(),
     });
   })
   .on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw))

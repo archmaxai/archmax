@@ -68,7 +68,7 @@ The sidebar SHALL display navigation items below the project selector. Each item
 
 The Home item SHALL be a leaf link pointing to `/$projectId` (the project dashboard). It SHALL use exact-match active detection so it is only highlighted when the user is on the dashboard, not on any sub-route.
 
-The Data Federation item SHALL be a collapsible group with two sub-items: Data Sources (`/$projectId/connections`) and Browser (`/$projectId/connections/data`).
+The Data Federation item SHALL be a collapsible group with three sub-items: Data Sources (`/$projectId/connections`), Browser (`/$projectId/connections/data`), and Console (`/$projectId/connections/console`).
 
 The Testing item SHALL be a collapsible group with four sub-items: Test Agents (`/$projectId/testing/agents`), Test Cases (`/$projectId/testing/cases`), Test Runs (`/$projectId/testing/runs`), and Playground (`/$projectId/testing/playground`). The group expands automatically when the active route is within the testing section. Clicking the Testing label toggles the group open/closed.
 
@@ -91,6 +91,12 @@ The MCP Access item SHALL be a collapsible group with two sub-items: Tokens (`/$
 - **WHEN** the user clicks the Data Connections nav item
 - **THEN** the URL changes to `/<projectId>/connections`
 - **AND** the Data Connections item is highlighted as active
+
+#### Scenario: Navigate to Federation Console
+
+- **WHEN** the user clicks the Console nav item under Data Federation
+- **THEN** the URL changes to `/<projectId>/connections/console`
+- **AND** the Console item is highlighted as active
 
 #### Scenario: Navigate to Semantic Models
 

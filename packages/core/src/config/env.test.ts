@@ -100,3 +100,41 @@ describe("env — APP_BASE_URL derivation", () => {
     spy.mockRestore();
   });
 });
+
+describe("env — DuckDB extension gates", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv, ...BASE_ENV };
+    delete process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  // Reload the env module with a fresh module registry after applying the
+  // given variable overrides, so each assertion observes a freshly-parsed env.
+  async function loadEnvWith(override: string, value: string) {
+    vi.resetModules();
+    process.env[override] = value;
+    return import("./env.js");
+  }
+
+  it("customFirebirdEnabled is false by default and true for true/1", async () => {
+    expect((await import("./env.js")).customFirebirdEnabled()).toBe(false);
+    expect(
+      (await loadEnvWith("DUCKDB_ENABLE_CUSTOM_FIREBIRD", "true")).customFirebirdEnabled(),
+    ).toBe(true);
+    expect(
+      (await loadEnvWith("DUCKDB_ENABLE_CUSTOM_FIREBIRD", "nope")).customFirebirdEnabled(),
+    ).toBe(false);
+  });
+
+  it("firebirdExtensionRepository is the public archmax-hosted repo", async () => {
+    expect((await import("./env.js")).firebirdExtensionRepository()).toBe(
+      "https://archmaxai.github.io/duckdb_firebird",
+    );
+  });
+});

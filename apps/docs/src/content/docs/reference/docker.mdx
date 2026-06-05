@@ -74,6 +74,18 @@ If you access archmax through a reverse proxy, load balancer, or custom domain, 
 |----------|---------|-------------|
 | `ARCHMAX_DATA_DIR` | `/data` | Root data directory for all persistent application data. Normally not changed in Docker. |
 
+### Data Federation (DuckDB)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QUERY_TIMEOUT_MS` | `30000` | Per-query DuckDB timeout in milliseconds. Applies to MCP, agent, data browser, and connection-test queries. On timeout the query is cancelled via `interrupt()`. |
+| `MAX_CONCURRENT_QUERIES` | `10` | Max concurrent DuckDB queries per project. Additional requests wait up to `QUERY_TIMEOUT_MS` for a slot. |
+| `DUCKDB_ENABLE_CUSTOM_FIREBIRD` | `false` | Enable the custom (unsigned) `firebird` connection type. When enabled, the type appears in the connection form and every DuckDB instance starts with `allow_unsigned_extensions` so the Firebird extension can load. This is the only switch that enables unsigned-extension support; the federation console never installs unsigned extensions from arbitrary custom sources. The extension is installed from the public archmax-hosted repository (`https://archmaxai.github.io/duckdb_firebird`). |
+
+<Aside type="caution">
+The Firebird extension is unsigned and executes arbitrary native code inside the application process. Only set `DUCKDB_ENABLE_CUSTOM_FIREBIRD=true` when you trust the Firebird extension source. It is disabled by default.
+</Aside>
+
 ### AI Agent
 
 <Aside type="caution">

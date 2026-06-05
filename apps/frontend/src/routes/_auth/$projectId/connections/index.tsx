@@ -74,6 +74,7 @@ interface Connection {
     user?: string;
     uri?: string;
     encrypt?: boolean;
+    charset?: string;
     endpoint?: string;
     warehouse?: string;
     token?: string;
@@ -328,10 +329,24 @@ function ConnectionFormDialog({
   const [password, setPassword] = useState("");
   const [uri, setUri] = useState("");
   const [encrypt, setEncrypt] = useState(true);
+  const [charset, setCharset] = useState("UTF8");
   const [endpoint, setEndpoint] = useState("");
   const [warehouse, setWarehouse] = useState("");
   const [token, setToken] = useState("");
   const [description, setDescription] = useState("");
+
+  const { data: appConfig } = useQuery({
+    queryKey: ["app-config"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      return res.json() as Promise<{ agentConfigured?: boolean; firebirdEnabled?: boolean }>;
+    },
+    staleTime: Infinity,
+  });
+  const firebirdEnabled = appConfig?.firebirdEnabled === true;
+  const connectionTypes = firebirdEnabled
+    ? [...CONNECTION_TYPES, "firebird"]
+    : CONNECTION_TYPES;
 
   const uriPlaceholders: Record<string, string> = {
     postgres: "postgres://user:pass@host:5432/db",
@@ -339,6 +354,7 @@ function ConnectionFormDialog({
     mssql: "Server=host,1433;Database=db;User Id=user;Password=pass",
     sqlite: "/path/to/database.db",
     duckdb: "/path/to/database.duckdb",
+    firebird: "host=localhost port=3050 database=C:\\firebird.fdb user=SYSDBA password=... charset=UTF8",
   };
 
   const defaultPorts: Record<string, string> = {
@@ -347,6 +363,7 @@ function ConnectionFormDialog({
     mssql: "1433",
     sqlite: "",
     duckdb: "",
+    firebird: "3050",
   };
 
   function autoSlug(n: string): string {
@@ -371,6 +388,7 @@ function ConnectionFormDialog({
       setPassword("");
       setUri(initialEditing.connectionConfig.uri ?? "");
       setEncrypt(initialEditing.connectionConfig.encrypt ?? true);
+      setCharset(initialEditing.connectionConfig.charset ?? "UTF8");
       setEndpoint(initialEditing.connectionConfig.endpoint ?? "");
       setWarehouse(initialEditing.connectionConfig.warehouse ?? "");
       setToken("");
@@ -389,6 +407,7 @@ function ConnectionFormDialog({
       setPassword("");
       setUri("");
       setEncrypt(true);
+      setCharset("UTF8");
       setEndpoint("");
       setWarehouse("");
       setToken("");
@@ -398,6 +417,7 @@ function ConnectionFormDialog({
   }, [open, initialEditing]);
 
   const isIceberg = type === "iceberg";
+  const isFirebird = type === "firebird";
   const showSchema = SCHEMA_TYPES.has(type);
   const isFileType = FILE_TYPES.has(type);
 
@@ -420,6 +440,7 @@ function ConnectionFormDialog({
       if (database) config.database = database;
       if (user) config.user = user;
       if (password) config.password = password;
+      if (type === "firebird" && charset) config.charset = charset;
     }
     if (schema) config.schema = schema;
     if (type === "mssql") config.encrypt = encrypt;
@@ -520,7 +541,7 @@ function ConnectionFormDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CONNECTION_TYPES.map((t) => (
+                  {connectionTypes.map((t) => (
                     <SelectItem key={t} value={t}>
                       {t}
                     </SelectItem>
@@ -658,7 +679,14 @@ function ConnectionFormDialog({
                           id="conn-db"
                           value={database}
                           onChange={(e) => setDatabase(e.target.value)}
+                          placeholder={isFirebird ? "C:\\firebird.fdb" : undefined}
+                          className={isFirebird ? "font-mono" : undefined}
                         />
+                        {isFirebird && (
+                          <p className="text-muted-foreground text-xs">
+                            Database path or alias as seen on the Firebird host machine
+                          </p>
+                        )}
                       </div>
                       <div className="content-tight">
                         <Label htmlFor="conn-user">User</Label>
@@ -678,6 +706,18 @@ function ConnectionFormDialog({
                         />
                       </div>
                     </div>
+
+                    {isFirebird && (
+                      <div className="content-tight">
+                        <Label htmlFor="conn-charset">Charset</Label>
+                        <Input
+                          id="conn-charset"
+                          value={charset}
+                          onChange={(e) => setCharset(e.target.value)}
+                          placeholder="UTF8"
+                        />
+                      </div>
+                    )}
                   </>
                 )}
               </TabsContent>
