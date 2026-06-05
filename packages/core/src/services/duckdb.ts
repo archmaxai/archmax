@@ -654,8 +654,19 @@ async function setupProjectInstance(
     projectInstances.set(projectId, entry);
   }
 
+  const firebirdActive = customFirebirdEnabled();
   for (const conn of connections) {
     if (entry.attachedSlugs.has(conn.slug)) continue;
+    // When the Firebird capability is disabled, a leftover/active firebird
+    // connection must not abort the whole project instance: installing the
+    // unsigned extension (or attaching) would throw and break DuckDB for
+    // every source. Skip it instead — it simply fails to attach while off.
+    if (conn.type === "firebird" && !firebirdActive) {
+      console.warn(
+        `[duckdb] Skipping firebird connection '${conn.slug}' — DUCKDB_ENABLE_CUSTOM_FIREBIRD is not enabled`,
+      );
+      continue;
+    }
     await attachConnection(entry, conn);
   }
 
@@ -695,7 +706,12 @@ export async function ensureProjectExtensionLoaded(
     return;
   }
 
-  if (!entry.loadedExtensions.has(extension)) {
+  // Run a full install when the extension isn't loaded yet, OR when the
+  // caller explicitly requested a custom source. Without the `fromSource`
+  // override an `INSTALL … FROM '<source>'` would be silently ignored once
+  // the same-named extension was already loaded (e.g. by federation), and
+  // the API would report success without installing from the requested source.
+  if (!entry.loadedExtensions.has(extension) || options?.fromSource) {
     await installAndLoadExtension(entry.instance, extension, {
       fromCommunity: options?.fromCommunity,
       fromSource: options?.fromSource,
@@ -722,8 +738,10 @@ async function installAndLoadExtension(
     // The custom (unsigned) Firebird extension is installed from a custom
     // repository: set `custom_extension_repository` then a plain INSTALL,
     // rather than the `INSTALL <ext> FROM '<source>'` shape. The repo is
-    // single-quote escaped before interpolation.
-    if (ext === "firebird") {
+    // single-quote escaped before interpolation. An explicit console
+    // `INSTALL firebird FROM '<source>'` (fromSource) overrides this and
+    // falls through to the generic `FROM '<source>'` path below.
+    if (ext === "firebird" && !options?.fromSource) {
       const repo = firebirdExtensionRepository().replace(/'/g, "''");
       await db.run(`SET custom_extension_repository = '${repo}'`);
       await db.run("INSTALL firebird");

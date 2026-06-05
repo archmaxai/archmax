@@ -90,4 +90,19 @@ describe("connections route — firebird gate", () => {
     expect(res.status).toBe(400);
     expect(mocks.connectionFindOneAndUpdate).not.toHaveBeenCalled();
   });
+
+  it("rejects a partial PUT (no type) on an existing firebird connection when disabled", async () => {
+    // `updateSchema` is partial, so a PUT can omit `type`. The gate must
+    // still fire based on the stored connection's type.
+    mocks.connectionFindOne.mockReturnValue({
+      lean: vi.fn().mockResolvedValue({ _id: "c1", project: "proj1", type: "firebird", connectionConfig: {} }),
+    });
+    const res = await app.request(`${BASE}/c1`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description: "tweaked" }),
+    });
+    expect(res.status).toBe(400);
+    expect(mocks.connectionFindOneAndUpdate).not.toHaveBeenCalled();
+  });
 });

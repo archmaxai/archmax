@@ -200,7 +200,11 @@ const app = new Hono()
     if (!existing) throw AppError.notFound("Connection not found");
 
     const body = c.req.valid("json");
-    if (body.type === "firebird" && !customFirebirdEnabled()) {
+    // `updateSchema` is partial, so a PUT can omit `type`. Resolve the
+    // effective type (incoming override, else the stored one) so a partial
+    // update of an existing Firebird connection still hits the gate.
+    const effectiveType = body.type ?? existing.type;
+    if (effectiveType === "firebird" && !customFirebirdEnabled()) {
       throw AppError.badRequest("Firebird connections are not enabled on this server");
     }
     if (body.connectionConfig) {
