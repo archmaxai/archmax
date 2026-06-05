@@ -1,7 +1,8 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
-import type { IConnectionDocument } from "../models/Connection";
+import { connectDB } from "../infra/db";
+import { Connection, type IConnectionDocument } from "../models/index";
 import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
 import { getEnv } from "../config/env";
@@ -634,13 +635,59 @@ async function setupProjectInstance(
   return entry.instance;
 }
 
+/**
+ * Install and/or load a DuckDB extension on the project's cached instance.
+ * Used by the federation console; mutates in-memory extension state only.
+ */
+export async function ensureProjectExtensionLoaded(
+  projectId: string,
+  extension: string,
+  options?: { fromCommunity?: boolean; loadOnly?: boolean },
+): Promise<void> {
+  await connectDB();
+  const connections = await Connection.find({ project: projectId, isActive: true }).lean();
+  await getProjectInstance(projectId, connections, { readOnly: true });
+  const entry = projectInstances.get(projectId);
+  if (!entry) {
+    throw new Error(`No DuckDB instance for project ${projectId}`);
+  }
+
+  if (options?.loadOnly) {
+    const db = await entry.instance.connect();
+    try {
+      await db.run(`LOAD ${extension}`);
+    } finally {
+      db.disconnectSync();
+    }
+    entry.loadedExtensions.add(extension);
+    return;
+  }
+
+  if (!entry.loadedExtensions.has(extension)) {
+    await installAndLoadExtension(entry.instance, extension, {
+      fromCommunity: options?.fromCommunity,
+    });
+    entry.loadedExtensions.add(extension);
+    return;
+  }
+
+  const db = await entry.instance.connect();
+  try {
+    await db.run(`LOAD ${extension}`);
+  } finally {
+    db.disconnectSync();
+  }
+}
+
 async function installAndLoadExtension(
   instance: DuckDBInstance,
   ext: string,
+  options?: { fromCommunity?: boolean },
 ): Promise<void> {
   const db = await instance.connect();
   try {
-    const installSuffix = COMMUNITY_EXTENSIONS.has(ext) ? " FROM community" : "";
+    const fromCommunity = options?.fromCommunity ?? COMMUNITY_EXTENSIONS.has(ext);
+    const installSuffix = fromCommunity ? " FROM community" : "";
     await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
     if (ext === "mysql") {

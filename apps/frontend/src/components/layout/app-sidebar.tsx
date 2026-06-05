@@ -27,6 +27,7 @@ import type { Project } from "@/lib/project-context";
 type NavChildPath =
   | "connections"
   | "connections/data"
+  | "connections/console"
   | "models"
   | "testing/agents"
   | "testing/cases"
@@ -48,6 +49,7 @@ const navItems: NavItem[] = [
     children: [
       { label: "Data Sources", path: "connections" },
       { label: "Browser", path: "connections/data" },
+      { label: "Console", path: "connections/console" },
     ],
   },
   { label: "Semantic Models", icon: Sparkles, path: "models" },

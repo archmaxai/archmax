@@ -1,10 +1,11 @@
 import "./env";
 import { serve } from "@hono/node-server";
 import app from "./app";
-import { validateEnvOrSleep } from "@archmax/core/config/env";
+import { validateEnvOrSleep, getEnv } from "@archmax/core/config/env";
 import { connectDB } from "@archmax/core/infra/db";
 import { runMigrations } from "@archmax/core/infra/migrations/runner";
 import { disposeAllProjectInstances } from "@archmax/core/services/duckdb";
+import { SemanticModelFileService } from "@archmax/core/services/semantic-model-files";
 import { seedAdmin } from "./lib/seed-admin";
 
 const env = await validateEnvOrSleep();
@@ -69,6 +70,14 @@ function printBanner(port: number) {
 await connectDB();
 await runMigrations();
 await seedAdmin();
+
+// Remove stale auto-generated project-root `AGENTS.md` summaries so the slot is
+// free for optional user-authored agent instructions (loaded via Deep Agents
+// `memory`). Only files matching the former generator's header are removed.
+const removedLegacyAgentsMd = await new SemanticModelFileService(getEnv().projectsDir).cleanupLegacyAgentsMd();
+if (removedLegacyAgentsMd > 0) {
+  console.log(`[startup] Removed ${removedLegacyAgentsMd} legacy auto-generated AGENTS.md file(s)`);
+}
 
 const server = serve({
   fetch: app.fetch,

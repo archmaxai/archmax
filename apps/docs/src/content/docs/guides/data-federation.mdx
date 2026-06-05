@@ -75,8 +75,17 @@ WHERE s.created_at > '2024-01-01'
 
 This is used internally by:
 - The **Data Browser** for exploring connection schemas
+- The **Federation Console** for ad-hoc SQL and extension management (see below)
 - The **Semantic Model Agent** for discovering and mapping tables
 - The **MCP `execute_query` tool** for AI agent queries (through scoped VIEWs)
+
+## Federation Console
+
+Under **Data Federation → Console** (`/<projectId>/connections/console`), a single SQL editor runs read-oriented SQL directly against the project's federated DuckDB instance (`SELECT`, `WITH`, `SHOW`, `DESCRIBE`, `EXPLAIN`). Unlike MCP `execute_query`, the console uses **raw connection slugs** (e.g. `shopify.public.orders`) — it does not go through scoped VIEWs.
+
+The same editor also manages extensions: enter a single `INSTALL <name> [FROM community]` or `LOAD <name>` statement and press **Run** to install/load a DuckDB extension. The pre-installed extensions are `postgres`, `mysql`, `sqlite`, `mssql` (community), `iceberg`, `httpfs`, and `avro`. Extension state is held on the **API process** in-memory instance; the BullMQ worker maintains its own instance and will not see extensions installed from the console until its cache is rebuilt (e.g. after **Re-explore schemas** or a process restart).
+
+Press **Run** (or ⌘/Ctrl + Enter) to execute. Write statements (`INSERT`, `UPDATE`, `DELETE`, `ATTACH`, …) are rejected — attached upstream catalogs are read-only.
 
 ## Scoped VIEWs
 

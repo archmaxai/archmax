@@ -178,7 +178,7 @@ Semantic models are stored as YAML files on disk, one file per model, in a per-p
 - **Relationships** — foreign-key relationships between datasets with `from_columns`/`to_columns` mappings
 - **Metrics** — quantitative measures with OSI expression objects spanning datasets
 
-All entities support `ai_context` (string or object with instructions, synonyms, examples) and `custom_extensions` for vendor-specific data. Each project directory also contains an auto-generated `AGENTS.md` summarizing its semantic models for AI assistants.
+All entities support `ai_context` (string or object with instructions, synonyms, examples) and `custom_extensions` for vendor-specific data. A project directory may also contain an optional, user-authored `AGENTS.md` at its root; when present it is loaded into the semantic-model authoring agent's instructions via the Deep Agents `memory` feature (it is no longer auto-generated).
 
 A global agent system prompt at `packages/core/prompts/semantic-model-agent.md` guides AI agents through the semantic model assembly workflow (schema discovery, field mapping, enum detection, relationship inference, metric definition).
 

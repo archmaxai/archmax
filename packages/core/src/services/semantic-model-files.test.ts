@@ -257,3 +257,61 @@ describe("SemanticModelFileService.updateDatasetExtensions", () => {
     expect(ds.custom_extensions).toEqual(extensions);
   });
 });
+
+describe("SemanticModelFileService.cleanupLegacyAgentsMd", () => {
+  let tmpDir: string;
+  let svc: SemanticModelFileService;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "smfs-agents-test-"));
+    svc = new SemanticModelFileService(tmpDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function writeAgentsMd(projectId: string, content: string): Promise<string> {
+    const dir = join(tmpDir, projectId);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "AGENTS.md");
+    await writeFile(path, content, "utf-8");
+    return path;
+  }
+
+  async function exists(path: string): Promise<boolean> {
+    try {
+      await readFile(path, "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("removes an auto-generated AGENTS.md (matching the header signature)", async () => {
+    const path = await writeAgentsMd("proj1", "# Semantic Models\n\nThis project contains 2 semantic models.\n");
+
+    const removed = await svc.cleanupLegacyAgentsMd();
+
+    expect(removed).toBe(1);
+    expect(await exists(path)).toBe(false);
+  });
+
+  it("preserves a user-authored AGENTS.md (no signature)", async () => {
+    const path = await writeAgentsMd("proj1", "# Project Instructions\n\nAlways use snake_case.\n");
+
+    const removed = await svc.cleanupLegacyAgentsMd();
+
+    expect(removed).toBe(0);
+    expect(await exists(path)).toBe(true);
+  });
+
+  it("is idempotent and tolerant of a missing base dir / missing files", async () => {
+    const empty = new SemanticModelFileService(join(tmpDir, "does-not-exist"));
+    expect(await empty.cleanupLegacyAgentsMd()).toBe(0);
+
+    await writeAgentsMd("proj1", "# Semantic Models\n");
+    expect(await svc.cleanupLegacyAgentsMd()).toBe(1);
+    expect(await svc.cleanupLegacyAgentsMd()).toBe(0);
+  });
+});
