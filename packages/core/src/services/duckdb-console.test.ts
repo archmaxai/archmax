@@ -57,6 +57,42 @@ describe("parseExtensionSql", () => {
   it("rejects SELECT", () => {
     expect(() => parseExtensionSql("SELECT 1")).toThrow();
   });
+
+  it("parses INSTALL FROM '<source>' when unsigned extensions are allowed", () => {
+    expect(
+      parseExtensionSql("INSTALL myext FROM 'https://example.com/repo'", true),
+    ).toEqual({
+      extension: "myext",
+      loadOnly: false,
+      fromCommunity: false,
+      fromSource: "https://example.com/repo",
+    });
+  });
+
+  it("unescapes doubled quotes in a custom source", () => {
+    expect(parseExtensionSql("INSTALL myext FROM 'a''b'", true).fromSource).toBe("a'b");
+  });
+
+  it("rejects INSTALL FROM '<source>' when unsigned extensions are disabled", () => {
+    expect(() =>
+      parseExtensionSql("INSTALL myext FROM 'https://example.com/repo'"),
+    ).toThrow(/must be INSTALL/i);
+    expect(() =>
+      parseExtensionSql("INSTALL myext FROM 'https://example.com/repo'", false),
+    ).toThrow(/must be INSTALL/i);
+  });
+
+  it("rejects invalid extension name with a custom source even when allowed", () => {
+    expect(() => parseExtensionSql("INSTALL ../evil FROM 'https://x'", true)).toThrow();
+  });
+
+  it("does not treat FROM community as a custom source", () => {
+    expect(parseExtensionSql("INSTALL spatial FROM community", true)).toEqual({
+      extension: "spatial",
+      loadOnly: false,
+      fromCommunity: true,
+    });
+  });
 });
 
 describe("buildRedactedAttachSql", () => {

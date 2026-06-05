@@ -74,6 +74,18 @@ If you access archmax through a reverse proxy, load balancer, or custom domain, 
 |----------|---------|-------------|
 | `ARCHMAX_DATA_DIR` | `/data` | Root data directory for all persistent application data. Normally not changed in Docker. |
 
+### Data Federation (DuckDB)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QUERY_TIMEOUT_MS` | `30000` | Per-query DuckDB timeout in milliseconds. Applies to MCP, agent, data browser, and connection-test queries. On timeout the query is cancelled via `interrupt()`. |
+| `MAX_CONCURRENT_QUERIES` | `10` | Max concurrent DuckDB queries per project. Additional requests wait up to `QUERY_TIMEOUT_MS` for a slot. |
+| `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS` | `false` | Allow installing unsigned extensions from the federation console. When enabled, DuckDB instances start with `allow_unsigned_extensions` and the console accepts `INSTALL <extension> FROM '<source>'` for custom repositories or paths. |
+
+<Aside type="caution">
+Unsigned DuckDB extensions execute arbitrary native code inside the application process. Only set `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS=true` when you trust the extension sources you install. It is disabled by default.
+</Aside>
+
 ### AI Agent
 
 <Aside type="caution">

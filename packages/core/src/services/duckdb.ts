@@ -5,7 +5,7 @@ import { connectDB } from "../infra/db";
 import { Connection, type IConnectionDocument } from "../models/index";
 import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
-import { getEnv } from "../config/env";
+import { allowUnsignedExtensions, getEnv } from "../config/env";
 import { validateSqlAst } from "./sql-ast-validation";
 
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -31,6 +31,20 @@ async function deleteDuckdbFiles(path: string): Promise<void> {
   await rm(path, { force: true });
   await rm(`${path}.wal`, { force: true });
   await rm(`${path}.tmp`, { force: true, recursive: true });
+}
+
+/**
+ * Create a fresh in-memory `DuckDBInstance`, applying the
+ * `allow_unsigned_extensions` startup option when the operator has opted in
+ * via `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS`. The option can only be set at
+ * instance-creation time (not via `SET`), so every call site that opens an
+ * instance routes through here to get a consistent configuration.
+ */
+export async function createDuckDBInstance(): Promise<DuckDBInstance> {
+  if (allowUnsignedExtensions()) {
+    return DuckDBInstance.create(undefined, { allow_unsigned_extensions: "true" });
+  }
+  return DuckDBInstance.create();
 }
 
 // ── Query timeout helper ─────────────────────────────────────────────
@@ -610,7 +624,7 @@ async function setupProjectInstance(
     // (no hash cache) and connections are re-attached whenever a fresh
     // instance is created, so an in-memory database is functionally
     // equivalent without the lock contention.
-    const instance = await DuckDBInstance.create();
+    const instance = await createDuckDBInstance();
     entry = {
       instance,
       attachedSlugs: new Set(),
@@ -642,7 +656,7 @@ async function setupProjectInstance(
 export async function ensureProjectExtensionLoaded(
   projectId: string,
   extension: string,
-  options?: { fromCommunity?: boolean; loadOnly?: boolean },
+  options?: { fromCommunity?: boolean; loadOnly?: boolean; fromSource?: string },
 ): Promise<void> {
   await connectDB();
   const connections = await Connection.find({ project: projectId, isActive: true }).lean();
@@ -666,6 +680,7 @@ export async function ensureProjectExtensionLoaded(
   if (!entry.loadedExtensions.has(extension)) {
     await installAndLoadExtension(entry.instance, extension, {
       fromCommunity: options?.fromCommunity,
+      fromSource: options?.fromSource,
     });
     entry.loadedExtensions.add(extension);
     return;
@@ -682,12 +697,19 @@ export async function ensureProjectExtensionLoaded(
 async function installAndLoadExtension(
   instance: DuckDBInstance,
   ext: string,
-  options?: { fromCommunity?: boolean },
+  options?: { fromCommunity?: boolean; fromSource?: string },
 ): Promise<void> {
   const db = await instance.connect();
   try {
-    const fromCommunity = options?.fromCommunity ?? COMMUNITY_EXTENSIONS.has(ext);
-    const installSuffix = fromCommunity ? " FROM community" : "";
+    // A custom source (env-gated unsigned install) wins over the community
+    // repository. The source is single-quote escaped before interpolation.
+    let installSuffix: string;
+    if (options?.fromSource) {
+      installSuffix = ` FROM '${options.fromSource.replace(/'/g, "''")}'`;
+    } else {
+      const fromCommunity = options?.fromCommunity ?? COMMUNITY_EXTENSIONS.has(ext);
+      installSuffix = fromCommunity ? " FROM community" : "";
+    }
     await db.run(`INSTALL ${ext}${installSuffix}`);
     await db.run(`LOAD ${ext}`);
     if (ext === "mysql") {
@@ -822,7 +844,7 @@ export async function testSingleConnection(conn: IConnectionDocument): Promise<D
   const ext = extensionForType(conn.type);
   if (!ext) throw new Error(`Unsupported connection type: ${conn.type}`);
 
-  const instance = await DuckDBInstance.create();
+  const instance = await createDuckDBInstance();
   await installAndLoadExtension(instance, ext);
 
   const db = await instance.connect();
@@ -836,7 +858,7 @@ export async function testSingleConnection(conn: IConnectionDocument): Promise<D
 }
 
 async function testIcebergConnection(conn: IConnectionDocument): Promise<DuckDBInstance> {
-  const instance = await DuckDBInstance.create();
+  const instance = await createDuckDBInstance();
   for (const ext of ICEBERG_EXTENSIONS) {
     await installAndLoadExtension(instance, ext);
   }

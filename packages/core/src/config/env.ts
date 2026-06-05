@@ -33,6 +33,8 @@ const envSchema = z.object({
   QUERY_TIMEOUT_MS: z.string().optional().default("30000"),
   MAX_CONCURRENT_QUERIES: z.string().optional().default("10"),
 
+  DUCKDB_ALLOW_UNSIGNED_EXTENSIONS: z.string().optional(),
+
   REDIS_URL: z.string().optional(),
   WORKER_CONCURRENCY: z.string().optional(),
 
@@ -168,3 +170,16 @@ export function getEnv(): ParsedEnv {
 }
 
 export type Env = ParsedEnv;
+
+/**
+ * Whether the federated DuckDB instances may load unsigned extensions.
+ *
+ * Off by default. Enabling it (`DUCKDB_ALLOW_UNSIGNED_EXTENSIONS=true|1`)
+ * starts every DuckDB instance with `allow_unsigned_extensions` and lets the
+ * federation console install extensions from a custom source. Unsigned
+ * extensions run arbitrary native code, so this is an operator opt-in.
+ */
+export function allowUnsignedExtensions(): boolean {
+  const raw = getEnv().DUCKDB_ALLOW_UNSIGNED_EXTENSIONS?.trim().toLowerCase();
+  return raw === "true" || raw === "1";
+}
