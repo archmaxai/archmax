@@ -237,6 +237,13 @@ const app = new Hono()
       project: projectId,
     });
     if (!conn) throw AppError.notFound("Connection not found");
+    // `testSingleConnection` runs the firebird install/attach branch, which
+    // loads the unsigned extension. Gate it the same way create/update do so a
+    // stored firebird connection cannot load the extension while the capability
+    // is disabled.
+    if (conn.type === "firebird" && !customFirebirdEnabled()) {
+      throw AppError.badRequest("Firebird connections are not enabled on this server");
+    }
 
     try {
       const instance = await testSingleConnection(conn as IConnectionDocument);

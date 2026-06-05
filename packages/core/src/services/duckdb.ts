@@ -928,6 +928,12 @@ async function disableExternalAccess(instance: DuckDBInstance): Promise<void> {
  * Used for connectivity tests so results are not affected by cached state.
  */
 export async function testSingleConnection(conn: IConnectionDocument): Promise<DuckDBInstance> {
+  // Defensive gate: testing a firebird connection installs/loads the unsigned
+  // extension, so refuse when the capability is off even if a caller forgot to
+  // check (the connections route gates this too).
+  if (conn.type === "firebird" && !customFirebirdEnabled()) {
+    throw new Error("Firebird connections are not enabled on this server");
+  }
   if (conn.type === "iceberg") {
     return testIcebergConnection(conn);
   }

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   connectionFindOne: vi.fn(),
   connectionCreate: vi.fn(),
   connectionFindOneAndUpdate: vi.fn(),
+  testSingleConnection: vi.fn(),
 }));
 
 vi.mock("@archmax/core/infra/db", () => ({ connectDB: mocks.connectDB }));
@@ -29,7 +30,7 @@ vi.mock("@archmax/core/services/duckdb", () => ({
   deleteProjectDuckdbFile: vi.fn(),
   disposeProjectInstance: vi.fn(),
   getProjectInstance: vi.fn(),
-  testSingleConnection: vi.fn(),
+  testSingleConnection: mocks.testSingleConnection,
   withQueryTimeout: vi.fn(async (_db: unknown, op: () => Promise<unknown>) => op()),
 }));
 
@@ -104,5 +105,27 @@ describe("connections route — firebird gate", () => {
     });
     expect(res.status).toBe(400);
     expect(mocks.connectionFindOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects testing a stored firebird connection with 400 when disabled", async () => {
+    // `POST /:id/test` must not run the firebird install/attach branch (which
+    // loads the unsigned extension) while the capability is off.
+    mocks.connectionFindOne.mockResolvedValue({ _id: "c1", project: "proj1", type: "firebird" });
+    const res = await app.request(`${BASE}/c1/test`, { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = await jsonBody<{ error: string }>(res);
+    expect(body.error).toMatch(/not enabled/i);
+    expect(mocks.testSingleConnection).not.toHaveBeenCalled();
+  });
+
+  it("tests a stored firebird connection when enabled", async () => {
+    mocks.customFirebirdEnabled.mockReturnValue(true);
+    mocks.connectionFindOne.mockResolvedValue({ _id: "c1", project: "proj1", type: "firebird" });
+    mocks.testSingleConnection.mockResolvedValue({
+      connect: vi.fn().mockResolvedValue({ run: vi.fn(), disconnectSync: vi.fn() }),
+    });
+    const res = await app.request(`${BASE}/c1/test`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(mocks.testSingleConnection).toHaveBeenCalledTimes(1);
   });
 });
