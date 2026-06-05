@@ -8,6 +8,9 @@ const TMP_PROJECTS_DIR = mkdtempSync(join(tmpdir(), "archmax-duckdb-test-"));
 
 vi.mock("../config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "", projectsDir: TMP_PROJECTS_DIR })),
+  allowUnsignedExtensions: vi.fn(() => false),
+  customFirebirdEnabled: vi.fn(() => false),
+  firebirdExtensionRepository: vi.fn(() => undefined),
 }));
 
 import {

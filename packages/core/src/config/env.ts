@@ -35,6 +35,9 @@ const envSchema = z.object({
 
   DUCKDB_ALLOW_UNSIGNED_EXTENSIONS: z.string().optional(),
 
+  DUCKDB_ENABLE_CUSTOM_FIREBIRD: z.string().optional(),
+  DUCKDB_FIREBIRD_EXTENSION_REPOSITORY: z.string().optional(),
+
   REDIS_URL: z.string().optional(),
   WORKER_CONCURRENCY: z.string().optional(),
 
@@ -182,4 +185,34 @@ export type Env = ParsedEnv;
 export function allowUnsignedExtensions(): boolean {
   const raw = getEnv().DUCKDB_ALLOW_UNSIGNED_EXTENSIONS?.trim().toLowerCase();
   return raw === "true" || raw === "1";
+}
+
+const DEFAULT_FIREBIRD_EXTENSION_REPOSITORY =
+  "https://archmaxai.github.io/duckdb_firebird";
+
+/**
+ * Whether the custom, unsigned Firebird DuckDB extension is enabled.
+ *
+ * Off by default. Enabling it (`DUCKDB_ENABLE_CUSTOM_FIREBIRD=true|1`)
+ * activates the `firebird` connection type and causes every DuckDB instance
+ * to be started with `allow_unsigned_extensions` so the custom extension can
+ * load (see `createDuckDBInstance`). Enabling this does NOT open the
+ * federation console's arbitrary custom-source install path, which remains
+ * gated solely by `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS`.
+ */
+export function customFirebirdEnabled(): boolean {
+  const raw = getEnv().DUCKDB_ENABLE_CUSTOM_FIREBIRD?.trim().toLowerCase();
+  return raw === "true" || raw === "1";
+}
+
+/**
+ * Custom extension repository URL used to install the Firebird extension via
+ * `SET custom_extension_repository = '<repo>'`. Falls back to the public
+ * archmax-hosted repository when unset.
+ */
+export function firebirdExtensionRepository(): string {
+  return (
+    getEnv().DUCKDB_FIREBIRD_EXTENSION_REPOSITORY?.trim() ||
+    DEFAULT_FIREBIRD_EXTENSION_REPOSITORY
+  );
 }

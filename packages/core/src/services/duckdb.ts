@@ -5,7 +5,12 @@ import { connectDB } from "../infra/db";
 import { Connection, type IConnectionDocument } from "../models/index";
 import type { SemanticModel } from "./semantic-model-schema";
 import { decryptConnectionCredentials } from "../infra/crypto";
-import { allowUnsignedExtensions, getEnv } from "../config/env";
+import {
+  allowUnsignedExtensions,
+  customFirebirdEnabled,
+  firebirdExtensionRepository,
+  getEnv,
+} from "../config/env";
 import { validateSqlAst } from "./sql-ast-validation";
 
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -36,12 +41,14 @@ async function deleteDuckdbFiles(path: string): Promise<void> {
 /**
  * Create a fresh in-memory `DuckDBInstance`, applying the
  * `allow_unsigned_extensions` startup option when the operator has opted in
- * via `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS`. The option can only be set at
- * instance-creation time (not via `SET`), so every call site that opens an
- * instance routes through here to get a consistent configuration.
+ * via `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS` or enabled the custom Firebird
+ * extension (`DUCKDB_ENABLE_CUSTOM_FIREBIRD`), which is itself unsigned. The
+ * option can only be set at instance-creation time (not via `SET`), so every
+ * call site that opens an instance routes through here to get a consistent
+ * configuration.
  */
 export async function createDuckDBInstance(): Promise<DuckDBInstance> {
-  if (allowUnsignedExtensions()) {
+  if (allowUnsignedExtensions() || customFirebirdEnabled()) {
     return DuckDBInstance.create(undefined, { allow_unsigned_extensions: "true" });
   }
   return DuckDBInstance.create();
@@ -318,6 +325,8 @@ function extensionForType(type: string): string | null {
       return "mssql";
     case "sqlite":
       return "sqlite";
+    case "firebird":
+      return "firebird";
     default:
       return null;
   }
@@ -350,6 +359,15 @@ export function buildAttachString(conn: IConnectionDocument): string {
     case "mysql": {
       const port = cfg.port ?? 3306;
       return `host=${cfg.host} port=${port} database=${cfg.database} user=${cfg.user} password=${cfg.password}`;
+    }
+    case "firebird": {
+      // The custom (unsigned) Firebird extension takes a key=value DSN. The
+      // `database` value is an opaque path/alias as seen on the Firebird host
+      // (e.g. `C:\firebird.fdb`), not a local file path. Default port 3050 and
+      // charset UTF8 mirror the Firebird defaults.
+      const port = cfg.port ?? 3050;
+      const charset = cfg.charset ?? "UTF8";
+      return `host=${cfg.host} port=${port} database=${cfg.database} user=${cfg.user} password=${cfg.password} charset=${charset}`;
     }
     case "sqlite":
       return cfg.database ?? "";
@@ -701,6 +719,17 @@ async function installAndLoadExtension(
 ): Promise<void> {
   const db = await instance.connect();
   try {
+    // The custom (unsigned) Firebird extension is installed from a custom
+    // repository: set `custom_extension_repository` then a plain INSTALL,
+    // rather than the `INSTALL <ext> FROM '<source>'` shape. The repo is
+    // single-quote escaped before interpolation.
+    if (ext === "firebird") {
+      const repo = firebirdExtensionRepository().replace(/'/g, "''");
+      await db.run(`SET custom_extension_repository = '${repo}'`);
+      await db.run("INSTALL firebird");
+      await db.run("LOAD firebird");
+      return;
+    }
     // A custom source (env-gated unsigned install) wins over the community
     // repository. The source is single-quote escaped before interpolation.
     let installSuffix: string;

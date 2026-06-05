@@ -2,7 +2,7 @@
 
 ### Requirement: Connection Model
 
-The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, iceberg, firebird), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. For iceberg connections, `connectionConfig` SHALL additionally accept: `endpoint` (string, required for iceberg — the REST Catalog URL, validated as a URL), `warehouse` (string, required for iceberg — warehouse identifier), `token` (string, required for iceberg — bearer token, sensitive), `authorizationType` (enum: `bearer`, `oauth2`, default `bearer`), `clientId` (string, optional — OAuth2 client ID, reserved for future use), `clientSecret` (string, optional — OAuth2 client secret, sensitive, reserved for future use), and `oauth2ServerUri` (string, optional — OAuth2 token endpoint, reserved for future use). The `endpoint` field SHALL be validated as a URL (scheme + host at minimum). The `token` and `clientSecret` fields SHALL receive the same encryption-at-rest, redaction, and credential-preservation treatment as the `password` field. For `firebird` connections, `connectionConfig` SHALL reuse the structured `host`/`port`/`database`/`user`/`password` fields (and optional `schema`/`uri`) like postgres and mysql; the `password` field SHALL receive the same encryption, redaction, and preservation treatment. The `firebird` type SHALL be accepted on create/update only when the Firebird capability is active (see "Env-Gated Firebird Federation"); when inactive, create/update with `type: "firebird"` SHALL be rejected with a 400 error.
+The system SHALL provide a `Connection` Mongoose model with the following fields: `project` (ObjectId ref to Project, required), `name` (string, required), `slug` (string, required, matches pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`), `type` (enum: postgres, mysql, mssql, sqlite, duckdb, iceberg, firebird), `connectionConfig` (object with type-specific connection parameters), `description` (string, optional), `isActive` (boolean, default true), `createdAt` (Date), `updatedAt` (Date), `deleted` (boolean, default false), `deletedAt` (Date, optional). The `slug` field MUST be unique within a project (among non-deleted connections) and serves as the DuckDB schema alias when the connection is attached. The `connectionConfig` Zod schema SHALL use `.strict()` mode (rejecting unknown fields) and SHALL validate the `schema` field, when present, against the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. The `connectionConfig` schema SHALL include an optional non-sensitive `charset` (string) field used by the Firebird DSN (default `UTF8`). For iceberg connections, `connectionConfig` SHALL additionally accept: `endpoint` (string, required for iceberg — the REST Catalog URL, validated as a URL), `warehouse` (string, required for iceberg — warehouse identifier), `token` (string, required for iceberg — bearer token, sensitive), `authorizationType` (enum: `bearer`, `oauth2`, default `bearer`), `clientId` (string, optional — OAuth2 client ID, reserved for future use), `clientSecret` (string, optional — OAuth2 client secret, sensitive, reserved for future use), and `oauth2ServerUri` (string, optional — OAuth2 token endpoint, reserved for future use). The `endpoint` field SHALL be validated as a URL (scheme + host at minimum). The `token` and `clientSecret` fields SHALL receive the same encryption-at-rest, redaction, and credential-preservation treatment as the `password` field. For `firebird` connections, `connectionConfig` SHALL reuse the structured `host`/`port`/`user`/`password` fields (and optional `schema`/`uri`) plus `database` (the database path or alias **as seen on the Firebird host machine**, e.g. `C:\firebird.fdb`) and `charset` (default `UTF8`); the `password` field SHALL receive the same encryption, redaction, and preservation treatment, while `charset` is non-sensitive. The `firebird` type SHALL be accepted on create/update only when the Firebird capability is active (see "Env-Gated Firebird Federation"); when inactive, create/update with `type: "firebird"` SHALL be rejected with a 400 error.
 
 #### Scenario: Create a postgres connection
 
@@ -36,7 +36,7 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 
 #### Scenario: Firebird type accepted only when active
 
-- **WHEN** a connection is created with `type: "firebird"` and the Firebird capability is active
+- **WHEN** a connection is created with `type: "firebird"`, structured config (`host`, `port`, `database`, `user`, `password`, `charset`), and the Firebird capability is active
 - **THEN** the connection is accepted and stored
 - **AND WHEN** the Firebird capability is inactive, the create request is rejected with a 400 error
 
@@ -71,30 +71,30 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 
 ### Requirement: Env-Gated Firebird Federation
 
-The DuckDB federation pipeline SHALL support `firebird` connections only when the Firebird capability is active — that is, when both `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS` and `DUCKDB_ENABLE_FIREBIRD` are truthy (`true`/`1`, case-insensitive). A `firebirdEnabled()` helper SHALL encode this combined gate and return `false` whenever unsigned extensions are not allowed.
+The DuckDB federation pipeline SHALL support `firebird` connections only when the Firebird capability is active — that is, when `DUCKDB_ENABLE_CUSTOM_FIREBIRD` is truthy (`true`/`1`, case-insensitive). A `customFirebirdEnabled()` helper SHALL encode this gate. Enabling the capability SHALL cause project DuckDB instances to be created with `allow_unsigned_extensions` (in addition to the existing `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS` path), because the custom Firebird extension is unsigned.
 
 When the Firebird capability is active:
 
 - The Firebird DuckDB extension SHALL be installed and loaded automatically from the configured custom repository, with no console action, by running `SET custom_extension_repository = '<repo>'` (from `DUCKDB_FIREBIRD_EXTENSION_REPOSITORY`, single-quote-escaped) followed by `INSTALL firebird` and `LOAD firebird` before a Firebird connection is attached or tested. The repository value SHALL default to `https://archmaxai.github.io/duckdb_firebird`.
-- Firebird connections SHALL attach using `TYPE firebird` with `READ_ONLY`, built from the structured `host`/`port`/`database`/`user`/`password` parameters (default port `3050`) or from a pass-through `connectionConfig.uri`, so Firebird tables participate in federation, the data browser, the connection test, and MCP queries like other relational types.
-- Project DuckDB instances SHALL already be created with `allow_unsigned_extensions` (per the unsigned-extensions gate), which is required for the unsigned Firebird extension to load.
+- Firebird connections SHALL attach using `TYPE firebird` with `READ_ONLY`, built from the structured `host`/`port`/`database`/`user`/`password`/`charset` parameters (default port `3050`, default charset `UTF8`) or from a pass-through `connectionConfig.uri`, so Firebird tables participate in federation, the data browser, the connection test, and MCP queries like other relational types. The `database` value SHALL be treated as an opaque host-side path or alias (e.g. `C:\firebird.fdb`) and SHALL NOT be validated as a local filesystem path on the application host.
 
 When the Firebird capability is inactive (the default):
 
 - The connection API SHALL reject `type: "firebird"` create/update with a 400 error.
 - No Firebird extension install or attach SHALL be attempted.
 
-The API SHALL expose a server capability flag (e.g. `{ firebirdEnabled: boolean }`) over an authenticated endpoint so the connection-management UI can conditionally surface the Firebird type.
+The API SHALL expose a server capability flag (e.g. `{ firebirdEnabled: boolean }`, equal to `customFirebirdEnabled()`) over an authenticated endpoint so the connection-management UI can conditionally surface the Firebird type.
 
-#### Scenario: Firebird capability requires both gates
+#### Scenario: Firebird capability gated by single variable
 
-- **WHEN** `firebirdEnabled()` is evaluated with `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS=true` and `DUCKDB_ENABLE_FIREBIRD=true`
+- **WHEN** `customFirebirdEnabled()` is evaluated with `DUCKDB_ENABLE_CUSTOM_FIREBIRD=true`
 - **THEN** it returns `true`
-- **AND WHEN** either variable is unset or falsy, it returns `false`
+- **AND** project DuckDB instances are created with `allow_unsigned_extensions`
+- **AND WHEN** the variable is unset or falsy, it returns `false`
 
 #### Scenario: Attach a Firebird connection when active
 
-- **WHEN** a Firebird connection with `slug: "fb"`, structured host/port/database/user/password is activated within a project and the Firebird capability is active
+- **WHEN** a Firebird connection with `slug: "fb"`, `host`, `port: 3050`, `database: "C:\\firebird.fdb"`, `user`, `password`, `charset: "UTF8"` is activated within a project and the Firebird capability is active
 - **THEN** the Firebird extension is installed from the custom repository (`SET custom_extension_repository = '<repo>'; INSTALL firebird; LOAD firebird;`) and loaded
 - **AND** the connection is attached using `ATTACH '<dsn>' AS fb (TYPE FIREBIRD, READ_ONLY)`
 - **AND** a connection test runs `SELECT 1` successfully against the attached database
@@ -108,4 +108,4 @@ The API SHALL expose a server capability flag (e.g. `{ firebirdEnabled: boolean 
 #### Scenario: Capability flag reflects activation
 
 - **WHEN** the connection-management UI requests the server capability flag
-- **THEN** `firebirdEnabled` is `true` only when both `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS` and `DUCKDB_ENABLE_FIREBIRD` are truthy, otherwise `false`
+- **THEN** `firebirdEnabled` is `true` only when `DUCKDB_ENABLE_CUSTOM_FIREBIRD` is truthy, otherwise `false`

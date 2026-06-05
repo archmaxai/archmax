@@ -19,6 +19,7 @@ When you add a connection to a project and mark it as active, archmax attaches i
 | SQLite | `sqlite` | Core |
 | DuckDB | Native | - |
 | Iceberg REST Catalog | `iceberg` + `httpfs` | Core |
+| Firebird | `firebird` | Custom (unsigned) |
 
 Each connection's slug becomes the DuckDB schema alias. For example, a connection with slug `shopify` attached from a Postgres database makes its tables available as `shopify.<schema>.<table>`.
 
