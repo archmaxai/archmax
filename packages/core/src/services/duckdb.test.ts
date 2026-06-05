@@ -876,6 +876,43 @@ describe("buildAttachString — mysql", () => {
   });
 });
 
+describe("buildAttachString — firebird", () => {
+  it("produces key=value format with charset", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: {
+        host: "fb.local",
+        port: 3050,
+        database: "C:\\firebird.fdb",
+        user: "SYSDBA",
+        password: "masterkey",
+        charset: "UTF8",
+      },
+    });
+    expect(buildAttachString(conn)).toBe(
+      "host=fb.local port=3050 database=C:\\firebird.fdb user=SYSDBA password=masterkey charset=UTF8",
+    );
+  });
+
+  it("defaults port to 3050 and charset to UTF8", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    const dsn = buildAttachString(conn);
+    expect(dsn).toContain("port=3050");
+    expect(dsn).toContain("charset=UTF8");
+  });
+
+  it("passes through URI when set", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: { uri: "firebird://user:pw@host:3050/db" },
+    });
+    expect(buildAttachString(conn)).toBe("firebird://user:pw@host:3050/db");
+  });
+});
+
 describe("getQueryTimeoutMs", () => {
   const origEnv = process.env.QUERY_TIMEOUT_MS;
   afterEach(() => {

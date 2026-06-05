@@ -37,6 +37,25 @@ When using **Connection URI**, you can pass any format the extension accepts (AD
 
 The **Encrypt connection (TLS)** toggle controls the `Encrypt` parameter and defaults to on. Disable it only for local development servers that don't support TLS.
 
+### Firebird Connections
+
+Firebird is supported through a custom, **unsigned** DuckDB extension hosted at `https://archmaxai.github.io/duckdb_firebird`. Because the extension is unsigned, the `firebird` connection type is disabled by default and only appears in the connection form when the operator sets `DUCKDB_ENABLE_CUSTOM_FIREBIRD=true` (which also starts every DuckDB instance with `allow_unsigned_extensions`). The repository can be overridden with `DUCKDB_FIREBIRD_EXTENSION_REPOSITORY`.
+
+When active, archmax installs the extension automatically (`SET custom_extension_repository = '<repo>'; INSTALL firebird; LOAD firebird;`) and attaches Firebird connections from the **Connection Details** fields:
+
+| Field | Description |
+|-------|-------------|
+| **Host** | Firebird server host |
+| **Port** | Firebird server port (default `3050`) |
+| **Database** | Database path or alias **as seen on the Firebird host machine** (e.g. `C:\firebird.fdb`) |
+| **User** | Firebird user (e.g. `SYSDBA`) |
+| **Password** | Firebird password |
+| **Charset** | Connection charset (default `UTF8`) |
+
+<Aside type="caution">
+The Firebird extension is unsigned and executes arbitrary native code inside the application process. Only enable `DUCKDB_ENABLE_CUSTOM_FIREBIRD` when you trust the extension source.
+</Aside>
+
 ### Iceberg REST Catalog Connections
 
 Iceberg connections let you query data in [Apache Iceberg](https://iceberg.apache.org/) tables exposed through an [Iceberg REST Catalog](https://duckdb.org/docs/current/core_extensions/iceberg/iceberg_rest_catalogs) (Lakekeeper, Polaris, Cloudflare R2, etc.).

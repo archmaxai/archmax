@@ -100,3 +100,65 @@ describe("env — APP_BASE_URL derivation", () => {
     spy.mockRestore();
   });
 });
+
+describe("env — DuckDB extension gates", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv, ...BASE_ENV };
+    delete process.env.DUCKDB_ALLOW_UNSIGNED_EXTENSIONS;
+    delete process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD;
+    delete process.env.DUCKDB_FIREBIRD_EXTENSION_REPOSITORY;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  async function loadEnv() {
+    return import("./env.js");
+  }
+
+  it("allowUnsignedExtensions is false by default and true for true/1", async () => {
+    let mod = await loadEnv();
+    expect(mod.allowUnsignedExtensions()).toBe(false);
+
+    vi.resetModules();
+    process.env.DUCKDB_ALLOW_UNSIGNED_EXTENSIONS = "TRUE";
+    mod = await loadEnv();
+    expect(mod.allowUnsignedExtensions()).toBe(true);
+
+    vi.resetModules();
+    process.env.DUCKDB_ALLOW_UNSIGNED_EXTENSIONS = "1";
+    mod = await loadEnv();
+    expect(mod.allowUnsignedExtensions()).toBe(true);
+  });
+
+  it("customFirebirdEnabled is false by default and true for true/1", async () => {
+    let mod = await loadEnv();
+    expect(mod.customFirebirdEnabled()).toBe(false);
+
+    vi.resetModules();
+    process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD = "true";
+    mod = await loadEnv();
+    expect(mod.customFirebirdEnabled()).toBe(true);
+
+    vi.resetModules();
+    process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD = "nope";
+    mod = await loadEnv();
+    expect(mod.customFirebirdEnabled()).toBe(false);
+  });
+
+  it("firebirdExtensionRepository defaults to the public repo and honors override", async () => {
+    let mod = await loadEnv();
+    expect(mod.firebirdExtensionRepository()).toBe(
+      "https://archmaxai.github.io/duckdb_firebird",
+    );
+
+    vi.resetModules();
+    process.env.DUCKDB_FIREBIRD_EXTENSION_REPOSITORY = "https://mirror.example.com/fb";
+    mod = await loadEnv();
+    expect(mod.firebirdExtensionRepository()).toBe("https://mirror.example.com/fb");
+  });
+});
