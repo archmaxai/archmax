@@ -1,9 +1,9 @@
 ## 1. Configuration
 
-- [x] 1.1 Add `DUCKDB_ENABLE_CUSTOM_FIREBIRD` (optional string) and `DUCKDB_FIREBIRD_EXTENSION_REPOSITORY` (optional string, default `https://archmaxai.github.io/duckdb_firebird`) to the env schema in `packages/core/src/config/env.ts`
+- [x] 1.1 Add `DUCKDB_ENABLE_CUSTOM_FIREBIRD` (optional string) to the env schema in `packages/core/src/config/env.ts`. The Firebird extension repository is a fixed constant (`https://archmaxai.github.io/duckdb_firebird`), not configurable.
 - [x] 1.2 Add a `customFirebirdEnabled()` helper returning `true` for truthy `DUCKDB_ENABLE_CUSTOM_FIREBIRD` (`true`/`1`, case-insensitive)
 - [x] 1.3 Add a `firebirdExtensionRepository()` helper returning the configured repo or its default
-- [x] 1.4 In `createDuckDBInstance()`, enable `allow_unsigned_extensions` when `allowUnsignedExtensions() || customFirebirdEnabled()`
+- [x] 1.4 In `createDuckDBInstance()`, enable `allow_unsigned_extensions` when `customFirebirdEnabled()`
 
 ## 2. Connection model & API
 
@@ -27,7 +27,7 @@
 
 ## 5. Documentation
 
-- [x] 5.1 Document `DUCKDB_ENABLE_CUSTOM_FIREBIRD` and `DUCKDB_FIREBIRD_EXTENSION_REPOSITORY` in `.env.example` with a security note
+- [x] 5.1 Document `DUCKDB_ENABLE_CUSTOM_FIREBIRD` in `.env.example` with a security note
 - [x] 5.2 Add both variables to the Docker reference env-variable table and mention Firebird in the data-federation guide in `apps/docs`
 
 ## 6. Tests & verification

@@ -71,11 +71,11 @@ The system SHALL provide a `Connection` Mongoose model with the following fields
 
 ### Requirement: Env-Gated Firebird Federation
 
-The DuckDB federation pipeline SHALL support `firebird` connections only when the Firebird capability is active — that is, when `DUCKDB_ENABLE_CUSTOM_FIREBIRD` is truthy (`true`/`1`, case-insensitive). A `customFirebirdEnabled()` helper SHALL encode this gate. Enabling the capability SHALL cause project DuckDB instances to be created with `allow_unsigned_extensions` (in addition to the existing `DUCKDB_ALLOW_UNSIGNED_EXTENSIONS` path), because the custom Firebird extension is unsigned.
+The DuckDB federation pipeline SHALL support `firebird` connections only when the Firebird capability is active — that is, when `DUCKDB_ENABLE_CUSTOM_FIREBIRD` is truthy (`true`/`1`, case-insensitive). A `customFirebirdEnabled()` helper SHALL encode this gate. Enabling the capability SHALL cause project DuckDB instances to be created with `allow_unsigned_extensions`, because the custom Firebird extension is unsigned. This SHALL be the only mechanism that enables unsigned-extension support.
 
 When the Firebird capability is active:
 
-- The Firebird DuckDB extension SHALL be installed and loaded automatically from the configured custom repository, with no console action, by running `SET custom_extension_repository = '<repo>'` (from `DUCKDB_FIREBIRD_EXTENSION_REPOSITORY`, single-quote-escaped) followed by `INSTALL firebird` and `LOAD firebird` before a Firebird connection is attached or tested. The repository value SHALL default to `https://archmaxai.github.io/duckdb_firebird`.
+- The Firebird DuckDB extension SHALL be installed and loaded automatically from the fixed archmax-hosted repository (`https://archmaxai.github.io/duckdb_firebird`), with no console action, by running `SET custom_extension_repository = '<repo>'` (single-quote-escaped) followed by `INSTALL firebird` and `LOAD firebird` before a Firebird connection is attached or tested.
 - Firebird connections SHALL attach using `TYPE firebird` with `READ_ONLY`, built from the structured `host`/`port`/`database`/`user`/`password`/`charset` parameters (default port `3050`, default charset `UTF8`) or from a pass-through `connectionConfig.uri`, so Firebird tables participate in federation, the data browser, the connection test, and MCP queries like other relational types. The `database` value SHALL be treated as an opaque host-side path or alias (e.g. `C:\firebird.fdb`) and SHALL NOT be validated as a local filesystem path on the application host.
 
 When the Firebird capability is inactive (the default):

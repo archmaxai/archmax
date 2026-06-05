@@ -1,5 +1,4 @@
 import { connectDB } from "../infra/db";
-import { allowUnsignedExtensions } from "../config/env";
 import { Connection, Project, type IConnectionDocument } from "../models/index";
 import {
   buildAttachString,
@@ -112,34 +111,12 @@ export interface ParsedExtensionSql {
   extension: string;
   loadOnly: boolean;
   fromCommunity: boolean;
-  /**
-   * Custom install source (repository URL or path) for an env-gated unsigned
-   * extension install (`INSTALL <ext> FROM '<source>'`). Undefined for the
-   * signed/community shapes.
-   */
-  fromSource?: string;
 }
 
-export function parseExtensionSql(sql: string, allowUnsigned = false): ParsedExtensionSql {
+export function parseExtensionSql(sql: string): ParsedExtensionSql {
   const trimmed = sql.trim().replace(/;+\s*$/, "");
   if (trimmed.includes(";")) {
     throw new Error("Only a single statement is allowed");
-  }
-
-  // INSTALL <extension> FROM '<source>' — unsigned/custom-source install.
-  // Only honoured when the operator has enabled unsigned extensions; the
-  // single-quoted source may contain '' as an escaped quote.
-  const sourceMatch = trimmed.match(/^install\s+([a-z][a-z0-9_]*)\s+from\s+'((?:[^']|'')*)'\s*$/i);
-  if (sourceMatch) {
-    if (!allowUnsigned) {
-      throw new Error("SQL must be INSTALL <extension> [FROM community] or LOAD <extension>");
-    }
-    const extension = sourceMatch[1].toLowerCase();
-    if (!EXTENSION_NAME_RE.test(extension)) {
-      throw new Error("Invalid extension name");
-    }
-    const fromSource = sourceMatch[2].replace(/''/g, "'");
-    return { extension, loadOnly: false, fromCommunity: false, fromSource };
   }
 
   const installMatch = trimmed.match(/^install\s+([a-z][a-z0-9_]*)(?:\s+from\s+community)?\s*$/i);
@@ -328,7 +305,7 @@ export async function installDuckdbConsoleExtension(
   projectId: string,
   sql: string,
 ): Promise<{ extension: string }> {
-  const parsed = parseExtensionSql(sql, allowUnsignedExtensions());
+  const parsed = parseExtensionSql(sql);
   await connectDB();
   const project = await Project.findById(projectId).lean();
   if (!project) {
@@ -339,7 +316,6 @@ export async function installDuckdbConsoleExtension(
     await ensureProjectExtensionLoaded(projectId, parsed.extension, {
       fromCommunity: parsed.fromCommunity,
       loadOnly: parsed.loadOnly,
-      fromSource: parsed.fromSource,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -8,9 +8,8 @@ const TMP_PROJECTS_DIR = mkdtempSync(join(tmpdir(), "archmax-duckdb-test-"));
 
 vi.mock("../config/env", () => ({
   getEnv: vi.fn(() => ({ ENCRYPTION_KEY: "", projectsDir: TMP_PROJECTS_DIR })),
-  allowUnsignedExtensions: vi.fn(() => false),
   customFirebirdEnabled: vi.fn(() => false),
-  firebirdExtensionRepository: vi.fn(() => undefined),
+  firebirdExtensionRepository: vi.fn(() => "https://archmaxai.github.io/duckdb_firebird"),
 }));
 
 import {
@@ -18,6 +17,7 @@ import {
   scopedViewName,
   scopeSchemaName,
   buildAttachString,
+  buildFirebirdAttachOptions,
   COMMUNITY_EXTENSIONS,
   getQueryTimeoutMs,
   withQueryTimeout,
@@ -877,7 +877,7 @@ describe("buildAttachString — mysql", () => {
 });
 
 describe("buildAttachString — firebird", () => {
-  it("produces key=value format with charset", () => {
+  it("returns an empty path for structured config (fields travel via ATTACH options)", () => {
     const conn = fakeConn({
       type: "firebird",
       connectionConfig: {
@@ -889,19 +889,10 @@ describe("buildAttachString — firebird", () => {
         charset: "UTF8",
       },
     });
-    expect(buildAttachString(conn)).toBe(
-      "host=fb.local port=3050 database=C:\\firebird.fdb user=SYSDBA password=masterkey charset=UTF8",
-    );
-  });
-
-  it("defaults port to 3050 and charset to UTF8", () => {
-    const conn = fakeConn({
-      type: "firebird",
-      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
-    });
-    const dsn = buildAttachString(conn);
-    expect(dsn).toContain("port=3050");
-    expect(dsn).toContain("charset=UTF8");
+    // The structured fields must NOT be jammed into the ATTACH path: the
+    // extension parses the path as a DSN, and a Windows drive-letter `:` there
+    // makes its port parser (`std::stoi`) throw "Invalid Error: stoi".
+    expect(buildAttachString(conn)).toBe("");
   });
 
   it("passes through URI when set", () => {
@@ -910,6 +901,83 @@ describe("buildAttachString — firebird", () => {
       connectionConfig: { uri: "firebird://user:pw@host:3050/db" },
     });
     expect(buildAttachString(conn)).toBe("firebird://user:pw@host:3050/db");
+  });
+});
+
+describe("buildFirebirdAttachOptions", () => {
+  it("emits structured fields as ATTACH options, taking a Windows path verbatim", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: {
+        host: "fb.local",
+        port: 3050,
+        database: "C:\\firebird.fdb",
+        user: "SYSDBA",
+        password: "masterkey",
+        charset: "UTF8",
+      },
+    });
+    expect(buildFirebirdAttachOptions(conn)).toBe(
+      ", HOST 'fb.local', PORT 3050, DATABASE 'C:\\firebird.fdb', USER 'SYSDBA', PASSWORD 'masterkey', CHARSET 'UTF8'",
+    );
+  });
+
+  it("defaults port to 3050 and charset to UTF8", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: { host: "h", database: "d", user: "u", password: "p" },
+    });
+    expect(buildFirebirdAttachOptions(conn)).toBe(
+      ", HOST 'h', PORT 3050, DATABASE 'd', USER 'u', PASSWORD 'p', CHARSET 'UTF8'",
+    );
+  });
+
+  it("escapes single quotes and carries URI metacharacters in the password", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: {
+        host: "h",
+        database: "d",
+        user: "u",
+        // Contains `@ / ? :` (would break the extension's DSN parser) and a `'`.
+        password: "p@ss/wo?rd:it's",
+      },
+    });
+    expect(buildFirebirdAttachOptions(conn)).toBe(
+      ", HOST 'h', PORT 3050, DATABASE 'd', USER 'u', PASSWORD 'p@ss/wo?rd:it''s', CHARSET 'UTF8'",
+    );
+  });
+
+  it("returns an empty string when a raw uri is configured", () => {
+    const conn = fakeConn({
+      type: "firebird",
+      connectionConfig: { uri: "firebird://user:pw@host:3050/db" },
+    });
+    expect(buildFirebirdAttachOptions(conn)).toBe("");
+  });
+});
+
+describe("getProjectInstance — skipped firebird connection", () => {
+  it("reuses the cached instance instead of rebuilding on every call", async () => {
+    // customFirebirdEnabled is mocked false by default, so an active firebird
+    // connection is skipped during setup. The skipped source must not make
+    // isReady/needsNewExtension treat it as perpetually pending, otherwise each
+    // getProjectInstance call tears down and rebuilds the cached instance.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const projectId = "firebird-skip-no-churn";
+    const conn = fakeConn({
+      slug: "fb_src",
+      type: "firebird",
+      connectionConfig: { host: "fb.local", database: "d", user: "u", password: "p" },
+    });
+    try {
+      const first = await getProjectInstance(projectId, [conn]);
+      const second = await getProjectInstance(projectId, [conn]);
+      expect(second).toBe(first);
+    } finally {
+      warnSpy.mockRestore();
+      await disposeProjectInstance(projectId);
+    }
   });
 });
 

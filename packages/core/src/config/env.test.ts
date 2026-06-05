@@ -107,58 +107,34 @@ describe("env — DuckDB extension gates", () => {
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv, ...BASE_ENV };
-    delete process.env.DUCKDB_ALLOW_UNSIGNED_EXTENSIONS;
     delete process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD;
-    delete process.env.DUCKDB_FIREBIRD_EXTENSION_REPOSITORY;
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  async function loadEnv() {
+  // Reload the env module with a fresh module registry after applying the
+  // given variable overrides, so each assertion observes a freshly-parsed env.
+  async function loadEnvWith(override: string, value: string) {
+    vi.resetModules();
+    process.env[override] = value;
     return import("./env.js");
   }
 
-  it("allowUnsignedExtensions is false by default and true for true/1", async () => {
-    let mod = await loadEnv();
-    expect(mod.allowUnsignedExtensions()).toBe(false);
-
-    vi.resetModules();
-    process.env.DUCKDB_ALLOW_UNSIGNED_EXTENSIONS = "TRUE";
-    mod = await loadEnv();
-    expect(mod.allowUnsignedExtensions()).toBe(true);
-
-    vi.resetModules();
-    process.env.DUCKDB_ALLOW_UNSIGNED_EXTENSIONS = "1";
-    mod = await loadEnv();
-    expect(mod.allowUnsignedExtensions()).toBe(true);
-  });
-
   it("customFirebirdEnabled is false by default and true for true/1", async () => {
-    let mod = await loadEnv();
-    expect(mod.customFirebirdEnabled()).toBe(false);
-
-    vi.resetModules();
-    process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD = "true";
-    mod = await loadEnv();
-    expect(mod.customFirebirdEnabled()).toBe(true);
-
-    vi.resetModules();
-    process.env.DUCKDB_ENABLE_CUSTOM_FIREBIRD = "nope";
-    mod = await loadEnv();
-    expect(mod.customFirebirdEnabled()).toBe(false);
+    expect((await import("./env.js")).customFirebirdEnabled()).toBe(false);
+    expect(
+      (await loadEnvWith("DUCKDB_ENABLE_CUSTOM_FIREBIRD", "true")).customFirebirdEnabled(),
+    ).toBe(true);
+    expect(
+      (await loadEnvWith("DUCKDB_ENABLE_CUSTOM_FIREBIRD", "nope")).customFirebirdEnabled(),
+    ).toBe(false);
   });
 
-  it("firebirdExtensionRepository defaults to the public repo and honors override", async () => {
-    let mod = await loadEnv();
-    expect(mod.firebirdExtensionRepository()).toBe(
+  it("firebirdExtensionRepository is the public archmax-hosted repo", async () => {
+    expect((await import("./env.js")).firebirdExtensionRepository()).toBe(
       "https://archmaxai.github.io/duckdb_firebird",
     );
-
-    vi.resetModules();
-    process.env.DUCKDB_FIREBIRD_EXTENSION_REPOSITORY = "https://mirror.example.com/fb";
-    mod = await loadEnv();
-    expect(mod.firebirdExtensionRepository()).toBe("https://mirror.example.com/fb");
   });
 });
