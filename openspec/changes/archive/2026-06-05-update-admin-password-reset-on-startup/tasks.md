@@ -19,4 +19,4 @@
 ## 4. Validation
 
 - [x] 4.1 Run `openspec validate update-admin-password-reset-on-startup --strict` and resolve any reported issues.
-- [ ] 4.2 Manually verify in a local container: start with `UI_PASSWORD=passwordA`, log in; stop, restart with `UI_PASSWORD=passwordB`, confirm `passwordA` no longer works and `passwordB` does.
+- [x] 4.2 Manually verify in a local container: start with `UI_PASSWORD=passwordA`, log in; stop, restart with `UI_PASSWORD=passwordB`, confirm `passwordA` no longer works and `passwordB` does.
