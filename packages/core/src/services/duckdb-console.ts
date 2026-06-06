@@ -8,6 +8,7 @@ import {
   getQueryTimeoutMs,
   isQueryCancelledError,
   redactConnectionSecrets,
+  safeDisconnect,
   withQueryTimeout,
 } from "./duckdb";
 
@@ -183,7 +184,9 @@ async function collectQueryRows(
     }
     return { columns, rows };
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so a console query that timed out and is still unwinding
+    // after the interrupt is not closed out from under a live native operation.
+    safeDisconnect(db);
   }
 }
 

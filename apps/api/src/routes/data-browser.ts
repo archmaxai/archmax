@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 import { zValidator } from "@hono/zod-validator";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, Project } from "@archmax/core/models/index";
-import { getProjectInstance, withQueryTimeout } from "@archmax/core/services/duckdb";
+import { getProjectInstance, safeDisconnect, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { AppError } from "../utils/errors";
 
 type ProjectInstance = Awaited<ReturnType<typeof getProjectInstance>>;
@@ -70,7 +70,7 @@ async function collectRows(instance: ProjectInstance, sql: string): Promise<{ co
     }
     return { columns, rows };
   } finally {
-    db.disconnectSync();
+    safeDisconnect(db);
   }
 }
 
@@ -195,7 +195,7 @@ const app = new Hono()
 
       return safeJson(c, { columns, rows, total, page, pageSize });
     } finally {
-      db.disconnectSync();
+      safeDisconnect(db);
     }
   });
 

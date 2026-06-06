@@ -10,6 +10,7 @@ import {
   redactConnectionSecrets,
   getAttachedCatalogSlugs,
   hardenConnection,
+  safeDisconnect,
   withQueryTimeout,
   withProjectQuerySlot,
   withRecoverableProjectInstance,
@@ -353,7 +354,10 @@ export async function executeScopedQuery(
 
             return { text: payload, columns, rows, rowCount: rows.length, truncated: rows.length >= MAX_ROWS };
           } finally {
-            db.disconnectSync();
+            // `safeDisconnect` (not `disconnectSync`) so a query still
+            // unwinding after a timeout/cancel interrupt is not closed out
+            // from under a live native operation.
+            safeDisconnect(db);
           }
         });
       },

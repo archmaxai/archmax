@@ -82,6 +82,15 @@ if [ -n "$MISSING" ]; then
   exec sleep infinity
 fi
 
+# DuckDB runs every query on a libuv worker thread. The default pool is only 4
+# threads, so a handful of slow or non-interruptible federated queries (e.g. a
+# scanner blocked on a stalled upstream socket after a timeout) can occupy the
+# entire pool and starve all other async I/O in the process — new chat jobs
+# then hang in "Thinking" with nothing able to make progress. Give DuckDB and
+# the rest of the app headroom so a few stuck queries cannot freeze everything.
+# Operators can override by setting UV_THREADPOOL_SIZE in the environment.
+export UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-16}"
+
 # Supervise a long-running process: restart it whenever it exits.
 #
 # The BullMQ worker runs DuckDB (and its mysql/postgres/mssql scanner
