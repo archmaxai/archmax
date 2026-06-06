@@ -202,7 +202,17 @@ export async function withQueryTimeout<T>(
       // The query ignored the interrupt within the grace window. Hand the
       // still-pending settle handle to `safeDisconnect` so it defers the
       // teardown rather than disconnecting under a live native operation.
-      pendingNativeOps.set(connection, opSettled);
+      // A single connection can run multiple queries in sequence (e.g. the
+      // materialisation pass issues many `CREATE OR REPLACE VIEW`s, the data
+      // browser runs exists/count/data), so MERGE with any handle already
+      // recorded for this connection instead of overwriting it — otherwise a
+      // later timeout would mask an earlier still-live query and let
+      // `safeDisconnect` close the connection underneath it.
+      const prior = pendingNativeOps.get(connection);
+      pendingNativeOps.set(
+        connection,
+        prior ? Promise.all([prior, opSettled]).then(() => {}) : opSettled,
+      );
     }
     throw err;
   } finally {

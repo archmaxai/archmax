@@ -1141,6 +1141,44 @@ describe("withQueryTimeout", () => {
     }
   });
 
+  it("defers safeDisconnect until ALL non-settling ops on one connection settle", async () => {
+    // A single connection runs several queries in sequence (e.g. the
+    // materialisation pass). If two of them time out without unwinding, the
+    // later one must not mask the earlier still-live query — safeDisconnect
+    // must wait for BOTH before closing the connection.
+    process.env.QUERY_INTERRUPT_GRACE_MS = "20";
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    let settleFirst: () => void = () => {};
+    let settleSecond: () => void = () => {};
+    const first = new Promise<never>((_resolve, reject) => {
+      settleFirst = () => reject(new Error("late-1"));
+    });
+    const second = new Promise<never>((_resolve, reject) => {
+      settleSecond = () => reject(new Error("late-2"));
+    });
+    const disconnectSpy = vi.spyOn(db, "disconnectSync");
+    try {
+      await expect(withQueryTimeout(db, () => first, 10)).rejects.toThrow(/timed out/i);
+      await expect(withQueryTimeout(db, () => second, 10)).rejects.toThrow(/timed out/i);
+      safeDisconnect(db);
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Settling only the second op must NOT disconnect — the first is live.
+      settleSecond();
+      await second.catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Once the first op also settles, the deferred disconnect finally runs.
+      settleFirst();
+      await first.catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      expect(disconnectSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      disconnectSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
   it("rejects immediately for an already-aborted signal without starting the op", async () => {
     const instance = await DuckDBInstance.create();
     const db = await instance.connect();
