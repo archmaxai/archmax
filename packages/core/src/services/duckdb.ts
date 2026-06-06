@@ -966,7 +966,9 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
     );
     entry.attachedSlugs.add(conn.slug);
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so an ATTACH that timed out and is still unwinding after
+    // the interrupt is not closed out from under a live native operation.
+    safeDisconnect(db);
   }
 }
 
@@ -1008,7 +1010,9 @@ async function attachIcebergCatalog(entry: ProjectDuckDB, conn: IConnectionDocum
     );
     entry.attachedSlugs.add(conn.slug);
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so an ATTACH that timed out and is still unwinding after
+    // the interrupt is not closed out from under a live native operation.
+    safeDisconnect(db);
   }
 }
 
@@ -1461,7 +1465,10 @@ async function materialiseModelViewsLocked(
       }
     }
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so a CREATE SCHEMA / CREATE OR REPLACE VIEW that timed
+    // out or was cancelled and is still unwinding after the interrupt is not
+    // closed out from under a live native operation.
+    safeDisconnect(db);
   }
 
   return result;
