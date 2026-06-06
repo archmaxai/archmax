@@ -10,6 +10,7 @@ import {
   scopeSchemaName,
   stripScopedSchemaQualifier,
   redactConnectionSecrets,
+  safeDisconnect,
   withProjectQuerySlot,
   withQueryTimeout,
   withRecoverableProjectInstance,
@@ -115,7 +116,10 @@ export function makeExecuteQueryTool(projectId: string) {
                   truncated: rows.length >= MAX_ROWS,
                 });
               } finally {
-                db.disconnectSync();
+                // `safeDisconnect` (not `disconnectSync`) so a query that was
+                // still unwinding after a timeout/cancel interrupt is not
+                // closed out from under a live native operation.
+                safeDisconnect(db);
               }
             }),
         );
@@ -293,7 +297,10 @@ export function makeRunModelQueryTool(projectId: string) {
                   truncated: rows.length >= MAX_ROWS,
                 });
               } finally {
-                db.disconnectSync();
+                // `safeDisconnect` (not `disconnectSync`) so a query that was
+                // still unwinding after a timeout/cancel interrupt is not
+                // closed out from under a live native operation.
+                safeDisconnect(db);
               }
             });
           },

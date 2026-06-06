@@ -1,5 +1,5 @@
 import { DuckDBInstance } from "@duckdb/node-api";
-import { withQueryTimeout } from "./duckdb";
+import { safeDisconnect, withQueryTimeout } from "./duckdb";
 
 /**
  * Structural SQL validator built on DuckDB's own parser via
@@ -121,7 +121,9 @@ async function serializeSqlToAst(sql: string): Promise<SerializeSqlPayload> {
     }
     return JSON.parse(firstColumn) as SerializeSqlPayload;
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so a parse that timed out and is still unwinding after
+    // the interrupt is not closed out from under a live native operation.
+    safeDisconnect(db);
   }
 }
 

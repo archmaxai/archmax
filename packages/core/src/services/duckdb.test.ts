@@ -20,7 +20,9 @@ import {
   buildFirebirdAttachOptions,
   COMMUNITY_EXTENSIONS,
   getQueryTimeoutMs,
+  getQueryInterruptGraceMs,
   withQueryTimeout,
+  safeDisconnect,
   withProjectQuerySlot,
   getProjectInstance,
   disposeProjectInstance,
@@ -1011,7 +1013,43 @@ describe("getQueryTimeoutMs", () => {
   });
 });
 
+describe("getQueryInterruptGraceMs", () => {
+  const origEnv = process.env.QUERY_INTERRUPT_GRACE_MS;
+  afterEach(() => {
+    if (origEnv === undefined) delete process.env.QUERY_INTERRUPT_GRACE_MS;
+    else process.env.QUERY_INTERRUPT_GRACE_MS = origEnv;
+  });
+
+  it("returns default 30_000 when env is unset", () => {
+    delete process.env.QUERY_INTERRUPT_GRACE_MS;
+    expect(getQueryInterruptGraceMs()).toBe(30_000);
+  });
+
+  it("parses numeric env value", () => {
+    process.env.QUERY_INTERRUPT_GRACE_MS = "5000";
+    expect(getQueryInterruptGraceMs()).toBe(5000);
+  });
+
+  it("falls back to default for non-positive or non-numeric values", () => {
+    process.env.QUERY_INTERRUPT_GRACE_MS = "0";
+    expect(getQueryInterruptGraceMs()).toBe(30_000);
+    process.env.QUERY_INTERRUPT_GRACE_MS = "nope";
+    expect(getQueryInterruptGraceMs()).toBe(30_000);
+  });
+});
+
 describe("withQueryTimeout", () => {
+  const origGrace = process.env.QUERY_INTERRUPT_GRACE_MS;
+  beforeEach(() => {
+    // Keep the post-interrupt settle wait short for tests that intentionally
+    // use a never-settling operation (the production default is 30s).
+    process.env.QUERY_INTERRUPT_GRACE_MS = "50";
+  });
+  afterEach(() => {
+    if (origGrace === undefined) delete process.env.QUERY_INTERRUPT_GRACE_MS;
+    else process.env.QUERY_INTERRUPT_GRACE_MS = origGrace;
+  });
+
   it("returns the result when the operation completes in time", async () => {
     const instance = await DuckDBInstance.create();
     const db = await instance.connect();
@@ -1044,6 +1082,115 @@ describe("withQueryTimeout", () => {
       expect(interruptSpy).toHaveBeenCalledTimes(1);
     } finally {
       interruptSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
+  it("waits for an interrupted op to unwind before rejecting", async () => {
+    // The timeout fires at 20ms, but the operation only settles at ~80ms.
+    // withQueryTimeout must not reject (and thus let the caller disconnect)
+    // until the native operation has actually unwound.
+    process.env.QUERY_INTERRUPT_GRACE_MS = "1000";
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    let settle: () => void = () => {};
+    const op = new Promise<never>((_resolve, reject) => {
+      settle = () => reject(new Error("interrupted"));
+    });
+    try {
+      const start = Date.now();
+      const pending = withQueryTimeout(db, () => op, 20);
+      setTimeout(() => settle(), 80);
+      await expect(pending).rejects.toThrow(/timed out after 0\.02s/i);
+      expect(Date.now() - start).toBeGreaterThanOrEqual(70);
+      // Op settled within the grace, so nothing is left pending: a plain
+      // disconnect is safe (safeDisconnect runs synchronously).
+      const disconnectSpy = vi.spyOn(db, "disconnectSync");
+      safeDisconnect(db);
+      expect(disconnectSpy).toHaveBeenCalledTimes(1);
+      disconnectSpy.mockRestore();
+    } finally {
+      db.disconnectSync();
+    }
+  });
+
+  it("defers safeDisconnect until an op that ignores the interrupt settles", async () => {
+    // timeout=20ms, grace=30ms, op never settles within the grace → the
+    // connection must NOT be disconnected while the native op is still live.
+    process.env.QUERY_INTERRUPT_GRACE_MS = "30";
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    let settle: () => void = () => {};
+    const op = new Promise<never>((_resolve, reject) => {
+      settle = () => reject(new Error("late"));
+    });
+    const disconnectSpy = vi.spyOn(db, "disconnectSync");
+    try {
+      await expect(withQueryTimeout(db, () => op, 20)).rejects.toThrow(/timed out/i);
+      // Op still in flight past the grace → disconnect is deferred.
+      safeDisconnect(db);
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Once the op settles, the deferred disconnect runs.
+      settle();
+      await op.catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      expect(disconnectSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      disconnectSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
+  it("defers safeDisconnect until ALL non-settling ops on one connection settle", async () => {
+    // A single connection runs several queries in sequence (e.g. the
+    // materialisation pass). If two of them time out without unwinding, the
+    // later one must not mask the earlier still-live query — safeDisconnect
+    // must wait for BOTH before closing the connection.
+    process.env.QUERY_INTERRUPT_GRACE_MS = "20";
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    let settleFirst: () => void = () => {};
+    let settleSecond: () => void = () => {};
+    const first = new Promise<never>((_resolve, reject) => {
+      settleFirst = () => reject(new Error("late-1"));
+    });
+    const second = new Promise<never>((_resolve, reject) => {
+      settleSecond = () => reject(new Error("late-2"));
+    });
+    const disconnectSpy = vi.spyOn(db, "disconnectSync");
+    try {
+      await expect(withQueryTimeout(db, () => first, 10)).rejects.toThrow(/timed out/i);
+      await expect(withQueryTimeout(db, () => second, 10)).rejects.toThrow(/timed out/i);
+      safeDisconnect(db);
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Settling only the second op must NOT disconnect — the first is live.
+      settleSecond();
+      await second.catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      expect(disconnectSpy).not.toHaveBeenCalled();
+      // Once the first op also settles, the deferred disconnect finally runs.
+      settleFirst();
+      await first.catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      expect(disconnectSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      disconnectSpy.mockRestore();
+      db.disconnectSync();
+    }
+  });
+
+  it("rejects immediately for an already-aborted signal without starting the op", async () => {
+    const instance = await DuckDBInstance.create();
+    const db = await instance.connect();
+    const controller = new AbortController();
+    controller.abort();
+    const operation = vi.fn(() => db.run("SELECT 1"));
+    try {
+      await expect(
+        withQueryTimeout(db, operation, 5_000, controller.signal),
+      ).rejects.toMatchObject({ name: "QueryCancelledError" });
+      expect(operation).not.toHaveBeenCalled();
+    } finally {
       db.disconnectSync();
     }
   });

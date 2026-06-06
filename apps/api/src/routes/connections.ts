@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { connectDB } from "@archmax/core/infra/db";
 import { Connection, CONNECTION_TYPES, SLUG_PATTERN, slugifyConnectionName, Project, type IConnectionDocument } from "@archmax/core/models/index";
-import { deleteProjectDuckdbFile, disposeProjectInstance, getProjectInstance, testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
+import { deleteProjectDuckdbFile, disposeProjectInstance, getProjectInstance, safeDisconnect, testSingleConnection, withQueryTimeout } from "@archmax/core/services/duckdb";
 import { encryptConnectionCredentials, decryptConnectionCredentials } from "@archmax/core/infra/crypto";
 import { customFirebirdEnabled, getEnv } from "@archmax/core/config/env";
 import { AppError } from "../utils/errors";
@@ -251,7 +251,7 @@ const app = new Hono()
       try {
         await withQueryTimeout(db, () => db.run("SELECT 1"), CONNECTION_TEST_TIMEOUT_MS);
       } finally {
-        db.disconnectSync();
+        safeDisconnect(db);
       }
       return c.json({ ok: true });
     } catch (err: unknown) {
@@ -297,7 +297,7 @@ const app = new Hono()
           tableCount += chunk.rowCount;
         }
       } finally {
-        db.disconnectSync();
+        safeDisconnect(db);
       }
       return c.json({ ok: true as const, tableCount });
     } catch (err: unknown) {

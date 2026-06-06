@@ -61,6 +61,33 @@ export function getQueryTimeoutMs(): number {
 }
 
 /**
+ * After a query times out (or is cancelled) we call `connection.interrupt()`
+ * and then wait for the in-flight native operation to actually unwind before
+ * letting the caller disconnect the connection. This is the upper bound on
+ * that wait: a well-behaved query reacts to `interrupt()` within milliseconds,
+ * but a federated scanner blocked on a slow upstream socket may take longer.
+ * If the operation has not settled within this grace, we proceed anyway (and
+ * `safeDisconnect` defers the actual `disconnectSync` until it finally does),
+ * so a genuinely non-interruptible query can never wedge the run forever.
+ */
+export function getQueryInterruptGraceMs(): number {
+  const configured = Number(process.env.QUERY_INTERRUPT_GRACE_MS);
+  return configured > 0 ? configured : 30_000;
+}
+
+/**
+ * Tracks, per connection, a native DuckDB operation that was still unwinding
+ * when its `withQueryTimeout` rejected (timeout/cancel) and did not settle
+ * within the interrupt grace. The value resolves (never rejects) once the
+ * operation finally settles. `safeDisconnect` reads this so it can defer
+ * `disconnectSync` — closing a connection while a native query is still
+ * running on a libuv worker thread can trip a native assertion that calls
+ * `abort()` and takes the whole process down. A `WeakMap` lets entries be
+ * collected with their connection if a caller forgets to disconnect.
+ */
+const pendingNativeOps = new WeakMap<DuckDBConnection, Promise<void>>();
+
+/**
  * Raised when an in-flight DuckDB operation is aborted via an `AbortSignal`
  * (e.g. the user pressed "stop" on an agent run). Distinct from the
  * timeout error so callers can tell a user-cancellation apart from a
@@ -90,14 +117,27 @@ export function isQueryCancelledError(err: unknown): boolean {
  * Run an async operation against a DuckDB connection with a hard timeout and
  * optional cooperative cancellation.
  *
- * On timeout, `connection.interrupt()` is called to cancel the in-flight
- * query inside DuckDB, then the promise rejects with a timeout error.
+ * Crucially, when the timeout or an abort `signal` wins the race, this does NOT
+ * return while the native query is still executing. `Promise.race` settling
+ * does not cancel the losing promise: the underlying `prepared.run()` keeps
+ * running on a libuv worker thread. If the caller were to `disconnectSync()`
+ * the connection at that point (its `finally` block), it would close the
+ * connection out from under a live native operation — a textbook trigger for a
+ * native assertion that calls `abort()` and kills the whole worker process —
+ * and the orphaned query would keep consuming a thread and an upstream
+ * connection, eventually starving the libuv pool so unrelated jobs hang.
  *
- * When an aborted `signal` is supplied, `connection.interrupt()` is likewise
- * called immediately so a long-running query stops promptly (rather than
- * blocking the agent run for up to the full timeout), and the promise rejects
- * with a `QueryCancelledError`. The timer and abort listener are always
- * cleaned up regardless of outcome.
+ * Instead we:
+ *   1. call `connection.interrupt()` to ask DuckDB to cancel the query,
+ *   2. wait for the operation to actually settle (bounded by
+ *      `getQueryInterruptGraceMs()`), then
+ *   3. reject with the timeout / cancellation error.
+ *
+ * If the operation has not settled within the grace (a non-interruptible
+ * federated scan), we still reject, but register the still-pending operation
+ * so `safeDisconnect` defers the connection teardown until it finishes rather
+ * than disconnecting under a live query. The timer and abort listener are
+ * always cleaned up regardless of outcome.
  */
 export async function withQueryTimeout<T>(
   connection: DuckDBConnection,
@@ -105,27 +145,39 @@ export async function withQueryTimeout<T>(
   timeoutMs: number = getQueryTimeoutMs(),
   signal?: AbortSignal,
 ): Promise<T> {
+  // Don't even start a query for an already-cancelled run.
+  if (signal?.aborted) {
+    throw new QueryCancelledError();
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
+  let lostRace = false;
+
+  // Start the operation once and keep a reference so we can wait for it to
+  // unwind after interrupting, instead of orphaning it on the race.
+  const opPromise = operation();
+  // A handle that resolves (never rejects) when the native op has settled, so
+  // we can await it without re-raising its error. Attaching here also marks
+  // any later rejection as handled (the race only attaches once it settles).
+  const opSettled = opPromise.then(
+    () => {},
+    () => {},
+  );
 
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      try { connection.interrupt(); } catch { /* best-effort */ }
+      lostRace = true;
       reject(new Error(`Query timed out after ${timeoutMs / 1000}s`));
     }, timeoutMs);
   });
 
-  const racers: Array<Promise<T>> = [operation(), timeoutPromise];
+  const racers: Array<Promise<T>> = [opPromise, timeoutPromise];
 
   if (signal) {
     const abortPromise = new Promise<never>((_resolve, reject) => {
-      if (signal.aborted) {
-        try { connection.interrupt(); } catch { /* best-effort */ }
-        reject(new QueryCancelledError());
-        return;
-      }
       onAbort = () => {
-        try { connection.interrupt(); } catch { /* best-effort */ }
+        lostRace = true;
         reject(new QueryCancelledError());
       };
       signal.addEventListener("abort", onAbort, { once: true });
@@ -134,11 +186,77 @@ export async function withQueryTimeout<T>(
   }
 
   try {
-    return await Promise.race(racers);
+    const result = await Promise.race(racers);
+    // The operation won the race, so it has already settled.
+    return result;
+  } catch (err) {
+    if (!lostRace) {
+      // The operation itself rejected (a genuine query error); it has settled.
+      throw err;
+    }
+    // A timeout or abort won. Interrupt the in-flight query and wait for it to
+    // actually unwind so the caller can safely tear the connection down.
+    try { connection.interrupt(); } catch { /* best-effort */ }
+    const settled = await raceSettleWithin(opSettled, getQueryInterruptGraceMs());
+    if (!settled) {
+      // The query ignored the interrupt within the grace window. Hand the
+      // still-pending settle handle to `safeDisconnect` so it defers the
+      // teardown rather than disconnecting under a live native operation.
+      // A single connection can run multiple queries in sequence (e.g. the
+      // materialisation pass issues many `CREATE OR REPLACE VIEW`s, the data
+      // browser runs exists/count/data), so MERGE with any handle already
+      // recorded for this connection instead of overwriting it — otherwise a
+      // later timeout would mask an earlier still-live query and let
+      // `safeDisconnect` close the connection underneath it.
+      const prior = pendingNativeOps.get(connection);
+      pendingNativeOps.set(
+        connection,
+        prior ? Promise.all([prior, opSettled]).then(() => {}) : opSettled,
+      );
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   }
+}
+
+/**
+ * Resolve `true` if `settled` resolves within `graceMs`, otherwise `false`.
+ * The grace timer is cleared as soon as the operation settles so it never
+ * keeps the event loop alive.
+ */
+function raceSettleWithin(settled: Promise<void>, graceMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), graceMs);
+    void settled.then(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+/**
+ * Disconnect a DuckDB connection without ever closing it out from under a live
+ * native operation. In the normal case (query finished, or it unwound after an
+ * interrupt within the grace) this disconnects synchronously. If a timed-out /
+ * cancelled query was still unwinding past the grace, `withQueryTimeout`
+ * recorded its settle handle; we defer the actual `disconnectSync` until that
+ * resolves so we never trip the native abort path.
+ *
+ * Always prefer this over `connection.disconnectSync()` for connections that
+ * ran queries through `withQueryTimeout`.
+ */
+export function safeDisconnect(connection: DuckDBConnection): void {
+  const pending = pendingNativeOps.get(connection);
+  if (!pending) {
+    try { connection.disconnectSync(); } catch { /* best-effort */ }
+    return;
+  }
+  pendingNativeOps.delete(connection);
+  void pending.finally(() => {
+    try { connection.disconnectSync(); } catch { /* best-effort */ }
+  });
 }
 
 // ── Per-project query concurrency limiter ────────────────────────────
@@ -858,7 +976,9 @@ async function attachConnection(entry: ProjectDuckDB, conn: IConnectionDocument)
     );
     entry.attachedSlugs.add(conn.slug);
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so an ATTACH that timed out and is still unwinding after
+    // the interrupt is not closed out from under a live native operation.
+    safeDisconnect(db);
   }
 }
 
@@ -900,7 +1020,9 @@ async function attachIcebergCatalog(entry: ProjectDuckDB, conn: IConnectionDocum
     );
     entry.attachedSlugs.add(conn.slug);
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so an ATTACH that timed out and is still unwinding after
+    // the interrupt is not closed out from under a live native operation.
+    safeDisconnect(db);
   }
 }
 
@@ -1353,7 +1475,10 @@ async function materialiseModelViewsLocked(
       }
     }
   } finally {
-    db.disconnectSync();
+    // `safeDisconnect` so a CREATE SCHEMA / CREATE OR REPLACE VIEW that timed
+    // out or was cancelled and is still unwinding after the interrupt is not
+    // closed out from under a live native operation.
+    safeDisconnect(db);
   }
 
   return result;

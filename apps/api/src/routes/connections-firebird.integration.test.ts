@@ -32,6 +32,7 @@ vi.mock("@archmax/core/services/duckdb", () => ({
   getProjectInstance: vi.fn(),
   testSingleConnection: mocks.testSingleConnection,
   withQueryTimeout: vi.fn(async (_db: unknown, op: () => Promise<unknown>) => op()),
+  safeDisconnect: vi.fn((db: { disconnectSync?: () => void }) => db.disconnectSync?.()),
 }));
 
 import { createTestApp, jsonBody } from "../test-utils/api-client";
