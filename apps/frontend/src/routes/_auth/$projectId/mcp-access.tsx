@@ -416,7 +416,7 @@ function CreateTokenDialog({
         },
       });
       if (!res.ok) {
-        const err = await res.json() as { error?: string };
+        const err = (await res.json()) as unknown as { error?: string };
         throw new Error(err.error || "Failed to create token");
       }
       return res.json() as Promise<{ token: string }>;

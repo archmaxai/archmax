@@ -128,6 +128,7 @@ function ConnectionsPage() {
     mutationFn: async () => {
       const res = await api.api.projects[":projectId"].connections.reinit.$post({
         param: { projectId: project._id },
+        query: {},
       });
       const body = (await res.json()) as
         | { ok: true; tableCount: number }
