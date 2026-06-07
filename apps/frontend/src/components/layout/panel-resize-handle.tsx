@@ -5,6 +5,7 @@ export function useResizablePanel(
   defaultWidth: number,
   min = 180,
   max = 480,
+  invert = false,
 ) {
   const [width, setWidth] = useState(() => {
     try {
@@ -36,9 +37,8 @@ export function useResizablePanel(
       document.body.style.userSelect = "none";
 
       function onMouseMove(ev: MouseEvent) {
-        setWidth(
-          Math.max(min, Math.min(max, startW + ev.clientX - startX)),
-        );
+        const delta = invert ? startX - ev.clientX : ev.clientX - startX;
+        setWidth(Math.max(min, Math.min(max, startW + delta)));
       }
 
       function onMouseUp() {
@@ -51,7 +51,7 @@ export function useResizablePanel(
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [min, max],
+    [min, max, invert],
   );
 
   return { width, onMouseDown };

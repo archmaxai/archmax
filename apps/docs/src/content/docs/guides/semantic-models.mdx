@@ -150,6 +150,20 @@ The AI builder automatically creates groups when building models with 4 or more 
 
 Groups use a 4-color CI palette: `sage`, `rose`, `blue`, `purple`. Colors are assigned automatically when creating groups.
 
+## Dataset Detail Panel
+
+Click any dataset node in the graph view to open the **dataset detail panel**, a vertical panel that slides in from the right edge of the graph. The panel shows the selected dataset's metadata in one place:
+
+- **Description** — the dataset's summary
+- **AI description** — the `ai_context` instructions surfaced to AI agents (existing synonyms and examples are shown read-only below the editor)
+- **Fields** — every field with its data type and description
+
+Click a different node to switch the panel to that dataset, and use the close button in the panel header to collapse it (the node stays selected in the graph). Clicking the empty canvas clears the selection. Drag the panel's left edge to resize it.
+
+### Editing and Saving
+
+The description, AI description, and each field's description are editable directly in the panel. Make your edits and click **Save** to persist them. Saving updates only the selected dataset's YAML file — `source`, field expressions, `view_query`, and other custom extensions are left untouched. The **Save** button stays disabled until you make a change. This is a quick way to correct or enrich metadata without opening the YAML or the chat agent.
+
 ## AI Context
 
 Every entity (model, dataset, field, relationship, metric) supports `ai_context`, either a plain string or a structured object with `instructions`, `synonyms`, and `examples`. This metadata is surfaced to AI agents through MCP tools, helping them understand what the data means and how to use it.

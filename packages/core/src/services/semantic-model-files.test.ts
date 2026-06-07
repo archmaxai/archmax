@@ -258,6 +258,107 @@ describe("SemanticModelFileService.updateDatasetExtensions", () => {
   });
 });
 
+describe("SemanticModelFileService.updateDatasetMetadata", () => {
+  let tmpDir: string;
+  let svc: SemanticModelFileService;
+  const projectId = "proj1";
+  const dsPath = () => join(tmpDir, projectId, "src", "test-model", "orders.yaml");
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "smfs-meta-test-"));
+    svc = new SemanticModelFileService(tmpDir);
+    const dsDir = join(tmpDir, projectId, "src", "test-model");
+    await mkdir(dsDir, { recursive: true });
+    const dsYaml = yaml.dump({
+      dataset: {
+        name: "orders",
+        source: "shop.public.orders",
+        primary_key: ["id"],
+        description: "old description",
+        fields: [
+          {
+            name: "total_price",
+            expression: { dialects: [{ dialect: "ANSI_SQL", expression: "total_price" }] },
+            description: "old field description",
+            custom_extensions: [{ vendor_name: "COMMON", data: '{"data_type":"DECIMAL"}' }],
+          },
+          {
+            name: "status",
+            expression: { dialects: [{ dialect: "ANSI_SQL", expression: "status" }] },
+            description: "",
+          },
+        ],
+        custom_extensions: [{ vendor_name: "COMMON", data: '{"view_query":"SELECT * FROM orders"}' }],
+      },
+    });
+    await writeFile(join(dsDir, "orders.yaml"), dsYaml, "utf-8");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("updates dataset description and ai_context, preserving source/fields/extensions", async () => {
+    const ok = await svc.updateDatasetMetadata(projectId, "test-model", "orders", {
+      description: "Order line items",
+      ai_context: { instructions: "Use for revenue analysis" },
+    });
+    expect(ok).toBe(true);
+
+    const parsed = yaml.load(await readFile(dsPath(), "utf-8")) as { dataset: Record<string, unknown> };
+    const ds = parsed.dataset;
+    expect(ds.description).toBe("Order line items");
+    expect(ds.ai_context).toEqual({ instructions: "Use for revenue analysis" });
+    expect(ds.source).toBe("shop.public.orders");
+    expect(ds.primary_key).toEqual(["id"]);
+    expect(ds.custom_extensions).toEqual([
+      { vendor_name: "COMMON", data: '{"view_query":"SELECT * FROM orders"}' },
+    ]);
+    const fields = ds.fields as Record<string, unknown>[];
+    expect(fields[0].expression).toEqual({ dialects: [{ dialect: "ANSI_SQL", expression: "total_price" }] });
+  });
+
+  it("updates only the targeted field description, leaving others untouched", async () => {
+    const ok = await svc.updateDatasetMetadata(projectId, "test-model", "orders", {
+      fields: [{ name: "total_price", description: "Line total in USD" }],
+    });
+    expect(ok).toBe(true);
+
+    const parsed = yaml.load(await readFile(dsPath(), "utf-8")) as { dataset: Record<string, unknown> };
+    const fields = parsed.dataset.fields as Record<string, unknown>[];
+    expect(fields[0].description).toBe("Line total in USD");
+    expect(fields[0].custom_extensions).toEqual([{ vendor_name: "COMMON", data: '{"data_type":"DECIMAL"}' }]);
+    expect(fields[1].description).toBe("");
+  });
+
+  it("throws and writes nothing for an unknown field name", async () => {
+    const before = await readFile(dsPath(), "utf-8");
+    await expect(
+      svc.updateDatasetMetadata(projectId, "test-model", "orders", {
+        fields: [{ name: "does_not_exist", description: "x" }],
+      }),
+    ).rejects.toThrow(/Unknown field "does_not_exist"/);
+    expect(await readFile(dsPath(), "utf-8")).toBe(before);
+  });
+
+  it("clears ai_context when given an empty value", async () => {
+    await svc.updateDatasetMetadata(projectId, "test-model", "orders", {
+      ai_context: { instructions: "temp" },
+    });
+    await svc.updateDatasetMetadata(projectId, "test-model", "orders", { ai_context: "" });
+
+    const parsed = yaml.load(await readFile(dsPath(), "utf-8")) as { dataset: Record<string, unknown> };
+    expect(parsed.dataset.ai_context).toBeUndefined();
+  });
+
+  it("returns false for a non-existent dataset", async () => {
+    const ok = await svc.updateDatasetMetadata(projectId, "test-model", "missing", {
+      description: "x",
+    });
+    expect(ok).toBe(false);
+  });
+});
+
 describe("SemanticModelFileService.cleanupLegacyAgentsMd", () => {
   let tmpDir: string;
   let svc: SemanticModelFileService;

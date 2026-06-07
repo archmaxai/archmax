@@ -1,6 +1,15 @@
+export type AiContextObject = {
+  instructions?: string;
+  synonyms?: string[];
+  examples?: string[];
+};
+
+export type AiContext = string | AiContextObject;
+
 export interface SemanticModelFull {
   name: string;
   description?: string;
+  ai_context?: AiContext;
   datasets: DatasetFull[];
   relationships: RelationshipFull[];
   metrics: MetricFull[];
@@ -13,6 +22,7 @@ export interface DatasetFull {
   name: string;
   source: string;
   description?: string;
+  ai_context?: AiContext;
   fields: FieldFull[];
   custom_extensions?: CustomExtension[];
   [key: string]: unknown;
@@ -22,6 +32,7 @@ export interface FieldFull {
   name: string;
   expression: string | { dialects?: Array<{ dialect: string; expression: string }> };
   description?: string;
+  ai_context?: AiContext;
   label?: string;
   custom_extensions?: CustomExtension[];
   [key: string]: unknown;
@@ -146,6 +157,16 @@ export function getExpressionString(
   if (!expr) return "";
   if (typeof expr === "string") return expr;
   return expr.dialects?.[0]?.expression ?? "";
+}
+
+export function getAiContextObject(ctx?: AiContext): AiContextObject {
+  if (!ctx) return {};
+  if (typeof ctx === "string") return { instructions: ctx };
+  return ctx;
+}
+
+export function getAiInstructions(ctx?: AiContext): string {
+  return getAiContextObject(ctx).instructions ?? "";
 }
 
 export function getRelationshipColumns(r: RelationshipFull): { from: string[]; to: string[] } {

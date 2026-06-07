@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import { ModelYamlView } from "./model-yaml-view";
 import { ModelTreeView } from "./model-tree-view";
 import { ModelGraphView } from "./model-graph-view";
+import { DatasetDetailPanel } from "./dataset-detail-panel";
 import { useModelDiff } from "./use-model-diff";
 import type { SemanticModelFull } from "./types";
+import { PanelResizeHandle, useResizablePanel } from "@/components/layout/panel-resize-handle";
 import { api } from "@/lib/api";
 
 const DEFAULT_TAB = "graph";
@@ -39,10 +41,26 @@ export function ModelVisualization({
   modelName,
 }: ModelVisualizationProps) {
   const [tab, setTab] = useState(() => getTabPreference(modelName));
+  const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const { width: panelWidth, onMouseDown: onPanelResize } = useResizablePanel(
+    "archmax:dataset-panel-width",
+    360,
+    280,
+    560,
+    true,
+  );
 
   useEffect(() => {
     setTab(getTabPreference(modelName));
+    setSelectedDataset(null);
+    setPanelOpen(false);
   }, [modelName]);
+
+  const handleSelectDataset = useCallback((name: string | null) => {
+    setSelectedDataset(name);
+    setPanelOpen(name !== null);
+  }, []);
 
   const handleTabChange = useCallback(
     (value: string) => {
@@ -65,6 +83,10 @@ export function ModelVisualization({
   });
 
   const diff = useModelDiff(model ?? null);
+
+  const selectedDatasetData = selectedDataset
+    ? model?.datasets.find((d) => d.name === selectedDataset) ?? null
+    : null;
 
   const handleDownload = useCallback(async () => {
     try {
@@ -131,14 +153,36 @@ export function ModelVisualization({
           {model.hasConflicts ? (
             <ConflictBanner />
           ) : (
-            <ModelGraphView
-              key={modelName}
-              projectId={projectId}
-              modelName={modelName}
-              model={model}
-              diff={diff}
-              className="h-full"
-            />
+            <div className="flex h-full min-h-0">
+              <div className="min-w-0 flex-1">
+                <ModelGraphView
+                  key={modelName}
+                  projectId={projectId}
+                  modelName={modelName}
+                  model={model}
+                  diff={diff}
+                  className="h-full"
+                  selectedDataset={selectedDataset}
+                  onSelectDataset={handleSelectDataset}
+                />
+              </div>
+              {panelOpen && selectedDatasetData && (
+                <>
+                  <PanelResizeHandle onMouseDown={onPanelResize} />
+                  <div
+                    className="shrink-0 animate-in slide-in-from-right duration-200"
+                    style={{ width: panelWidth }}
+                  >
+                    <DatasetDetailPanel
+                      projectId={projectId}
+                      modelName={modelName}
+                      dataset={selectedDatasetData}
+                      onClose={() => setPanelOpen(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </TabsContent>
 

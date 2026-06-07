@@ -23,6 +23,7 @@ import type { SemanticModelFull, ModelDiff, CustomExtension, DatasetGroup } from
 import {
   getRelationshipColumns,
   getFieldDataType,
+  getAiInstructions,
   parseDatasetGroups,
   serializeDatasetGroups,
   getGroupColor,
@@ -56,12 +57,7 @@ function parsePosition(extensions?: CustomExtension[]): { x: number; y: number }
 
 function getDescription(ds: SemanticModelFull["datasets"][number]): string | undefined {
   if (ds.description) return ds.description;
-  const ctx = (ds as Record<string, unknown>).ai_context;
-  if (typeof ctx === "string") return ctx;
-  if (ctx && typeof ctx === "object" && "instructions" in ctx) {
-    return (ctx as { instructions?: string }).instructions;
-  }
-  return undefined;
+  return getAiInstructions(ds.ai_context) || undefined;
 }
 
 function autoLayout(
@@ -253,6 +249,8 @@ interface ModelGraphViewProps {
   model: SemanticModelFull;
   diff: ModelDiff;
   className?: string;
+  selectedDataset?: string | null;
+  onSelectDataset?: (name: string | null) => void;
 }
 
 export function ModelGraphView({
@@ -261,6 +259,8 @@ export function ModelGraphView({
   model,
   diff,
   className,
+  selectedDataset = null,
+  onSelectDataset,
 }: ModelGraphViewProps) {
   const initial = useMemo(() => buildNodesAndEdges(model, diff), [model, diff]);
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
@@ -432,8 +432,19 @@ export function ModelGraphView({
   );
 
   const allNodes = useMemo(
-    () => [...groupBoxNodes, ...nodes] as Node[],
-    [groupBoxNodes, nodes],
+    () => [
+      ...groupBoxNodes,
+      ...nodes.map((n) => (n.selected === (n.id === selectedDataset) ? n : { ...n, selected: n.id === selectedDataset })),
+    ] as Node[],
+    [groupBoxNodes, nodes, selectedDataset],
+  );
+
+  const handleNodeClick = useCallback(
+    (_e: React.MouseEvent, node: Node) => {
+      if (node.type !== "dataset") return;
+      onSelectDataset?.(node.id);
+    },
+    [onSelectDataset],
   );
 
   const handleNodeContextMenu = useCallback(
@@ -450,6 +461,11 @@ export function ModelGraphView({
     setCreatingGroup(false);
     setRenamingGroupId(null);
   }, []);
+
+  const handlePaneClick = useCallback(() => {
+    dismissMenu();
+    onSelectDataset?.(null);
+  }, [dismissMenu, onSelectDataset]);
 
   const findGroupForDataset = useCallback(
     (dsName: string) => groups.find((g) => g.datasets.includes(dsName)),
@@ -562,9 +578,10 @@ export function ModelGraphView({
         onNodeDragStart={handleNodeDragStart}
         onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
+        onNodeClick={handleNodeClick}
         onNodeContextMenu={handleNodeContextMenu}
         onMoveEnd={handleMoveEnd}
-        onPaneClick={dismissMenu}
+        onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
         defaultViewport={savedViewport ?? undefined}
         fitView={!savedViewport}

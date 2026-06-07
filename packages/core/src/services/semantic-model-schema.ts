@@ -168,6 +168,7 @@ export type SemanticModel = z.infer<typeof semanticModelSchema> & {
  */
 export type Dataset = z.infer<typeof datasetSchema> & { viewQuery?: string | null };
 export type Field = z.infer<typeof fieldSchema>;
+export type AiContext = z.infer<typeof aiContextSchema>;
 export type Relationship = z.infer<typeof relationshipSchema>;
 export type Metric = z.infer<typeof metricSchema>;
 export type Expression = z.infer<typeof expressionSchema>;
