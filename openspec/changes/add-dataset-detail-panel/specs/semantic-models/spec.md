@@ -47,7 +47,7 @@ The dataset detail panel SHALL display, for the selected dataset, the dataset na
 
 ### Requirement: Manual Dataset Metadata Editing
 
-The dataset detail panel SHALL provide editable inputs for the dataset description, the dataset `ai_context` instructions, and each field's description. The panel SHALL include a **Save** button that persists the edits via the dataset metadata update API. The Save button SHALL be disabled when there are no unsaved changes and SHALL show a pending state while the request is in flight. On success, the system SHALL show a success toast ("Dataset saved") and invalidate the cached semantic model so the panel reflects the persisted content. On failure, the system SHALL show an error toast with the server message and SHALL preserve the user's in-progress edits.
+The dataset detail panel SHALL provide editable inputs for the dataset description, the dataset `ai_context` instructions, the dataset `ai_context` synonyms and examples (each edited as one entry per line), and each field's description. The panel SHALL include a **Save** button that persists the edits via the dataset metadata update API. The Save button SHALL be disabled when there are no unsaved changes and SHALL show a pending state while the request is in flight. On success, the system SHALL show a success toast ("Dataset saved") and invalidate the cached semantic model so the panel reflects the persisted content. On failure, the system SHALL show an error toast with the server message and SHALL preserve the user's in-progress edits.
 
 #### Scenario: Saving edited dataset metadata
 
@@ -66,6 +66,12 @@ The dataset detail panel SHALL provide editable inputs for the dataset descripti
 - **WHEN** a save request fails
 - **THEN** an error toast with the server message is shown
 - **AND** the user's in-progress edits remain in the inputs
+
+#### Scenario: Editing synonyms and examples
+
+- **WHEN** the user enters synonyms and examples (one per line) and clicks Save
+- **THEN** the dataset's `ai_context` is persisted with the corresponding `synonyms` and `examples` arrays
+- **AND** clearing all of instructions, synonyms, and examples removes the `ai_context` entirely
 
 ### Requirement: Dataset Metadata Update API
 

@@ -123,81 +123,82 @@ export function ModelVisualization({
     );
   }
 
+  const showPanel = tab === "graph" && panelOpen && !!selectedDatasetData && !model.hasConflicts;
+
   return (
-    <div className="flex h-full flex-col">
-      <Tabs value={tab} onValueChange={handleTabChange} className="flex-1 min-h-0 flex flex-col">
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-2">
-          <div />
-          <TabsList variant="pill">
-            <TabsTrigger value="graph">
-              <Network className="h-3.5 w-3.5" />
-              Graph
-            </TabsTrigger>
-            <TabsTrigger value="tree">
-              <TreePine className="h-3.5 w-3.5" />
-              Tree
-            </TabsTrigger>
-            <TabsTrigger value="yaml">
-              <Code className="h-3.5 w-3.5" />
-              YAML
-            </TabsTrigger>
-          </TabsList>
-          <div className="flex justify-end">
-            <Button variant="ghost" size="icon-sm" onClick={handleDownload} title="Download YAML">
-              <Download className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-
-        <TabsContent value="graph" className="flex-1 min-h-0">
-          {model.hasConflicts ? (
-            <ConflictBanner />
-          ) : (
-            <div className="flex h-full min-h-0">
-              <div className="min-w-0 flex-1">
-                <ModelGraphView
-                  key={modelName}
-                  projectId={projectId}
-                  modelName={modelName}
-                  model={model}
-                  diff={diff}
-                  className="h-full"
-                  selectedDataset={selectedDataset}
-                  onSelectDataset={handleSelectDataset}
-                />
-              </div>
-              {panelOpen && selectedDatasetData && (
-                <>
-                  <PanelResizeHandle onMouseDown={onPanelResize} />
-                  <div
-                    className="shrink-0 animate-in slide-in-from-right duration-200"
-                    style={{ width: panelWidth }}
-                  >
-                    <DatasetDetailPanel
-                      projectId={projectId}
-                      modelName={modelName}
-                      dataset={selectedDatasetData}
-                      onClose={() => setPanelOpen(false)}
-                    />
-                  </div>
-                </>
-              )}
+    <div className="flex h-full">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Tabs value={tab} onValueChange={handleTabChange} className="flex-1 min-h-0 flex flex-col">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-2">
+            <div />
+            <TabsList variant="pill">
+              <TabsTrigger value="graph">
+                <Network className="h-3.5 w-3.5" />
+                Graph
+              </TabsTrigger>
+              <TabsTrigger value="tree">
+                <TreePine className="h-3.5 w-3.5" />
+                Tree
+              </TabsTrigger>
+              <TabsTrigger value="yaml">
+                <Code className="h-3.5 w-3.5" />
+                YAML
+              </TabsTrigger>
+            </TabsList>
+            <div className="flex justify-end">
+              <Button variant="ghost" size="icon-sm" onClick={handleDownload} title="Download YAML">
+                <Download className="h-3.5 w-3.5" />
+              </Button>
             </div>
-          )}
-        </TabsContent>
+          </div>
 
-        <TabsContent value="tree" className="flex-1 min-h-0">
-          {model.hasConflicts ? (
-            <ConflictBanner />
-          ) : (
-            <ModelTreeView model={model} diff={diff} className="h-full" />
-          )}
-        </TabsContent>
+          <TabsContent value="graph" className="flex-1 min-h-0">
+            {model.hasConflicts ? (
+              <ConflictBanner />
+            ) : (
+              <ModelGraphView
+                key={modelName}
+                projectId={projectId}
+                modelName={modelName}
+                model={model}
+                diff={diff}
+                className="h-full"
+                selectedDataset={selectedDataset}
+                onSelectDataset={handleSelectDataset}
+              />
+            )}
+          </TabsContent>
 
-        <TabsContent value="yaml" className="flex-1 min-h-0">
-          <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="tree" className="flex-1 min-h-0">
+            {model.hasConflicts ? (
+              <ConflictBanner />
+            ) : (
+              <ModelTreeView model={model} diff={diff} className="h-full" />
+            )}
+          </TabsContent>
+
+          <TabsContent value="yaml" className="flex-1 min-h-0">
+            <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {showPanel && selectedDatasetData && (
+        <>
+          <PanelResizeHandle onMouseDown={onPanelResize} />
+          <div
+            className="h-full shrink-0 animate-in slide-in-from-right duration-200"
+            style={{ width: panelWidth }}
+          >
+            <DatasetDetailPanel
+              projectId={projectId}
+              modelName={modelName}
+              dataset={selectedDatasetData}
+              onClose={() => setPanelOpen(false)}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

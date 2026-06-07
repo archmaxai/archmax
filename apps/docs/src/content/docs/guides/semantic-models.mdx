@@ -155,14 +155,15 @@ Groups use a 4-color CI palette: `sage`, `rose`, `blue`, `purple`. Colors are as
 Click any dataset node in the graph view to open the **dataset detail panel**, a vertical panel that slides in from the right edge of the graph. The panel shows the selected dataset's metadata in one place:
 
 - **Description** — the dataset's summary
-- **AI description** — the `ai_context` instructions surfaced to AI agents (existing synonyms and examples are shown read-only below the editor)
+- **AI description** — the `ai_context` instructions surfaced to AI agents
+- **Synonyms** and **Examples** — the `ai_context` synonyms and examples, one entry per line
 - **Fields** — every field with its data type and description
 
-Click a different node to switch the panel to that dataset, and use the close button in the panel header to collapse it (the node stays selected in the graph). Clicking the empty canvas clears the selection. Drag the panel's left edge to resize it.
+The panel spans the full height of the editor (alongside the Graph / Tree / YAML toolbar). Click a different node to switch the panel to that dataset, and use the close button in the panel header to collapse it (the node stays selected in the graph). Clicking the empty canvas clears the selection. Drag the panel's left edge to resize it.
 
 ### Editing and Saving
 
-The description, AI description, and each field's description are editable directly in the panel. Make your edits and click **Save** to persist them. Saving updates only the selected dataset's YAML file — `source`, field expressions, `view_query`, and other custom extensions are left untouched. The **Save** button stays disabled until you make a change. This is a quick way to correct or enrich metadata without opening the YAML or the chat agent.
+The description, AI description, synonyms, examples, and each field's description are editable directly in the panel. Make your edits and click **Save** to persist them. Saving updates only the selected dataset's YAML file — `source`, field expressions, `view_query`, and other custom extensions are left untouched. The **Save** button stays disabled until you make a change. This is a quick way to correct or enrich metadata without opening the YAML or the chat agent.
 
 ## AI Context
 
