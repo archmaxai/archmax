@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod/v4";
 import { getEnv } from "@archmax/core/config/env";
-import { semanticModelSchema, customExtensionSchema } from "@archmax/core/services/semantic-model-schema";
+import { semanticModelSchema, customExtensionSchema, aiContextSchema } from "@archmax/core/services/semantic-model-schema";
 import { SemanticModelFileService } from "@archmax/core/services/semantic-model-files";
 import { AppError } from "../utils/errors";
 
@@ -91,6 +91,42 @@ const app = new Hono()
         param(c, "datasetName"),
         body.custom_extensions,
       );
+      if (!updated) throw AppError.notFound("Dataset not found");
+      return c.json({ ok: true });
+    },
+  )
+  .patch(
+    "/:name/datasets/:datasetName",
+    zValidator(
+      "json",
+      z.object({
+        description: z.string().optional(),
+        ai_context: aiContextSchema,
+        fields: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              description: z.string().optional(),
+              ai_context: aiContextSchema,
+            }),
+          )
+          .optional(),
+      }),
+    ),
+    async (c) => {
+      const svc = getFileService();
+      const body = c.req.valid("json");
+      let updated: boolean;
+      try {
+        updated = await svc.updateDatasetMetadata(
+          param(c, "projectId"),
+          param(c, "name"),
+          param(c, "datasetName"),
+          body,
+        );
+      } catch (err) {
+        throw AppError.badRequest(err instanceof Error ? err.message : "Invalid dataset update");
+      }
       if (!updated) throw AppError.notFound("Dataset not found");
       return c.json({ ok: true });
     },

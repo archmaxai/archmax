@@ -11,9 +11,34 @@ import {
   type SemanticModel,
   type Dataset,
   type CustomExtension,
+  type AiContext,
 } from "./semantic-model-schema";
 
 const YAML_OPTS = { lineWidth: 120, noRefs: true };
+
+export interface DatasetFieldMetadataPatch {
+  name: string;
+  description?: string;
+  ai_context?: AiContext;
+}
+
+export interface DatasetMetadataPatch {
+  description?: string;
+  ai_context?: AiContext;
+  fields?: DatasetFieldMetadataPatch[];
+}
+
+/**
+ * Set or clear an entity's `ai_context` in place. An `undefined` value (or
+ * empty string) removes the key so we never persist a blank context block.
+ */
+function applyAiContext(entity: Record<string, unknown>, value: AiContext): void {
+  if (value === undefined || value === "") {
+    delete entity.ai_context;
+    return;
+  }
+  entity.ai_context = value;
+}
 
 function stripEmptyExtensions<T extends Record<string, unknown>>(obj: T): T {
   const result: Record<string, unknown> = { ...obj };
@@ -391,6 +416,62 @@ export class SemanticModelFileService {
     const ds = (wrapper.dataset ?? wrapper) as Record<string, unknown>;
     ds.custom_extensions = extensions.length > 0 ? extensions : undefined;
     if (!ds.custom_extensions) delete ds.custom_extensions;
+    await this.atomicWrite(filePath, yaml.dump({ dataset: ds }, YAML_OPTS));
+    return true;
+  }
+
+  /**
+   * Merge editable semantic metadata (dataset `description`/`ai_context` and
+   * per-field `description`/`ai_context`) into a single dataset file without
+   * touching `source`, `primary_key`, field `expression` values,
+   * `custom_extensions`, or the `view_query`. Field entries are matched by
+   * `name`; an unknown field name throws. Returns `false` when the dataset
+   * file does not exist (caller maps this to a 404).
+   */
+  async updateDatasetMetadata(
+    projectId: string,
+    modelName: string,
+    datasetName: string,
+    metadata: DatasetMetadataPatch,
+  ): Promise<boolean> {
+    assertSafeSegment(modelName, "model name");
+    assertSafeSegment(datasetName, "dataset name");
+    const dir = await this.resolveWorkDir(projectId);
+    const filePath = join(dir, modelName, `${datasetName}.yaml`);
+    let rawContent: string;
+    try {
+      rawContent = await readFile(filePath, "utf-8");
+    } catch {
+      return false;
+    }
+
+    const wrapper = yaml.load(rawContent) as Record<string, unknown>;
+    const ds = (wrapper.dataset ?? wrapper) as Record<string, unknown>;
+
+    if (metadata.description !== undefined) {
+      ds.description = metadata.description;
+    }
+    if (Object.prototype.hasOwnProperty.call(metadata, "ai_context")) {
+      applyAiContext(ds, metadata.ai_context);
+    }
+
+    if (metadata.fields && metadata.fields.length > 0) {
+      const existingFields = Array.isArray(ds.fields) ? (ds.fields as Record<string, unknown>[]) : [];
+      const byName = new Map(existingFields.map((f) => [f.name as string, f]));
+      for (const patch of metadata.fields) {
+        const target = byName.get(patch.name);
+        if (!target) {
+          throw new Error(`Unknown field "${patch.name}" in dataset "${datasetName}"`);
+        }
+        if (patch.description !== undefined) {
+          target.description = patch.description;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "ai_context")) {
+          applyAiContext(target, patch.ai_context);
+        }
+      }
+    }
+
     await this.atomicWrite(filePath, yaml.dump({ dataset: ds }, YAML_OPTS));
     return true;
   }

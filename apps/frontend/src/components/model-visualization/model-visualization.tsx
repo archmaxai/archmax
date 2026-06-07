@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import { ModelYamlView } from "./model-yaml-view";
 import { ModelTreeView } from "./model-tree-view";
 import { ModelGraphView } from "./model-graph-view";
+import { DatasetDetailPanel } from "./dataset-detail-panel";
 import { useModelDiff } from "./use-model-diff";
 import type { SemanticModelFull } from "./types";
+import { PanelResizeHandle, useResizablePanel } from "@/components/layout/panel-resize-handle";
 import { api } from "@/lib/api";
 
 const DEFAULT_TAB = "graph";
@@ -39,10 +41,26 @@ export function ModelVisualization({
   modelName,
 }: ModelVisualizationProps) {
   const [tab, setTab] = useState(() => getTabPreference(modelName));
+  const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const { width: panelWidth, onMouseDown: onPanelResize } = useResizablePanel(
+    "archmax:dataset-panel-width",
+    360,
+    280,
+    560,
+    true,
+  );
 
   useEffect(() => {
     setTab(getTabPreference(modelName));
+    setSelectedDataset(null);
+    setPanelOpen(false);
   }, [modelName]);
+
+  const handleSelectDataset = useCallback((name: string | null) => {
+    setSelectedDataset(name);
+    setPanelOpen(name !== null);
+  }, []);
 
   const handleTabChange = useCallback(
     (value: string) => {
@@ -65,6 +83,10 @@ export function ModelVisualization({
   });
 
   const diff = useModelDiff(model ?? null);
+
+  const selectedDatasetData = selectedDataset
+    ? model?.datasets.find((d) => d.name === selectedDataset) ?? null
+    : null;
 
   const handleDownload = useCallback(async () => {
     try {
@@ -101,59 +123,82 @@ export function ModelVisualization({
     );
   }
 
-  return (
-    <div className="flex h-full flex-col">
-      <Tabs value={tab} onValueChange={handleTabChange} className="flex-1 min-h-0 flex flex-col">
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-2">
-          <div />
-          <TabsList variant="pill">
-            <TabsTrigger value="graph">
-              <Network className="h-3.5 w-3.5" />
-              Graph
-            </TabsTrigger>
-            <TabsTrigger value="tree">
-              <TreePine className="h-3.5 w-3.5" />
-              Tree
-            </TabsTrigger>
-            <TabsTrigger value="yaml">
-              <Code className="h-3.5 w-3.5" />
-              YAML
-            </TabsTrigger>
-          </TabsList>
-          <div className="flex justify-end">
-            <Button variant="ghost" size="icon-sm" onClick={handleDownload} title="Download YAML">
-              <Download className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
+  const showPanel = tab === "graph" && panelOpen && !!selectedDatasetData && !model.hasConflicts;
 
-        <TabsContent value="graph" className="flex-1 min-h-0">
-          {model.hasConflicts ? (
-            <ConflictBanner />
-          ) : (
-            <ModelGraphView
-              key={modelName}
+  return (
+    <div className="flex h-full">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Tabs value={tab} onValueChange={handleTabChange} className="flex-1 min-h-0 flex flex-col">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-2">
+            <div />
+            <TabsList variant="pill">
+              <TabsTrigger value="graph">
+                <Network className="h-3.5 w-3.5" />
+                Graph
+              </TabsTrigger>
+              <TabsTrigger value="tree">
+                <TreePine className="h-3.5 w-3.5" />
+                Tree
+              </TabsTrigger>
+              <TabsTrigger value="yaml">
+                <Code className="h-3.5 w-3.5" />
+                YAML
+              </TabsTrigger>
+            </TabsList>
+            <div className="flex justify-end">
+              <Button variant="ghost" size="icon-sm" onClick={handleDownload} title="Download YAML">
+                <Download className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          <TabsContent value="graph" className="flex-1 min-h-0">
+            {model.hasConflicts ? (
+              <ConflictBanner />
+            ) : (
+              <ModelGraphView
+                key={modelName}
+                projectId={projectId}
+                modelName={modelName}
+                model={model}
+                diff={diff}
+                className="h-full"
+                selectedDataset={selectedDataset}
+                onSelectDataset={handleSelectDataset}
+              />
+            )}
+          </TabsContent>
+
+          <TabsContent value="tree" className="flex-1 min-h-0">
+            {model.hasConflicts ? (
+              <ConflictBanner />
+            ) : (
+              <ModelTreeView model={model} diff={diff} className="h-full" />
+            )}
+          </TabsContent>
+
+          <TabsContent value="yaml" className="flex-1 min-h-0">
+            <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {showPanel && selectedDatasetData && (
+        <>
+          <PanelResizeHandle onMouseDown={onPanelResize} />
+          <div
+            className="h-full shrink-0 animate-in slide-in-from-right duration-200"
+            style={{ width: panelWidth }}
+          >
+            <DatasetDetailPanel
               projectId={projectId}
               modelName={modelName}
-              model={model}
-              diff={diff}
-              className="h-full"
+              dataset={selectedDatasetData}
+              onClose={() => setPanelOpen(false)}
             />
-          )}
-        </TabsContent>
-
-        <TabsContent value="tree" className="flex-1 min-h-0">
-          {model.hasConflicts ? (
-            <ConflictBanner />
-          ) : (
-            <ModelTreeView model={model} diff={diff} className="h-full" />
-          )}
-        </TabsContent>
-
-        <TabsContent value="yaml" className="flex-1 min-h-0">
-          <ModelYamlView projectId={projectId} modelName={modelName} className="h-full" />
-        </TabsContent>
-      </Tabs>
+          </div>
+        </>
+      )}
     </div>
   );
 }
