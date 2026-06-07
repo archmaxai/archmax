@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Save, Loader2, Database } from "lucide-react";
 import {
   Button,
@@ -21,10 +21,50 @@ interface DatasetDetailPanelProps {
   className?: string;
 }
 
-function initFieldDescriptions(ds: DatasetFull): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const f of ds.fields) out[f.name] = f.description ?? "";
-  return out;
+interface EditState {
+  description: string;
+  aiInstructions: string;
+  fieldDescriptions: Record<string, string>;
+}
+
+function deriveState(ds: DatasetFull): EditState {
+  const fieldDescriptions: Record<string, string> = {};
+  for (const f of ds.fields) fieldDescriptions[f.name] = f.description ?? "";
+  return {
+    description: ds.description ?? "",
+    aiInstructions: getAiInstructions(ds.ai_context),
+    fieldDescriptions,
+  };
+}
+
+/**
+ * Merge a fresh on-disk snapshot into the working editor state, preserving
+ * fields the user has actively edited (where `current` diverges from the
+ * previous `baseline`) while refreshing untouched fields to their latest
+ * persisted value. This keeps the panel in sync with background refetches
+ * without clobbering in-progress edits.
+ */
+function resyncUntouched(current: EditState, baseline: EditState, next: EditState): EditState {
+  const fieldDescriptions: Record<string, string> = {};
+  for (const name of Object.keys(next.fieldDescriptions)) {
+    const cur = current.fieldDescriptions[name] ?? "";
+    const base = baseline.fieldDescriptions[name] ?? "";
+    fieldDescriptions[name] = cur !== base ? cur : next.fieldDescriptions[name];
+  }
+  return {
+    description: current.description !== baseline.description ? current.description : next.description,
+    aiInstructions:
+      current.aiInstructions !== baseline.aiInstructions ? current.aiInstructions : next.aiInstructions,
+    fieldDescriptions,
+  };
+}
+
+function isDirty(edit: EditState, baseline: EditState): boolean {
+  if (edit.description !== baseline.description) return true;
+  if (edit.aiInstructions !== baseline.aiInstructions) return true;
+  return Object.keys(baseline.fieldDescriptions).some(
+    (name) => (edit.fieldDescriptions[name] ?? "") !== baseline.fieldDescriptions[name],
+  );
 }
 
 /**
@@ -49,53 +89,44 @@ export function DatasetDetailPanel({
   onClose,
   className,
 }: DatasetDetailPanelProps) {
-  const baselineDescription = dataset.description ?? "";
-  const baselineInstructions = getAiInstructions(dataset.ai_context);
-  const baselineFields = useMemo(() => initFieldDescriptions(dataset), [dataset]);
+  const [baseline, setBaseline] = useState<EditState>(() => deriveState(dataset));
+  const [edit, setEdit] = useState<EditState>(baseline);
+  const baselineRef = useRef(baseline);
+  baselineRef.current = baseline;
+  const lastNameRef = useRef(dataset.name);
 
-  const [description, setDescription] = useState(baselineDescription);
-  const [aiInstructions, setAiInstructions] = useState(baselineInstructions);
-  const [fieldDescriptions, setFieldDescriptions] = useState<Record<string, string>>(baselineFields);
-
-  // Reset editor state when switching to a different dataset.
-  const lastName = useRef(dataset.name);
+  // Keep the editor in sync with the latest `dataset` prop. Switching datasets
+  // fully resets; a background refetch of the same dataset refreshes the
+  // baseline and any untouched fields while preserving in-progress edits.
   useEffect(() => {
-    if (lastName.current !== dataset.name) {
-      lastName.current = dataset.name;
-      setDescription(dataset.description ?? "");
-      setAiInstructions(getAiInstructions(dataset.ai_context));
-      setFieldDescriptions(initFieldDescriptions(dataset));
+    const next = deriveState(dataset);
+    if (lastNameRef.current !== dataset.name) {
+      lastNameRef.current = dataset.name;
+      setBaseline(next);
+      setEdit(next);
+      return;
     }
+    setEdit((cur) => resyncUntouched(cur, baselineRef.current, next));
+    setBaseline(next);
   }, [dataset]);
 
   const mutation = useUpdateDatasetMetadata(projectId, modelName);
 
-  const dirty =
-    description !== baselineDescription ||
-    aiInstructions !== baselineInstructions ||
-    Object.keys(baselineFields).some((name) => (fieldDescriptions[name] ?? "") !== baselineFields[name]);
+  const dirty = isDirty(edit, baseline);
 
   const handleSave = useCallback(() => {
     const patch: DatasetMetadataPatch = {};
-    if (description !== baselineDescription) patch.description = description;
-    if (aiInstructions !== baselineInstructions) {
-      patch.ai_context = buildAiContext(dataset.ai_context, aiInstructions);
+    if (edit.description !== baseline.description) patch.description = edit.description;
+    if (edit.aiInstructions !== baseline.aiInstructions) {
+      patch.ai_context = buildAiContext(dataset.ai_context, edit.aiInstructions);
     }
-    const changedFields = dataset.fields
-      .filter((f) => (fieldDescriptions[f.name] ?? "") !== (f.description ?? ""))
-      .map((f) => ({ name: f.name, description: fieldDescriptions[f.name] ?? "" }));
+    const changedFields = Object.keys(baseline.fieldDescriptions)
+      .filter((name) => (edit.fieldDescriptions[name] ?? "") !== baseline.fieldDescriptions[name])
+      .map((name) => ({ name, description: edit.fieldDescriptions[name] ?? "" }));
     if (changedFields.length > 0) patch.fields = changedFields;
     if (Object.keys(patch).length === 0) return;
     mutation.mutate({ datasetName: dataset.name, patch });
-  }, [
-    description,
-    baselineDescription,
-    aiInstructions,
-    baselineInstructions,
-    fieldDescriptions,
-    dataset,
-    mutation,
-  ]);
+  }, [edit, baseline, dataset, mutation]);
 
   const aiObj = getAiContextObject(dataset.ai_context);
 
@@ -122,8 +153,8 @@ export function DatasetDetailPanel({
             <Label htmlFor="dataset-description">Description</Label>
             <Textarea
               id="dataset-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={edit.description}
+              onChange={(e) => setEdit((cur) => ({ ...cur, description: e.target.value }))}
               placeholder="Summarize what this dataset represents…"
               rows={3}
             />
@@ -133,8 +164,8 @@ export function DatasetDetailPanel({
             <Label htmlFor="dataset-ai-context">AI description</Label>
             <Textarea
               id="dataset-ai-context"
-              value={aiInstructions}
-              onChange={(e) => setAiInstructions(e.target.value)}
+              value={edit.aiInstructions}
+              onChange={(e) => setEdit((cur) => ({ ...cur, aiInstructions: e.target.value }))}
               placeholder="Guidance for AI agents using this dataset…"
               rows={4}
             />
@@ -180,9 +211,12 @@ export function DatasetDetailPanel({
                         )}
                       </div>
                       <Textarea
-                        value={fieldDescriptions[field.name] ?? ""}
+                        value={edit.fieldDescriptions[field.name] ?? ""}
                         onChange={(e) =>
-                          setFieldDescriptions((prev) => ({ ...prev, [field.name]: e.target.value }))
+                          setEdit((cur) => ({
+                            ...cur,
+                            fieldDescriptions: { ...cur.fieldDescriptions, [field.name]: e.target.value },
+                          }))
                         }
                         placeholder="Describe this field…"
                         rows={2}
