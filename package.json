@@ -11,10 +11,10 @@
     "typecheck": "turbo typecheck"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.7",
+    "@vitest/coverage-v8": "^4.1.8",
     "esbuild": "^0.28.0",
-    "turbo": "^2.9.14",
-    "vitest": "^4.1.7"
+    "turbo": "^2.9.16",
+    "vitest": "^4.1.8"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -24,6 +24,6 @@
     ]
   },
   "dependencies": {
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.2.0"
   }
 }
