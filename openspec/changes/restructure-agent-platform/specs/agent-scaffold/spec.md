@@ -42,7 +42,7 @@ Scaffold files SHALL be authored **directly by the builder agent** through its e
 
 ### Requirement: Seeded MCP Server Definition
 
-The platform SHALL seed and maintain a `.mcp.json` file at the project root containing an `archmax` MCP server entry pointing at the project's MCP endpoint (derived from the configured application base URL and the project slug). The entry SHALL reference the bearer token via an environment-variable placeholder (e.g. `${ARCHMAX_MCP_TOKEN}`); real token values MUST NOT be written to the file. The file SHALL be created on project creation, recreated if missing when the builder agent starts, and updated when the project slug changes. The builder agent MAY extend the file with additional servers; the platform SHALL preserve unknown entries when updating its own.
+The platform SHALL seed and maintain a `.mcp.json` file at the project root containing an `archmax` MCP server entry pointing at the project's MCP endpoint (derived from the configured application base URL and the project slug). The entry SHALL reference the bearer token via an environment-variable placeholder (e.g. `${ARCHMAX_MCP_TOKEN}`); real token values MUST NOT be written to the file. The file SHALL be created on project creation, recreated if missing when the builder agent starts, and updated when the project slug changes. The builder agent MAY extend the file with additional servers; when updating its own `archmax` entry the platform SHALL preserve foreign entries **only if** they contain no literal secret material (see "Credential-Safe JSON Validation"). If a foreign entry contains a literal credential, the platform SHALL refuse to silently re-persist it and SHALL surface a warning identifying the offending entry rather than writing secret material back to the Git-versioned, exportable file.
 
 #### Scenario: New project gets a seeded .mcp.json
 
@@ -61,9 +61,11 @@ The platform SHALL seed and maintain a `.mcp.json` file at the project root cont
 - **WHEN** `.mcp.json` is written or updated by the platform
 - **THEN** the file contains no literal bearer tokens, API keys, or other secret material
 
-### Requirement: JSON Syntax Validation on Write
+### Requirement: Credential-Safe JSON Validation on Write
 
 The builder agent's filesystem backend SHALL validate JSON syntax before persisting any file whose path ends in `.json` (including `.mcp.json` and `hooks/hooks.json`). When the content is not valid JSON, the `write_file` tool MUST return an error describing the syntax issue instead of writing the file. When an `edit_file` operation on a JSON file produces syntactically invalid content, the tool MUST return an error so the agent can self-correct. This mirrors the existing YAML validation for `.yaml`/`.yml` files.
+
+Because `.mcp.json` is Git-versioned and included in scaffold exports, syntax validation alone is insufficient: writes to `.mcp.json` SHALL additionally reject **literal credential values**. Server entries MAY reference secrets only through environment-variable placeholders (`${VAR}` form). A write SHALL be rejected (with an actionable error) when any `headers`, `env`, or URL field contains a literal value matching a credential pattern — e.g. `Authorization: Bearer <token>` with a non-placeholder token, URL userinfo (`https://user:pass@host`), or an env/header value that is not a `${VAR}` placeholder for keys named like `*_TOKEN`, `*_KEY`, `*_SECRET`, `PASSWORD`, or `AUTHORIZATION`. The same credential-pattern guard SHALL apply to the platform's own seeding/preservation path so secret-looking foreign entries are never written or preserved.
 
 #### Scenario: Invalid JSON rejected
 
@@ -71,14 +73,22 @@ The builder agent's filesystem backend SHALL validate JSON syntax before persist
 - **THEN** the tool returns an error describing the syntax problem
 - **AND** the file is not written to disk
 
-#### Scenario: Valid JSON written
+#### Scenario: Literal credential in .mcp.json rejected
 
-- **WHEN** the builder writes syntactically valid JSON to `.mcp.json`
+- **WHEN** the builder invokes `write_file` for `.mcp.json` with a server whose header is `"Authorization": "Bearer sk-live-abc123"`
+- **THEN** the tool returns an error instructing the agent to use a `${VAR}` placeholder
+- **AND** the file is not written to disk
+
+#### Scenario: Valid JSON with placeholders written
+
+- **WHEN** the builder writes valid JSON to `.mcp.json` whose credential fields use only `${VAR}` placeholders
 - **THEN** the file is persisted normally
 
 ### Requirement: Scaffold Export API
 
-The API SHALL expose an authenticated `GET /api/projects/:projectId/scaffold/export` endpoint that streams a zip archive of the project's agent scaffold, named `<project-slug>-scaffold.zip`. The archive SHALL contain the project directory contents **excluding** internal entries: `.git/`, `large_tool_results/`, `uploads/`, `duckdb.db` and its side files (`*.wal`, `*.tmp`), and any dotfile temp artifacts. The archive MUST NOT contain secret material; `.mcp.json` is included as seeded (placeholder token only). The endpoint SHALL require admin session auth and return 404 for unknown projects.
+The API SHALL expose an authenticated `GET /api/projects/:projectId/scaffold/export` endpoint that streams a zip archive of the project's agent scaffold, named `<project-slug>-scaffold.zip`. The archive SHALL contain the project directory contents **excluding** internal runtime entries: `.git/`, `large_tool_results/`, `uploads/`, `duckdb.db` and its side files (`*.wal`, `*.tmp`), and any dotfile temp artifacts.
+
+The export MUST fail closed with respect to secrets. In addition to the runtime denylist, the endpoint SHALL exclude well-known secret-bearing files anywhere in the tree — `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, and private-key/credential files (`id_*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `credentials*`). It SHALL also scan the textual content of each candidate file for secret patterns (e.g. `BETTER_AUTH_SECRET`, `AGENT_API_KEY`, `ENCRYPTION_KEY`, `Authorization: Bearer <token>`, `encryptedApiKey`, and `://user:password@` database URLs). If a candidate file matches a secret pattern, the endpoint SHALL **abort the export with an error** (rather than silently emitting an archive that may contain secrets), naming the offending path; only `${VAR}`-style placeholders are exempt. `.mcp.json` is included as seeded (placeholder token only). The endpoint SHALL require admin session auth and return 404 for unknown projects.
 
 #### Scenario: Export a scaffold
 
@@ -91,6 +101,12 @@ The API SHALL expose an authenticated `GET /api/projects/:projectId/scaffold/exp
 
 - **WHEN** an exported archive is inspected
 - **THEN** it contains no bearer tokens, API keys, or encrypted credential material
+
+#### Scenario: Secret-bearing file aborts the export
+
+- **WHEN** an agent-created `.env.local` (or a `scripts/` file containing `AGENT_API_KEY=...`) exists in the project directory
+- **THEN** the export aborts with an error naming the offending path
+- **AND** no archive is streamed
 
 #### Scenario: Unauthenticated export rejected
 

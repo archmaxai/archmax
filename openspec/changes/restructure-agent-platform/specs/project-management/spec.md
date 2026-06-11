@@ -105,20 +105,28 @@ The "Publish History" card SHALL display a list of recent commits from the local
 
 The API SHALL expose project-scoped LLM settings endpoints under `/api/projects/:projectId/llm-settings`:
 
-- `GET /builder` — returns the builder LLM settings with the API key masked (e.g. `sk-...****`) plus an `apiKeySet` boolean and the resolved effective configuration source per field (`project` or `env`)
+- `GET /builder` — returns the builder LLM settings as **non-secret metadata only**: `baseUrl`, `model`, a `configured` boolean (the effective config is usable), and, per field, `apiKeySet` (boolean) plus `apiKeySource` (`project` | `env` | `unset`). It SHALL NOT return any API key string, masked or otherwise.
 - `PUT /builder` — updates `builderLlm` (accepts `baseUrl`, `apiKey`, `model`, each optional; when `apiKey` is provided it is encrypted and replaces the stored key; clearing a field removes the project override)
 - `POST /builder/test-connection` — verifies connectivity against the **effective** builder configuration (project override merged with env fallback) by issuing a lightweight request to the configured endpoint
-- `GET /agent` — returns the agent settings (`baseUrl`, `model`, `systemPrompt`, masked API key, `apiKeySet`) or an unconfigured indicator
+- `GET /agent` — returns the agent settings as **non-secret metadata only**: `baseUrl`, `model`, `systemPrompt`, a `configured` boolean, `apiKeySet`, and `apiKeySource`, or an unconfigured indicator. It SHALL NOT return any API key string, masked or otherwise.
 - `PUT /agent` — creates/updates `agentLlm` (requires `baseUrl`, `model`, `systemPrompt`; `apiKey` required on first save, optional afterwards — omitting it preserves the stored key)
 - `POST /agent/test-connection` — verifies connectivity against the agent configuration
 
-API keys SHALL never be returned in plaintext. Base URLs SHALL be re-validated against the SSRF rules on every PUT and before every outbound test-connection request. All endpoints SHALL require admin session auth. The `/api/config` surface SHALL report per-project configuration state (`builderConfigured`, `agentConfigured`) so the frontend can gate chat inputs and run buttons.
+API keys (whether sourced from a project override or from an environment secret such as `AGENT_API_KEY`) SHALL NEVER be returned in any form — not in plaintext, not masked, and not as a placeholder that reuses any characters of the key. Responses, UI placeholders, server logs, and test-connection error messages SHALL NOT contain key-derived material. Key presence and origin SHALL be communicated only via `apiKeySet`/`apiKeySource`, and any UI hint SHALL be a fixed, non-derived string (e.g. "Using AGENT_API_KEY" for env, "Project key stored" for an override). Base URLs SHALL be re-validated against the SSRF rules on every PUT and before every outbound test-connection request. All endpoints SHALL require admin session auth.
+
+Per-project configuration state SHALL be exposed only on project-scoped, authenticated surfaces: the `GET /builder` and `GET /agent` responses carry the `configured` boolean, and `GET /api/projects/:projectId` MAY also include `builderConfigured` and `agentConfigured` for convenience. The global, unauthenticated `/api/config` route SHALL NOT carry per-project gating flags (it has no `projectId` and would be incorrect in a multi-project deployment). The frontend SHALL gate chat inputs and run buttons from the project-scoped flags.
 
 #### Scenario: Save agent settings
 
 - **WHEN** a PUT request to `/agent` provides `baseUrl`, `apiKey`, `model`, and `systemPrompt`
 - **THEN** the API key is encrypted and stored in `agentLlm.encryptedApiKey`
-- **AND** subsequent GETs return the key masked with `apiKeySet: true`
+- **AND** subsequent GETs return `apiKeySet: true` and `apiKeySource: "project"` with no key characters in the response
+
+#### Scenario: Env-sourced key is never echoed
+
+- **WHEN** a `GET /builder` is made for a project with no key override but with `AGENT_API_KEY` set in the environment
+- **THEN** the response includes `apiKeySet: true` and `apiKeySource: "env"`
+- **AND** the response body, and any UI placeholder derived from it, contain no characters of `AGENT_API_KEY`
 
 #### Scenario: Update agent settings without changing the key
 
@@ -138,7 +146,7 @@ API keys SHALL never be returned in plaintext. Base URLs SHALL be re-validated a
 
 ### Requirement: Builder LLM Settings Page
 
-The frontend SHALL provide a Builder settings page at `/$projectId/settings/builder` with a card containing inline label–input rows for: OpenAI-compatible base URL, API key (password input, masked placeholder when a key is stored), and model name. Each field SHALL indicate its env-default value as placeholder text when no project override is set. The page SHALL provide a "Save" button and a "Test Connection" button. Test Connection SHALL first persist unsaved changes, then call `POST /api/projects/:projectId/llm-settings/builder/test-connection`, showing a success or error toast. Buttons SHALL be disabled with a loading indicator while operations are in flight. A "Reset to defaults" action SHALL clear the project overrides so the env configuration applies again.
+The frontend SHALL provide a Builder settings page at `/$projectId/settings/builder` with a card containing inline label–input rows for: OpenAI-compatible base URL, API key (password input), and model name. The base URL and model fields SHALL show their env-default value as placeholder text when no project override is set. The API key field SHALL NOT display any env or stored key material; instead it SHALL show a fixed, non-derived hint based on `apiKeySet`/`apiKeySource` (e.g. "Using AGENT_API_KEY" or "Project key stored"). The page SHALL provide a "Save" button and a "Test Connection" button. Test Connection SHALL first persist unsaved changes, then call `POST /api/projects/:projectId/llm-settings/builder/test-connection`, showing a success or error toast. Buttons SHALL be disabled with a loading indicator while operations are in flight. A "Reset to defaults" action SHALL clear the project overrides so the env configuration applies again.
 
 #### Scenario: Override the builder model
 
@@ -161,7 +169,7 @@ The frontend SHALL provide a Builder settings page at `/$projectId/settings/buil
 
 ### Requirement: Agent Settings Page
 
-The frontend SHALL provide an Agent settings page at `/$projectId/settings/agent` configuring the project's single agent. The page SHALL contain a card with inline label–input rows for: OpenAI-compatible base URL, API key (password input, masked placeholder when a key is stored), and model name; and a card with the agent's system prompt (textarea). The page SHALL provide "Save" and "Test Connection" buttons with the same save-then-test behavior, disabled states, and loading indicators as the Builder settings page. While the agent is unconfigured, the page SHALL display an informational note that the Agent playground and test runs are unavailable until configuration is saved.
+The frontend SHALL provide an Agent settings page at `/$projectId/settings/agent` configuring the project's single agent. The page SHALL contain a card with inline label–input rows for: OpenAI-compatible base URL, API key (password input, showing a fixed non-derived hint based on `apiKeySet`/`apiKeySource` — never any key characters), and model name; and a card with the agent's system prompt (textarea). The page SHALL provide "Save" and "Test Connection" buttons with the same save-then-test behavior, disabled states, and loading indicators as the Builder settings page. While the agent is unconfigured, the page SHALL display an informational note that the Agent playground and test runs are unavailable until configuration is saved.
 
 #### Scenario: Configure the agent for the first time
 

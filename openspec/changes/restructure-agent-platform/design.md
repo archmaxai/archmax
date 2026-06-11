@@ -54,7 +54,9 @@ The sidebar loses both entries; the Data Sources header hosts Browser (icon+text
 
 ### D6 — Migration drops all TestAgents (user decision: manual reconfiguration)
 
-A schema migration soft-deletes every `TestAgent` document and unsets `TestCase.testAgent`. `TestRun.testAgent` becomes optional; historical runs remain readable (legacy agent name shown when present). New runs snapshot the project agent's `llmModel` per run instead of referencing an agent document. Conversations: playground conversations are identified by a `playground: true` flag going forward; legacy `testAgent` references remain readable.
+A schema migration **first backfills `TestRun.testAgentName`** from each run's `testAgent.name`, then soft-deletes every `TestAgent` document and unsets `TestCase.testAgent`. `TestRun.testAgent` becomes optional and is never populated afterwards (the soft-deleted ref would return nothing); run lists/detail render the `llmModel` snapshot for new runs and the `testAgentName` snapshot for legacy runs, falling back to a neutral "Legacy agent" label. Conversations: playground conversations are identified by a `playground: true` flag going forward; legacy `testAgent` references remain readable. Builder and Agent conversation histories are partitioned by the `playground` flag (Builder filters `playground: { $ne: true }`, replacing the old `testAgent: null` filter, so playground chats cannot leak into Build history).
+
+Per-project agent/builder *configured* state is exposed on project-scoped, authenticated endpoints (the llm-settings GETs and the project payload), **not** on the global unauthenticated `/api/config` route, which has no `projectId` and would be wrong under multiple projects. API key material (including env secrets like `AGENT_API_KEY`) is never returned in any form — masked or otherwise; the UI shows only presence/source via `apiKeySet`/`apiKeySource`.
 
 ### D7 — "Failing tests" = latest result per test case
 
@@ -65,12 +67,12 @@ A test case is *failing* when the most recent `TestRun` embedded result for it h
 - **Large rename surface** (routes, labels, docs, e2e selectors) → mitigated by keeping all backend route prefixes except `test-agents` stable, and adding redirects for moved frontend routes.
 - **Removing TestAgent breaks the builder's `list_test_agents` tool and prompt flow** → tool removed and prompt updated in the same change; `create_test_case` is simplified rather than left referencing dead concepts.
 - **Concurrent edit conflict with `add-llm-prompt-caching`** → no overlapping spec requirements; sequence implementation (rebase whichever lands second).
-- **Export could leak secrets** → export reuses an explicit denylist and `.mcp.json` is placeholder-only by construction; a test asserts no `encryptedApiKey`/token material is present in the bundle.
+- **Export could leak secrets** → export uses a runtime denylist *and* secret-file exclusions (`.env*`, key/credential files) *and* a content scan that fails the export closed on secret patterns; `.mcp.json` is placeholder-only by construction, and `.mcp.json` writes reject literal credential values (only `${VAR}` placeholders allowed). Tests assert the fail-closed path and absence of `encryptedApiKey`/token material.
 - **Blocking playground/test-runs until the agent is configured adds first-run friction** → mitigated by prominent empty states deep-linking to Settings → Agent.
 
 ## Migration Plan
 
-1. Ship schema migration `00X-drop-test-agents`: soft-delete all `TestAgent` docs, `$unset` `TestCase.testAgent`, leave `TestRun` documents untouched.
+1. Ship schema migration `00X-drop-test-agents`: backfill `TestRun.testAgentName` from each run's `testAgent.name`, then soft-delete all `TestAgent` docs and `$unset` `TestCase.testAgent`; otherwise leave `TestRun` documents intact.
 2. Ship filesystem migration `migrate-data-models-layout.ts` (replaces `migrate-src-layout.ts`): on startup, for any project dir lacking `data_models/`, move model YAMLs into `data_models/` from the legacy `src/` directory (or, for very old projects, from the project root). `uploads/` and scaffold dirs are left in place. Idempotent and safe to re-run.
 3. Seed `.mcp.json` for existing projects lazily (on first builder-agent start or settings save) and for new projects on creation.
 4. Frontend redirects: `/testing/playground → /agent`, `/testing/agents → /settings/agent`, `/connections/data → /connections?tool=browser`, `/connections/console → /connections?tool=console`, `/data → /connections?tool=browser`.

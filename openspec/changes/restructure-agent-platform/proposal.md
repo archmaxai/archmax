@@ -53,10 +53,10 @@ archmax is repositioning from "a tool that manages semantic descriptions of data
   - `apps/frontend/src/components/layout/app-sidebar.tsx` (nav restructure)
   - `apps/frontend/src/routes/_auth/$projectId/` — `connections/*`, `models.tsx`, `testing/*`, new `agent.tsx`, `settings*` (route moves, overlay dialogs, panel restructure)
   - `packages/core/src/models/` — remove `TestAgent.ts`, edit `Project.ts`, `TestCase.ts`, `TestRun.ts`, `Conversation.ts`
-  - `apps/api/src/routes/` — remove `test-agents.ts`; add `llm-settings.ts`, `scaffold.ts`; edit `test-cases.ts`, `test-runs.ts`, `playground.ts`, `config`
+  - `apps/api/src/routes/` — remove `test-agents.ts`; add `llm-settings.ts`, `scaffold.ts`; edit `test-cases.ts` (latest-results), `test-runs.ts`, `playground.ts`, `projects.ts` (per-project `builder/agentConfigured`; not the global `config` route)
   - `packages/core/src/services/` — `agent.ts`, `playground-agent.ts`, `test-runner.ts`, `agent-tools.ts`, `git.ts` (scaffold ignore rules), `SemanticModelFileService` (`src/` → `data_models/`), filesystem backend validation
   - `apps/api/src/scripts/` — replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (`src/` → `data_models/`)
   - `apps/worker/src/processor.ts` (playground branching without testAgentId)
-  - Schema migration (drop TestAgents, unset `TestCase.testAgent`)
+  - Schema migration (backfill `TestRun.testAgentName`, then drop TestAgents, unset `TestCase.testAgent`)
   - `apps/docs` (navigation, testing, settings, new agent-scaffold guide)
 - Coordination: the active change `add-llm-prompt-caching` also edits `packages/core/src/services/agent.ts` and `playground-agent.ts`. No spec-requirement overlap, but implementation should be sequenced (caching first or rebase this change on it).

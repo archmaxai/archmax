@@ -13,7 +13,7 @@
 The Builder page side panel SHALL include an **Improvements & Testing** accordion section (formerly "Improvement Requests") below the Build section. The section SHALL display two kinds of entries:
 
 1. **Improvement requests** — all improvement suggestions for the project. Each item SHALL show a lightbulb icon, the truncated title, and a checkmark overlay if the improvement has been implemented. Clicking an improvement SHALL navigate to its detail view in the main content area. Each improvement row SHALL show a trash icon on hover that soft-deletes the improvement when clicked, matching the conversation row delete pattern.
-2. **Failing tests** — the project's currently failing test cases, sourced from `GET /api/projects/:projectId/test-cases/latest-results` (entries with `latestStatus` of `failed` or `error`). Each item SHALL show a distinct test/alert icon and the truncated test case title. Clicking a failing-test entry SHALL navigate to the latest run's detail page (`/$projectId/testing/runs/:runId`). Each failing-test row SHALL additionally offer a refine affordance (wand icon on hover) that opens `/$projectId/models/chat/new` with a `prefill` prompt referencing the failing test case and its unmet facts so the builder can improve the model.
+2. **Failing tests** — the project's currently failing test cases, sourced from `GET /api/projects/:projectId/test-cases/latest-results` (entries with `latestStatus` of `failed` or `error`). Each item SHALL show a distinct test/alert icon and the truncated test case title. Clicking a failing-test entry SHALL navigate to the latest run's detail page (`/$projectId/testing/runs/:runId`). Each failing-test row SHALL additionally offer a refine affordance (wand icon on hover) that opens `/$projectId/models/chat/new` with a `prefill` prompt built from the same `latest-results` payload — the case `inputMessage` and its `unmetFacts` — so the builder can improve the model without a second request.
 
 The section header SHALL display a pending-count badge equal to the number of pending improvements plus the number of failing tests.
 
@@ -41,7 +41,7 @@ The section header SHALL display a pending-count badge equal to the number of pe
 #### Scenario: Refine a failing test from the panel
 
 - **WHEN** the user activates the refine affordance on a failing-test entry
-- **THEN** the Build chat opens at `/$projectId/models/chat/new` with a `prefill` prompt describing the failing test case and its unmet expected facts
+- **THEN** the Build chat opens at `/$projectId/models/chat/new` with a `prefill` prompt built from the entry's `inputMessage` and `unmetFacts` (falling back to the error message when an `error`-status case has no `unmetFacts`)
 
 #### Scenario: Empty state
 

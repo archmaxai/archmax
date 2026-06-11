@@ -66,7 +66,20 @@ The system SHALL provide an interactive playground chat where the user converses
 
 The tools SHALL read from the current development state of semantic models (YAML files on disk), not from any published snapshot. Playground conversations SHALL be persisted in the existing `Conversation` model and identified by a `playground: true` flag; legacy conversations referencing a deleted `testAgent` SHALL remain readable. Playground interactions SHALL NOT be logged to `McpCallLog`.
 
+Conversation histories SHALL be partitioned by the `playground` flag so that playground chats never leak into the Builder (Build) history and vice versa. The Agent page history list and load endpoints SHALL return only conversations where `playground: true`. The Builder (Build) conversation list and load endpoints SHALL return only conversations where `playground` is absent or `false` (i.e. `playground: { $ne: true }`); the prior `testAgent: null` filter is insufficient because playground conversations also have no `testAgent`. A conversation loaded through the wrong surface (e.g. a playground conversation id requested by the Builder load endpoint) SHALL return 404.
+
 When the project agent is not configured (no `agentLlm` settings), the playground chat endpoint SHALL reject messages with a 400 error indicating that the agent must be configured under Settings → Agent.
+
+#### Scenario: Playground conversations excluded from Builder history
+
+- **WHEN** a project has both Builder conversations and playground conversations (`playground: true`)
+- **THEN** the Builder conversation list returns only the non-playground conversations
+- **AND** the Agent page history returns only the `playground: true` conversations
+
+#### Scenario: Cross-surface load is rejected
+
+- **WHEN** the Builder load endpoint is called with the id of a `playground: true` conversation
+- **THEN** the endpoint responds 404 (and the same applies to the Agent endpoint loading a non-playground conversation)
 
 #### Scenario: Start a playground conversation
 
@@ -151,7 +164,7 @@ The endpoints SHALL NOT accept or filter by a test agent reference. All endpoint
 
 ### Requirement: Test Run Model
 
-The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `llmModel` (string — snapshot of the project agent's model identifier at run start), `testAgent` (ObjectId, optional — legacy field retained so historical runs remain readable; not set on new runs), `status` (enum: `pending`, `running`, `completed`, `failed`, `cancelled`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string — snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `maxToolCalls` (number, optional — snapshot of the limit at execution time), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`, `cancelled`), `agentResponse` (string — the agent's final text response), `toolCalls` (array of tool call records), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
+The system SHALL provide a `TestRun` Mongoose model representing a batch execution of test cases. Fields: `project` (ObjectId ref to Project, required), `llmModel` (string — snapshot of the project agent's model identifier at run start), `testAgent` (ObjectId, optional — legacy field retained so historical runs remain readable; not set on new runs), `testAgentName` (string, optional — denormalized snapshot of the legacy agent's name, backfilled by the single-agent migration before the `TestAgent` documents are soft-deleted so run lists never depend on populating a deleted reference; not set on new runs), `status` (enum: `pending`, `running`, `completed`, `failed`, `cancelled`, required), `cases` (array of embedded results), `startedAt` (Date), `completedAt` (Date), `createdAt` (Date), `updatedAt` (Date). Each embedded case result SHALL contain: `testCase` (ObjectId ref to TestCase), `title` (string — snapshot of test case title), `semanticModel` (string), `inputMessage` (string), `expectedFacts` (array of strings), `maxToolCalls` (number, optional — snapshot of the limit at execution time), `status` (enum: `pending`, `running`, `passed`, `failed`, `error`, `cancelled`), `agentResponse` (string — the agent's final text response), `toolCalls` (array of tool call records), `factResults` (array of `{ fact: string, passed: boolean, reasoning: string }`), `durationMs` (number), `errorMessage` (string, optional).
 
 #### Scenario: Create a test run
 
@@ -267,7 +280,7 @@ When a test run is cancelled, the system SHALL cooperatively abort in-flight tes
 
 The API SHALL expose endpoints for managing test runs at `/api/projects/:projectId/test-runs`:
 
-- `GET /` -- List all test runs for the project with server-side pagination (`page`, `limit` query params returning `{ items, total, page, limit }`); each item is a summary: id, llmModel snapshot (or legacy agent name when present), case count, passed/failed/error counts, status, timestamps
+- `GET /` -- List all test runs for the project with server-side pagination (`page`, `limit` query params returning `{ items, total, page, limit }`); each item is a summary: id, `llmModel` snapshot for new runs, case count, passed/failed/error counts, status, timestamps. For legacy runs lacking `llmModel`, the summary SHALL surface the denormalized `testAgentName` snapshot, falling back to a neutral `"Legacy agent"` label when neither is present. The endpoint SHALL NOT populate the soft-deleted `testAgent` reference.
 - `GET /:runId` -- Get a single test run with full case results (the full embedded cases array)
 - `POST /` -- Initiate a batch run (accepts `testCaseIds` array); rejects with 400 when the project agent is not configured; returns the new TestRun ID
 - `POST /:runId/cancel` -- Cancel a running or pending test run; marks remaining cases as `cancelled`, aborts in-flight executions, and sets the run status to `cancelled`
@@ -362,7 +375,7 @@ The test case form dialog SHALL include a "Run Test" button in both create and e
 
 ### Requirement: Testing UI — Test Runs List Page
 
-The frontend SHALL provide a Test Runs page at `/$projectId/testing/runs` displaying a server-side-paginated table of all test runs for the project. Columns: status icon, model (the run's `llmModel` snapshot, or the legacy agent name for pre-migration runs), case count, result summary (passed/failed/errors as badges), date. Each row links to the run detail page at `/$projectId/testing/runs/:runId`. The page auto-refreshes while any run is in `pending` or `running` status.
+The frontend SHALL provide a Test Runs page at `/$projectId/testing/runs` displaying a server-side-paginated table of all test runs for the project. Columns: status icon, model (the run's `llmModel` snapshot, or the `testAgentName` snapshot for pre-migration runs, falling back to a `"Legacy agent"` label), case count, result summary (passed/failed/errors as badges), date. Each row links to the run detail page at `/$projectId/testing/runs/:runId`. The page auto-refreshes while any run is in `pending` or `running` status.
 
 The `cancelled` status SHALL be displayed with a neutral grey icon (ban/slash) consistent with the detail page styling.
 
@@ -388,7 +401,7 @@ The `cancelled` status SHALL be displayed with a neutral grey icon (ban/slash) c
 
 ### Requirement: Testing UI — Test Run Detail Page
 
-The frontend SHALL provide a Test Run Detail page at `/$projectId/testing/runs/:runId` showing run metadata (model snapshot — or legacy agent name for pre-migration runs — status, started/completed timestamps, overall pass/fail counts) and a client-side-paginated list of case results. Each case result shows: status icon, title, semantic model badge, input message, agent response (expandable), tool calls (expandable), fact results with pass/fail icons and reasoning, duration, and error message if applicable. The page auto-refreshes (polls every 3 seconds) while the run status is `pending` or `running`. A back link returns to the Test Runs list.
+The frontend SHALL provide a Test Run Detail page at `/$projectId/testing/runs/:runId` showing run metadata (model — the `llmModel` snapshot, or the `testAgentName` snapshot for pre-migration runs, falling back to a `"Legacy agent"` label — status, started/completed timestamps, overall pass/fail counts) and a client-side-paginated list of case results. Each case result shows: status icon, title, semantic model badge, input message, agent response (expandable), tool calls (expandable), fact results with pass/fail icons and reasoning, duration, and error message if applicable. The page auto-refreshes (polls every 3 seconds) while the run status is `pending` or `running`. A back link returns to the Test Runs list.
 
 A "Cancel Run" button SHALL be displayed in the page header next to the status badge when the run status is `pending` or `running`. Clicking the button SHALL call `POST /api/projects/:projectId/test-runs/:runId/cancel`. On success, the button SHALL disappear and the status badge SHALL update to `cancelled`. The button SHALL be disabled while the cancel request is in progress and SHALL display a loading indicator.
 
@@ -458,16 +471,16 @@ A "Refine" button SHALL appear for all completed test cases (passed, failed, or 
 
 ### Requirement: Latest Test Case Results API
 
-The API SHALL expose `GET /api/projects/:projectId/test-cases/latest-results` returning, for every non-deleted test case of the project, the most recent embedded run result (if any). Each item SHALL include: `testCaseId`, `title`, `semanticModel`, `latestStatus` (`passed` | `failed` | `error` | `cancelled` | `running` | `pending` | `never_run`), `runId` (the TestRun containing the latest result, when present), and `finishedAt` (when present). The latest result SHALL be determined by the most recent TestRun (by `createdAt`) that contains the test case. The endpoint SHALL require admin session auth.
+The API SHALL expose `GET /api/projects/:projectId/test-cases/latest-results` returning, for every non-deleted test case of the project, the most recent embedded run result (if any). Each item SHALL include: `testCaseId`, `title`, `semanticModel`, `inputMessage` (snapshot of the case input), `latestStatus` (`passed` | `failed` | `error` | `cancelled` | `running` | `pending` | `never_run`), `runId` (the TestRun containing the latest result, when present), `finishedAt` (when present), and `unmetFacts` (array of strings — the expected facts whose latest `factResult.passed` was `false`; empty for non-failing cases). The latest result SHALL be determined by the most recent TestRun (by `createdAt`) that contains the test case. The endpoint SHALL require admin session auth.
 
-A test case SHALL be considered **failing** when its `latestStatus` is `failed` or `error`. This endpoint powers the failing-tests section of the Builder's "Improvements & Testing" panel.
+A test case SHALL be considered **failing** when its `latestStatus` is `failed` or `error`. This endpoint powers the failing-tests section of the Builder's "Improvements & Testing" panel, including the refine flow: `unmetFacts` and `inputMessage` provide everything the panel needs to build the prefill prompt without a second request. (For `error`-status cases with no recorded `factResults`, `unmetFacts` SHALL be empty and the prefill SHALL fall back to the case `inputMessage` plus the error message.)
 
 #### Scenario: Latest results across runs
 
-- **GIVEN** test case A passed in run 1 and failed in run 2 (run 2 is newer), and test case B has never been run
+- **GIVEN** test case A passed in run 1 and failed in run 2 (run 2 is newer) with one unmet expected fact, and test case B has never been run
 - **WHEN** a GET request is made to `/api/projects/:projectId/test-cases/latest-results`
-- **THEN** the response lists A with `latestStatus: "failed"` and the `runId` of run 2
-- **AND** B with `latestStatus: "never_run"` and no `runId`
+- **THEN** the response lists A with `latestStatus: "failed"`, the `runId` of run 2, and `unmetFacts` containing the unmet expected fact
+- **AND** B with `latestStatus: "never_run"`, no `runId`, and empty `unmetFacts`
 
 #### Scenario: Unauthenticated request
 
