@@ -36,11 +36,13 @@ Two optional subdocuments: `builderLlm { baseUrl?, encryptedApiKey?, model? }` a
 
 The builder keeps working out of the box via `AGENT_*` env vars; project values override field-by-field. The **agent** has no env fallback: it is the project's deliverable and its credentials are an explicit choice. Playground input and run-creation are blocked with a pointer to Settings → Agent until configured. This also makes the migration story honest (see D6).
 
-### D3 — Scaffold lives at the project-directory root
+### D3 — Scaffold lives at the project-directory root; data models move to `data_models/`
 
-The existing project dir (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`) *is* the agent filesystem: model YAMLs and `AGENTS.md` already live there; `commands/`, `agents/`, `skills/`, `hooks/`, `scripts/`, `.mcp.json` join them. The Deep Agents `FilesystemBackend` already roots there, so the builder can author scaffold files with no new tooling. Export excludes internal entries (`.git/`, `large_tool_results/`, `uploads/`, `duckdb.db*`, temp files).
+The existing project dir (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`) *is* the agent filesystem and remains the `FilesystemBackend` root, so the builder can author scaffold files with no new tooling. The scaffold entries (`commands/`, `agents/`, `skills/`, `hooks/`, `scripts/`, `.mcp.json`) and `AGENTS.md` live at the root. The semantic model YAML files move out of the current `src/` directory into a dedicated **`data_models/`** subdirectory, matching the new "Data Models" product vocabulary and reserving room for a future `api_models/` sibling. Export excludes internal entries (`.git/`, `large_tool_results/`, `uploads/`, `duckdb.db*`, temp files) and includes `data_models/` plus the scaffold dirs.
 
-- *Alternative considered:* a `scaffold/` subdirectory — rejected; it splits the agent filesystem in two ( YAML models would sit outside the scaffold) and complicates the Git story which already versions the whole project dir.
+- *Why rename `src/` → `data_models/`:* "src" is opaque and conflicts with the scaffold's plugin vocabulary; "Data Models" is the user-facing label in both the sidebar (Agent Scaffold → Data Models) and the dashboard card, so the on-disk directory should match. A sibling `api_models/` slot can later hold the "API Models (soon)" content without overloading `src/`.
+- *Alternative considered:* keeping `src/` on disk and only relabeling it "Data Models" in the UI — rejected; the path leaks into the agent prompt, exports, and docs, so a mismatch between the on-disk name and the product term is a lasting source of confusion.
+- *Alternative considered:* a single `scaffold/` subdirectory holding everything — rejected; it splits the agent filesystem from the project root and complicates the Git story which already versions the whole project dir.
 
 ### D4 — `.mcp.json` is platform-seeded with a token placeholder
 
@@ -69,9 +71,10 @@ A test case is *failing* when the most recent `TestRun` embedded result for it h
 ## Migration Plan
 
 1. Ship schema migration `00X-drop-test-agents`: soft-delete all `TestAgent` docs, `$unset` `TestCase.testAgent`, leave `TestRun` documents untouched.
-2. Seed `.mcp.json` for existing projects lazily (on first builder-agent start or settings save) and for new projects on creation.
-3. Frontend redirects: `/testing/playground → /agent`, `/testing/agents → /settings/agent`, `/connections/data → /connections?tool=browser`, `/connections/console → /connections?tool=console`, `/data → /connections?tool=browser`.
-4. Rollback: the migration is destructive for TestAgents by user decision; rollback restores routes/UI only.
+2. Ship filesystem migration `migrate-data-models-layout.ts` (replaces `migrate-src-layout.ts`): on startup, for any project dir lacking `data_models/`, move model YAMLs into `data_models/` from the legacy `src/` directory (or, for very old projects, from the project root). `uploads/` and scaffold dirs are left in place. Idempotent and safe to re-run.
+3. Seed `.mcp.json` for existing projects lazily (on first builder-agent start or settings save) and for new projects on creation.
+4. Frontend redirects: `/testing/playground → /agent`, `/testing/agents → /settings/agent`, `/connections/data → /connections?tool=browser`, `/connections/console → /connections?tool=console`, `/data → /connections?tool=browser`.
+5. Rollback: the TestAgent migration is destructive by user decision; the `data_models/` move is reversible by moving files back to `src/`. Rollback otherwise restores routes/UI only.
 
 ## Open Questions
 

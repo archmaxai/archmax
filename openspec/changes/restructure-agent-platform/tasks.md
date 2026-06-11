@@ -26,6 +26,7 @@
 
 ## 4. Agent scaffold
 
+- [ ] 4.0 Rename model storage `src/` → `data_models/`: update `SemanticModelFileService` (path constant + legacy `src/`/root fallbacks), the agent `FilesystemBackend` prompt guidance, and publish assembly; replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (idempotent startup move from `src/` or root, preserving `uploads/` and scaffold dirs); update/extend tests
 - [ ] 4.1 `.mcp.json` seeding service: create on project creation, recreate-if-missing on builder start, update on slug change, preserve foreign entries; placeholder token only; unit tests
 - [ ] 4.2 JSON syntax validation on `write_file`/`edit_file` for `.json` paths in the builder filesystem backend (mirroring YAML validation); tests
 - [ ] 4.3 Extend the builder system prompt with the scaffold layout and skills-over-commands guidance

@@ -2,11 +2,13 @@
 
 ### Requirement: Agent Scaffold Filesystem Layout
 
-Each project's data directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`) SHALL constitute the project's **agent scaffold**: a plugin-style filesystem intended for consumption by an agent harness. In addition to the existing data-model YAML files and the optional `AGENTS.md`, the scaffold SHALL support the following conventional entries:
+Each project's data directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`) SHALL constitute the project's **agent scaffold**: a plugin-style filesystem intended for consumption by an agent harness. The semantic model YAML files SHALL live under a dedicated `data_models/` subdirectory (see the `semantic-models` capability for the exact file layout). Alongside `data_models/` and the optional `AGENTS.md`, the scaffold SHALL support the following conventional entries:
 
 ```
 <project-dir>/
-├── *.yaml               # data models (existing semantic model files)
+├── data_models/         # data models (semantic model YAML files)
+│   ├── <model>.yaml
+│   └── <model>/<dataset>.yaml
 ├── AGENTS.md            # agent instructions / memory (existing)
 ├── commands/            # slash commands (.md) — legacy, prefer skills/
 ├── agents/              # subagent definitions (.md)
@@ -19,7 +21,7 @@ Each project's data directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/`) SHALL
 └── scripts/             # helper scripts
 ```
 
-Scaffold files SHALL be authored **directly by the builder agent** through its existing Deep Agents filesystem tools (no separate generation pipeline). The builder's system prompt SHALL document the scaffold layout and conventions, including that `skills/` is preferred over `commands/` for new capabilities. Scaffold directories and files SHALL be included in the project's Git versioning (they are source, not build output).
+Scaffold files SHALL be authored **directly by the builder agent** through its existing Deep Agents filesystem tools (no separate generation pipeline). The builder's system prompt SHALL document the scaffold layout and conventions, including that semantic models live under `data_models/` and that `skills/` is preferred over `commands/` for new capabilities. Scaffold directories and files SHALL be included in the project's Git versioning (they are source, not build output).
 
 #### Scenario: Builder authors a skill
 
@@ -29,14 +31,14 @@ Scaffold files SHALL be authored **directly by the builder agent** through its e
 
 #### Scenario: Scaffold coexists with data models
 
-- **WHEN** a project contains scaffold directories alongside `*.yaml` model files
-- **THEN** semantic-model listing and MCP tools continue to operate on the YAML files unchanged
+- **WHEN** a project contains scaffold directories (`skills/`, `agents/`, `hooks/`) alongside the `data_models/` directory
+- **THEN** semantic-model listing and MCP tools continue to operate on the YAML files under `data_models/` unchanged
 - **AND** the scaffold entries do not interfere with model parsing
 
 #### Scenario: System prompt documents the layout
 
 - **WHEN** the builder agent's system prompt is composed
-- **THEN** it describes the scaffold layout (`commands/`, `agents/`, `skills/<name>/SKILL.md`, `hooks/hooks.json`, `.mcp.json`, `scripts/`) and the skills-over-commands preference
+- **THEN** it describes the scaffold layout (`data_models/`, `commands/`, `agents/`, `skills/<name>/SKILL.md`, `hooks/hooks.json`, `.mcp.json`, `scripts/`), that semantic models live under `data_models/`, and the skills-over-commands preference
 
 ### Requirement: Seeded MCP Server Definition
 
@@ -82,7 +84,7 @@ The API SHALL expose an authenticated `GET /api/projects/:projectId/scaffold/exp
 
 - **WHEN** an authenticated GET request is made to `/api/projects/:projectId/scaffold/export` for a project with models, `AGENTS.md`, and a skill
 - **THEN** the response is a zip download named `<slug>-scaffold.zip`
-- **AND** it contains the YAML models, `AGENTS.md`, `skills/`, and `.mcp.json`
+- **AND** it contains the `data_models/` directory, `AGENTS.md`, `skills/`, and `.mcp.json`
 - **AND** it contains no `.git/`, `large_tool_results/`, `uploads/`, or DuckDB files
 
 #### Scenario: No secrets in the export
