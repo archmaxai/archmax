@@ -1,3 +1,10 @@
+## REMOVED Requirements
+
+### Requirement: Build Assembly
+
+**Reason**: The disk build step is removed. `PublishService.assemble()` materialized fully-inlined single-file YAMLs under `build/` solely so production MCP could serve a last-published snapshot. MCP now reads the current `data_models/` directly (in-memory assembly + markdown digests), so no `build/` artifact is needed. See `mcp-server` and `semantic-model-publishing` deltas.
+**Migration**: A startup cleanup (see "Build Directory Cleanup" below) removes any existing `build/` directory. `PublishService.assemble()`/`cleanStaleFiles()` are deleted; in-memory assembly continues via `SemanticModelFileService.get()`/`getRawYaml()`.
+
 ## RENAMED Requirements
 
 - FROM: `### Requirement: Improvements UI in Semantic Models Sidebar`
@@ -174,10 +181,10 @@ All file listing operations SHALL exclude entries whose names start with `.` (do
 - **WHEN** the agent lists files in the project directory
 - **THEN** `.git/` and other dotfiles/dotdirs are not included in the listing
 
-#### Scenario: Publish assembly excludes dotfiles
+#### Scenario: Publish file collection excludes dotfiles
 
-- **WHEN** the publish build assembly processes the project directory
-- **THEN** `.git/` contents are not included in the build output
+- **WHEN** the publish file collection (`collectFiles`) processes the project directory
+- **THEN** `.git/` contents are not included in the committed snapshot
 
 ### Requirement: Merge Conflict Detection in YAML
 
@@ -194,3 +201,20 @@ The `SemanticModelFileService` SHALL detect Git merge conflict markers (`<<<<<<<
 - **WHEN** `get("sales")` is called and the file contains conflict markers
 - **THEN** the response includes `hasConflicts: true` and the raw YAML content
 - **AND** parsed fields (datasets, relationships, metrics) are empty or absent
+
+## ADDED Requirements
+
+### Requirement: Build Directory Cleanup
+
+On application startup, the system SHALL remove any `build/` directory found at the root of a project's data directory (`<ARCHMAX_DATA_DIR>/projects/<projectId>/build/`). The former build step that produced these directories is removed (see the REMOVED "Build Assembly" requirement); the directory contained only derived single-file YAMLs and holds no source of record. The cleanup SHALL be idempotent and SHALL run per existing project directory. Source files under `data_models/`, `uploads/`, and the agent-scaffold directories SHALL NOT be affected.
+
+#### Scenario: Stale build directory removed on startup
+
+- **WHEN** the app starts and a project directory contains a `build/` directory
+- **THEN** the `build/` directory is recursively deleted
+- **AND** `data_models/`, `uploads/`, and scaffold directories remain untouched
+
+#### Scenario: Cleanup is idempotent
+
+- **WHEN** the app starts and a project directory has no `build/` directory
+- **THEN** no action is taken and no error is raised

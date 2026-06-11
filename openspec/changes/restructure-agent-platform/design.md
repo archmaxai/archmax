@@ -62,6 +62,17 @@ Per-project agent/builder *configured* state is exposed on project-scoped, authe
 
 A test case is *failing* when the most recent `TestRun` embedded result for it has status `failed` or `error`. A new endpoint aggregates this (`latest-results`), powering the **Improvements & Testing** panel. No new persistent state is introduced — the registry is derived from existing `TestRun` data, so it can never drift.
 
+### D8 — Remove the build step; serve MCP from live `data_models/`
+
+The disk **build step** (`PublishService.assemble()` writing fully-inlined single-file YAMLs to `build/`) is removed entirely. It existed only as the publish boundary so production MCP served a last-published snapshot; everything else (builder agent, playground, test-runner, REST API, model overviews) already reads source directly. MCP model tools surface compact **markdown** via `SemanticModelDigest`, and `execute_query`/`get` assemble a model in memory on demand — none of them need a materialized full-YAML artifact. So:
+
+- Production and testing MCP both read the current `data_models/` via in-memory assembly (the path the test route already uses). There is no `build/` directory and no published-snapshot gate; saved models are immediately visible to MCP.
+- **Publish becomes pure Git versioning**: ensure repo → pull → stage `data_models/`+scaffold → commit → record `PublishEvent` → optional push. `hasUnpublishedChanges` now means "uncommitted changes vs the last `PublishEvent`", a versioning signal rather than an MCP-availability gate. The publish UI copy is reframed accordingly (version/share the scaffold, not "make available via MCP").
+- `PublishService.assemble()`/`cleanStaleFiles()` and the `build/` read in the MCP route are deleted; `computeSourceHash()` is retained but hashes `data_models/` (+ scaffold) source only.
+- A **startup migration** removes any existing `build/` directory from project dirs (mirrors the existing startup `AGENTS.md` cleanup). `.gitignore` no longer needs to exclude `build/`.
+
+- *Alternative considered:* keep a publish gate by reading models from the last committed Git tree — rejected; it reintroduces a snapshot indirection for no benefit now that tools consume markdown/in-memory assembly, and live source matches the "semantic process layer" model where the project dir *is* the deliverable.
+
 ## Risks / Trade-offs
 
 - **Large rename surface** (routes, labels, docs, e2e selectors) → mitigated by keeping all backend route prefixes except `test-agents` stable, and adding redirects for moved frontend routes.
@@ -74,9 +85,10 @@ A test case is *failing* when the most recent `TestRun` embedded result for it h
 
 1. Ship schema migration `00X-drop-test-agents`: backfill `TestRun.testAgentName` from each run's `testAgent.name`, then soft-delete all `TestAgent` docs and `$unset` `TestCase.testAgent`; otherwise leave `TestRun` documents intact.
 2. Ship filesystem migration `migrate-data-models-layout.ts` (replaces `migrate-src-layout.ts`): on startup, for any project dir lacking `data_models/`, move model YAMLs into `data_models/` from the legacy `src/` directory (or, for very old projects, from the project root). `uploads/` and scaffold dirs are left in place. Idempotent and safe to re-run.
-3. Seed `.mcp.json` for existing projects lazily (on first builder-agent start or settings save) and for new projects on creation.
-4. Frontend redirects: `/testing/playground → /agent`, `/testing/agents → /settings/agent`, `/connections/data → /connections?tool=browser`, `/connections/console → /connections?tool=console`, `/data → /connections?tool=browser`.
-5. Rollback: the TestAgent migration is destructive by user decision; the `data_models/` move is reversible by moving files back to `src/`. Rollback otherwise restores routes/UI only.
+3. Ship startup `build/` cleanup: on startup, recursively remove any `build/` directory under each project dir (idempotent; mirrors the existing startup `AGENTS.md` cleanup). Drop `build/` from the `.gitignore` template.
+4. Seed `.mcp.json` for existing projects lazily (on first builder-agent start or settings save) and for new projects on creation.
+5. Frontend redirects: `/testing/playground → /agent`, `/testing/agents → /settings/agent`, `/connections/data → /connections?tool=browser`, `/connections/console → /connections?tool=console`, `/data → /connections?tool=browser`.
+6. Rollback: the TestAgent migration is destructive by user decision; the `data_models/` move is reversible by moving files back to `src/`; the `build/` cleanup is non-destructive to source (build was a derived artifact). Rollback otherwise restores routes/UI only.
 
 ## Open Questions
 

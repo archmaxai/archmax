@@ -26,7 +26,10 @@
 
 ## 4. Agent scaffold
 
-- [ ] 4.0 Rename model storage `src/` → `data_models/`: update `SemanticModelFileService` (path constant + legacy `src/`/root fallbacks), the agent `FilesystemBackend` prompt guidance, and publish assembly; replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (idempotent startup move from `src/` or root, preserving `uploads/` and scaffold dirs); update/extend tests
+- [ ] 4.0 Rename model storage `src/` → `data_models/`: update `SemanticModelFileService` (path constant + legacy `src/`/root fallbacks) and the agent `FilesystemBackend` prompt guidance; replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (idempotent startup move from `src/` or root, preserving `uploads/` and scaffold dirs); update/extend tests
+- [ ] 4.0a Remove the build step: delete `PublishService.assemble()`/`cleanStaleFiles()`; point both production and testing MCP routes (`archmax-route.ts`) at the live `data_models/` via in-memory `SemanticModelFileService.get()` (drop the `build/` read and temp-assembly); update `archmax-route`/`mcp-tools` empty-state message; remove the `build/` read path; update MCP tests
+- [ ] 4.0b Publish = Git versioning only: remove `assemble()` from `finalizePublish` (`publish-flow.ts`) and the revert path (`git.ts`); keep/retarget `computeSourceHash()` to hash `data_models/` + scaffold source (exclude derived/internal); drop `build/` from `DEFAULT_GITIGNORE`; reframe publish dialog copy (version/share, not "make available via MCP"); update publish + git tests
+- [ ] 4.0c Startup `build/` cleanup: idempotently remove any `build/` directory under each project dir on startup (mirror the existing `AGENTS.md` cleanup); test
 - [ ] 4.1 `.mcp.json` seeding service: create on project creation, recreate-if-missing on builder start, update on slug change; preserve foreign entries **only when credential-safe** (warn + refuse to re-persist secret-looking entries); placeholder token only; unit tests
 - [ ] 4.2 Credential-safe JSON validation on `write_file`/`edit_file` for `.json` paths in the builder filesystem backend: syntax check (mirroring YAML validation) **plus** rejection of literal credential values in `.mcp.json` headers/env/URLs (allow only `${VAR}` placeholders); tests including the literal-Bearer-token rejection case
 - [ ] 4.3 Extend the builder system prompt with the scaffold layout and skills-over-commands guidance
@@ -36,7 +39,7 @@
 ## 5. Navigation & settings UI
 
 - [ ] 5.1 Restructure `app-sidebar.tsx`: Connections group (Data Sources + disabled APIs w/ "soon" tag), Builder leaf, Agent leaf, Testing group (Cases, Runs), Settings group (General, Builder, Agent)
-- [ ] 5.2 New routes `settings/builder.tsx` and `settings/agent.tsx` (inline label–input grids, masked key fields, env-default placeholders for builder, save-then-test connection buttons, reset-to-defaults for builder); move existing settings page to General
+- [ ] 5.2 New routes `settings/builder.tsx` and `settings/agent.tsx` (inline label–input grids; API-key fields show a fixed non-derived hint from `apiKeySet`/`apiKeySource`, never key material; env-default placeholders for builder baseUrl/model only; save-then-test connection buttons; reset-to-defaults for builder); move existing settings page to General
 - [ ] 5.3 Route moves & redirects: `testing/playground → /agent`, `testing/agents → /settings/agent`, `connections/data` + legacy `/data` → `/connections?tool=browser`, `connections/console → /connections?tool=console`; delete the Test Agents page and `testing/agents.tsx`
 
 ## 6. Data Sources header tools

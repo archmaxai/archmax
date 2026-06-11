@@ -38,6 +38,13 @@ archmax is repositioning from "a tool that manages semantic descriptions of data
 
 - The project directory is formalized as a plugin-style **agent filesystem** authored directly by the builder agent (no generation pipeline): `commands/`, `agents/`, `skills/<name>/SKILL.md`, `hooks/hooks.json`, `scripts/`, and `.mcp.json`, alongside `AGENTS.md` and a dedicated **`data_models/`** directory for the semantic model YAML files.
 - Semantic model files move from the current `src/` directory into `data_models/` (file service, agent backend, and publish assembly updated; a startup migration relocates existing `src/` content). This matches the "Data Models" product label and reserves a future `api_models/` sibling.
+
+### Build step removal (**BREAKING**)
+
+- The disk **build step** (`PublishService.assemble()` → `build/` single-file YAMLs) is removed entirely. MCP tools surface models as **markdown** (`SemanticModelDigest`) and assemble in memory on demand, so the materialized full-YAML artifact is unnecessary.
+- Production MCP now reads the **live `data_models/`** (in-memory assembly, the same path the test endpoint already uses) instead of a published `build/` snapshot — models are available via MCP as soon as they are saved.
+- **Publish becomes pure Git versioning**: commit `data_models/`+scaffold, record a `PublishEvent`, optionally push. `hasUnpublishedChanges` becomes a "pending version-control changes" signal; publish UI copy is reframed away from "make available via MCP".
+- A **startup migration** removes any existing `build/` directory; `.gitignore` no longer excludes `build/`.
 - `.mcp.json` is seeded and maintained by the platform, pointing at the project's MCP endpoint with an env-var token placeholder (never a real token).
 - The builder's file backend gains JSON syntax validation on write (mirroring the existing YAML validation).
 - A scaffold export endpoint (`GET /api/projects/:projectId/scaffold/export`) downloads the scaffold as a zip for use in external Deep-Agents-compatible harnesses; an Export action is available in the Agent Scaffold panel. The existing LangChain Deep Agents playground/test-runner remains the built-in test harness.
@@ -48,14 +55,15 @@ archmax is repositioning from "a tool that manages semantic descriptions of data
 
 ## Impact
 
-- Affected specs: `frontend-shell`, `connection-management-ui`, `data-browser`, `duckdb-console`, `testing-suite`, `semantic-model-agent`, `semantic-models`, `project-management`, `home-dashboard`, and new capability `agent-scaffold`.
+- Affected specs: `frontend-shell`, `connection-management-ui`, `data-browser`, `duckdb-console`, `testing-suite`, `semantic-model-agent`, `semantic-models`, `semantic-model-publishing`, `mcp-server`, `project-git-versioning`, `project-management`, `home-dashboard`, and new capability `agent-scaffold`.
 - Affected code:
   - `apps/frontend/src/components/layout/app-sidebar.tsx` (nav restructure)
   - `apps/frontend/src/routes/_auth/$projectId/` — `connections/*`, `models.tsx`, `testing/*`, new `agent.tsx`, `settings*` (route moves, overlay dialogs, panel restructure)
   - `packages/core/src/models/` — remove `TestAgent.ts`, edit `Project.ts`, `TestCase.ts`, `TestRun.ts`, `Conversation.ts`
   - `apps/api/src/routes/` — remove `test-agents.ts`; add `llm-settings.ts`, `scaffold.ts`; edit `test-cases.ts` (latest-results), `test-runs.ts`, `playground.ts`, `projects.ts` (per-project `builder/agentConfigured`; not the global `config` route)
-  - `packages/core/src/services/` — `agent.ts`, `playground-agent.ts`, `test-runner.ts`, `agent-tools.ts`, `git.ts` (scaffold ignore rules), `SemanticModelFileService` (`src/` → `data_models/`), filesystem backend validation
-  - `apps/api/src/scripts/` — replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (`src/` → `data_models/`)
+  - `packages/core/src/services/` — `agent.ts`, `playground-agent.ts`, `test-runner.ts`, `agent-tools.ts`, `git.ts` (drop `build/` from `.gitignore`, scaffold ignore rules), `SemanticModelFileService` (`src/` → `data_models/`), `publish.ts` (remove `assemble()`/`cleanStaleFiles()`, keep `computeSourceHash()` over source), filesystem backend validation
+  - `apps/api/src/mcp/archmax-route.ts` (read live `data_models/` in both prod and test routes; drop `build/` read and temp-assembly), `apps/api/src/utils/publish-flow.ts` (no assemble before commit)
+  - `apps/api/src/scripts/` — replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (`src/` → `data_models/`); startup `build/` cleanup
   - `apps/worker/src/processor.ts` (playground branching without testAgentId)
   - Schema migration (backfill `TestRun.testAgentName`, then drop TestAgents, unset `TestCase.testAgent`)
   - `apps/docs` (navigation, testing, settings, new agent-scaffold guide)
