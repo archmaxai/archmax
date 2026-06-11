@@ -62,16 +62,18 @@ Per-project agent/builder *configured* state is exposed on project-scoped, authe
 
 A test case is *failing* when the most recent `TestRun` embedded result for it has status `failed` or `error`. A new endpoint aggregates this (`latest-results`), powering the **Improvements & Testing** panel. No new persistent state is introduced — the registry is derived from existing `TestRun` data, so it can never drift.
 
-### D8 — Remove the build step; serve MCP from live `data_models/`
+### D8 — Remove the build artifact, but keep the publish gate via Git HEAD
 
-The disk **build step** (`PublishService.assemble()` writing fully-inlined single-file YAMLs to `build/`) is removed entirely. It existed only as the publish boundary so production MCP served a last-published snapshot; everything else (builder agent, playground, test-runner, REST API, model overviews) already reads source directly. MCP model tools surface compact **markdown** via `SemanticModelDigest`, and `execute_query`/`get` assemble a model in memory on demand — none of them need a materialized full-YAML artifact. So:
+The disk **build step** (`PublishService.assemble()` writing fully-inlined single-file YAMLs to `build/`) is removed entirely. It only ever materialized a derived snapshot; MCP model tools surface compact **markdown** via `SemanticModelDigest`, and `execute_query`/`get` assemble a model in memory on demand — none of them need a materialized full-YAML artifact. **Production MCP remains gated by publishing**, but the gate is the Git commit rather than a `build/` directory:
 
-- Production and testing MCP both read the current `data_models/` via in-memory assembly (the path the test route already uses). There is no `build/` directory and no published-snapshot gate; saved models are immediately visible to MCP.
-- **Publish becomes pure Git versioning**: ensure repo → pull → stage `data_models/`+scaffold → commit → record `PublishEvent` → optional push. `hasUnpublishedChanges` now means "uncommitted changes vs the last `PublishEvent`", a versioning signal rather than an MCP-availability gate. The publish UI copy is reframed accordingly (version/share the scaffold, not "make available via MCP").
-- `PublishService.assemble()`/`cleanStaleFiles()` and the `build/` read in the MCP route are deleted; `computeSourceHash()` is retained but hashes `data_models/` (+ scaffold) source only.
+- **Production MCP serves the last published state** = the project repo's latest commit (HEAD). Tools assemble models in memory from the committed `data_models/` tree (read via `isomorphic-git`), so uncommitted working-directory edits are NOT exposed. There is no `build/` artifact.
+- **Testing MCP serves the live working directory** `data_models/` (in-memory assembly), so it reflects the latest unpublished edits. The tool registration, digest generation, and scope filtering code stay shared between both modes; only the source (committed tree vs working dir) differs.
+- **Publish = Git commit (the gate)**: ensure repo → pull → stage `data_models/`+scaffold → commit → record `PublishEvent` → optional push. Committing is what makes models visible to production MCP. `hasUnpublishedChanges` means "working-directory `data_models/` differs from HEAD/last `PublishEvent`" — i.e. there are models not yet published to MCP. Publish UI copy keeps the "make available via MCP" meaning.
+- `PublishService.assemble()`/`cleanStaleFiles()` and the `build/` read in the MCP route are deleted; production MCP instead reads the committed tree. `computeSourceHash()` is retained but hashes `data_models/` (+ scaffold) source only.
 - A **startup migration** removes any existing `build/` directory from project dirs (mirrors the existing startup `AGENTS.md` cleanup). `.gitignore` no longer needs to exclude `build/`.
 
-- *Alternative considered:* keep a publish gate by reading models from the last committed Git tree — rejected; it reintroduces a snapshot indirection for no benefit now that tools consume markdown/in-memory assembly, and live source matches the "semantic process layer" model where the project dir *is* the deliverable.
+- *Alternative considered:* serve production MCP from the live working dir (no gate) — rejected by product requirement; production must only expose explicitly published (committed) models. Reading the committed tree preserves that gate while still eliminating the derived `build/` artifact.
+- *Alternative considered:* keep writing a `build/` snapshot on publish — rejected; the materialized full-YAML artifact is redundant now that tools consume markdown/in-memory assembly, and the Git commit already is the publish boundary.
 
 ## Risks / Trade-offs
 

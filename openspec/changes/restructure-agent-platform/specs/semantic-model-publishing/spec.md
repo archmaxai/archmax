@@ -16,7 +16,7 @@ The system SHALL provide a `PublishEvent` Mongoose model with: `project` (Object
 
 ### Requirement: Publish API
 
-The API SHALL expose a POST endpoint at `/api/projects/:projectId/publish` that accepts `{ message: string }`. Publishing is **Git versioning only** — it does not assemble or write any build artifact. The endpoint SHALL: validate the message is non-empty, ensure the project directory is a Git repository (lazy init if needed), pull/merge upstream changes if a remote is configured (abort on conflicts), stage all changes and create a Git commit with the user-provided message, create a `PublishEvent`, and push to the remote if configured. The endpoint SHALL return the created `PublishEvent` along with any push warnings. Conflict errors SHALL return a 409 status with the list of conflicted file paths.
+The API SHALL expose a POST endpoint at `/api/projects/:projectId/publish` that accepts `{ message: string }`. Publishing creates a **Git commit** that becomes the state served by production MCP — it does NOT assemble or write any `build/` artifact. The endpoint SHALL: validate the message is non-empty, ensure the project directory is a Git repository (lazy init if needed), pull/merge upstream changes if a remote is configured (abort on conflicts), stage all changes and create a Git commit with the user-provided message, create a `PublishEvent`, and push to the remote if configured. The endpoint SHALL return the created `PublishEvent` along with any push warnings. Conflict errors SHALL return a 409 status with the list of conflicted file paths.
 
 #### Scenario: Successful publish (local only)
 
@@ -53,7 +53,7 @@ The API SHALL expose a POST endpoint at `/api/projects/:projectId/publish` that 
 
 ### Requirement: Publish Status API
 
-The API SHALL expose a GET endpoint at `/api/projects/:projectId/publish/status` that returns `{ hasUnpublishedChanges: boolean, lastPublishedAt: string | null, lastMessage: string | null, hasConflicts: boolean }`. Unpublished (uncommitted) changes are detected by comparing a SHA-256 hash of the current source content (`data_models/` + scaffold files, excluding derived/internal entries) against the `contentHash` of the most recent `PublishEvent`. The `hasConflicts` field SHALL be `true` if any YAML file in `data_models/` contains Git conflict markers. Because MCP serves the live `data_models/`, `hasUnpublishedChanges` reflects pending **version-control** changes, not MCP availability.
+The API SHALL expose a GET endpoint at `/api/projects/:projectId/publish/status` that returns `{ hasUnpublishedChanges: boolean, lastPublishedAt: string | null, lastMessage: string | null, hasConflicts: boolean }`. Unpublished changes are detected by comparing a SHA-256 hash of the current working-directory source content (`data_models/` + scaffold files, excluding derived/internal entries) against the `contentHash` of the most recent `PublishEvent`. The `hasConflicts` field SHALL be `true` if any YAML file in `data_models/` contains Git conflict markers. Because production MCP serves the last published (committed) state, `hasUnpublishedChanges: true` means there are saved models not yet available via production MCP.
 
 #### Scenario: No previous publish
 
@@ -83,7 +83,7 @@ The API SHALL expose a GET endpoint at `/api/projects/:projectId/publish/status`
 
 ### Requirement: Publish Overlay Dialog
 
-Clicking the publish button SHALL open a modal overlay with: a textarea for the publish message, a "Publish" confirmation button, and a "Cancel" button. The dialog copy SHALL frame publishing as committing a versioned snapshot of the project (and pushing it to the connected repository when configured), not as a gate for MCP availability. The confirmation button SHALL be disabled until the message is non-empty. On confirmation, the publish API is called and the dialog closes on success.
+Clicking the publish button SHALL open a modal overlay with: a textarea for the publish message, a "Publish" confirmation button, and a "Cancel" button. The dialog copy SHALL frame publishing as committing the current models so they become available via production MCP (and pushing to the connected repository when configured). The confirmation button SHALL be disabled until the message is non-empty. On confirmation, the publish API is called and the dialog closes on success.
 
 #### Scenario: Open publish dialog
 

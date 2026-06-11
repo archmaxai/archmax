@@ -42,8 +42,8 @@ archmax is repositioning from "a tool that manages semantic descriptions of data
 ### Build step removal (**BREAKING**)
 
 - The disk **build step** (`PublishService.assemble()` → `build/` single-file YAMLs) is removed entirely. MCP tools surface models as **markdown** (`SemanticModelDigest`) and assemble in memory on demand, so the materialized full-YAML artifact is unnecessary.
-- Production MCP now reads the **live `data_models/`** (in-memory assembly, the same path the test endpoint already uses) instead of a published `build/` snapshot — models are available via MCP as soon as they are saved.
-- **Publish becomes pure Git versioning**: commit `data_models/`+scaffold, record a `PublishEvent`, optionally push. `hasUnpublishedChanges` becomes a "pending version-control changes" signal; publish UI copy is reframed away from "make available via MCP".
+- **Production MCP stays gated by publishing**, but the gate is the Git commit, not a `build/` snapshot: production reads the published `data_models/` from the repo's latest commit (Git HEAD) in memory, so uncommitted edits are not exposed. The testing endpoint reads the live working-directory `data_models/`.
+- **Publish = Git commit** (the gate): commit `data_models/`+scaffold, record a `PublishEvent`, optionally push. `hasUnpublishedChanges` means saved models not yet committed/available via production MCP; publish UI keeps the "make available via MCP" meaning.
 - A **startup migration** removes any existing `build/` directory; `.gitignore` no longer excludes `build/`.
 - `.mcp.json` is seeded and maintained by the platform, pointing at the project's MCP endpoint with an env-var token placeholder (never a real token).
 - The builder's file backend gains JSON syntax validation on write (mirroring the existing YAML validation).
@@ -62,7 +62,7 @@ archmax is repositioning from "a tool that manages semantic descriptions of data
   - `packages/core/src/models/` — remove `TestAgent.ts`, edit `Project.ts`, `TestCase.ts`, `TestRun.ts`, `Conversation.ts`
   - `apps/api/src/routes/` — remove `test-agents.ts`; add `llm-settings.ts`, `scaffold.ts`; edit `test-cases.ts` (latest-results), `test-runs.ts`, `playground.ts`, `projects.ts` (per-project `builder/agentConfigured`; not the global `config` route)
   - `packages/core/src/services/` — `agent.ts`, `playground-agent.ts`, `test-runner.ts`, `agent-tools.ts`, `git.ts` (drop `build/` from `.gitignore`, scaffold ignore rules), `SemanticModelFileService` (`src/` → `data_models/`), `publish.ts` (remove `assemble()`/`cleanStaleFiles()`, keep `computeSourceHash()` over source), filesystem backend validation
-  - `apps/api/src/mcp/archmax-route.ts` (read live `data_models/` in both prod and test routes; drop `build/` read and temp-assembly), `apps/api/src/utils/publish-flow.ts` (no assemble before commit)
+  - `apps/api/src/mcp/archmax-route.ts` (production reads committed `data_models/` from Git HEAD; testing reads working-dir `data_models/`; drop `build/` read and temp-assembly), `apps/api/src/utils/publish-flow.ts` (no assemble before commit)
   - `apps/api/src/scripts/` — replace `migrate-src-layout.ts` with `migrate-data-models-layout.ts` (`src/` → `data_models/`); startup `build/` cleanup
   - `apps/worker/src/processor.ts` (playground branching without testAgentId)
   - Schema migration (backfill `TestRun.testAgentName`, then drop TestAgents, unset `TestCase.testAgent`)
