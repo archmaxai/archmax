@@ -44,10 +44,10 @@ importers:
         version: 1.5.1(@langchain/core@1.2.0(@opentelemetry/api@1.9.1)(openai@6.44.0(ws@8.20.0)(zod@4.4.3))(ws@8.20.0))(ws@8.20.0)
       '@modelcontextprotocol/hono':
         specifier: 2.0.0-alpha.2
-        version: 2.0.0-alpha.2(@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1))(hono@4.12.26)
+        version: 2.0.0-alpha.2(@modelcontextprotocol/server@2.0.0-alpha.3)(hono@4.12.26)
       '@modelcontextprotocol/server':
-        specifier: 2.0.0-alpha.2
-        version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+        specifier: 2.0.0-alpha.3
+        version: 2.0.0-alpha.3
       better-auth:
         specifier: ^1.6.20
         version: 1.6.20(@opentelemetry/api@1.9.1)(mongodb@7.3.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.9)
@@ -1432,14 +1432,9 @@ packages:
       '@modelcontextprotocol/server': ^2.0.0-alpha.2
       hono: ^4.11.4
 
-  '@modelcontextprotocol/server@2.0.0-alpha.2':
-    resolution: {integrity: sha512-gmLgdHzlYM8L7Aw/+VE0kxjT25WKamtUSLNhdOgrJq5CrESvqVSoAfWSJJeNPUXNTluQ+dYDGFbKVitdsJtbPA==}
+  '@modelcontextprotocol/server@2.0.0-alpha.3':
+    resolution: {integrity: sha512-PYdVDA6x3joCy/rw1mGdMSvqisPKlmt5QN/ILcT8R7efgvmhij14L87lJrWAm4pszaThzwpV49BmBBTZWtlY3A==}
     engines: {node: '>=20'}
-    peerDependencies:
-      '@cfworker/json-schema': ^4.1.1
-    peerDependenciesMeta:
-      '@cfworker/json-schema':
-        optional: true
 
   '@mongodb-js/saslprep@1.4.11':
     resolution: {integrity: sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA==}
@@ -6616,16 +6611,14 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
-  '@modelcontextprotocol/hono@2.0.0-alpha.2(@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1))(hono@4.12.26)':
+  '@modelcontextprotocol/hono@2.0.0-alpha.2(@modelcontextprotocol/server@2.0.0-alpha.3)(hono@4.12.26)':
     dependencies:
-      '@modelcontextprotocol/server': 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+      '@modelcontextprotocol/server': 2.0.0-alpha.3
       hono: 4.12.26
 
-  '@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1)':
+  '@modelcontextprotocol/server@2.0.0-alpha.3':
     dependencies:
       zod: 4.4.3
-    optionalDependencies:
-      '@cfworker/json-schema': 4.1.1
 
   '@mongodb-js/saslprep@1.4.11':
     dependencies:
