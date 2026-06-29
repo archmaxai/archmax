@@ -43,8 +43,8 @@ importers:
         specifier: ^1.5.1
         version: 1.5.1(@langchain/core@1.2.0(@opentelemetry/api@1.9.1)(openai@6.44.0(ws@8.20.0)(zod@4.4.3))(ws@8.20.0))(ws@8.20.0)
       '@modelcontextprotocol/hono':
-        specifier: 2.0.0-alpha.2
-        version: 2.0.0-alpha.2(@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1))(hono@4.12.26)
+        specifier: 2.0.0-alpha.3
+        version: 2.0.0-alpha.3(@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1))(hono@4.12.26)
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
@@ -1425,11 +1425,11 @@ packages:
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
 
-  '@modelcontextprotocol/hono@2.0.0-alpha.2':
-    resolution: {integrity: sha512-X6Rg5F6eXlLsahl9HYSNJ3/7/w7SxbkZUtDKp0FBjS3p4Tydr0rKh3iorRPVC5f/Z5UfV83ARFxfRlnOgMZuDA==}
+  '@modelcontextprotocol/hono@2.0.0-alpha.3':
+    resolution: {integrity: sha512-2bX5cEz8bIUD+Jf0PbYT70pFxW5INqfae1kVyPNTfUAnlxyyAdq1sr7lCP0Z3ZpEDnfUbMAIiLBb+3kNmihJlw==}
     engines: {node: '>=20'}
     peerDependencies:
-      '@modelcontextprotocol/server': ^2.0.0-alpha.2
+      '@modelcontextprotocol/server': ^2.0.0-alpha.3
       hono: ^4.11.4
 
   '@modelcontextprotocol/server@2.0.0-alpha.2':
@@ -6616,7 +6616,7 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
-  '@modelcontextprotocol/hono@2.0.0-alpha.2(@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1))(hono@4.12.26)':
+  '@modelcontextprotocol/hono@2.0.0-alpha.3(@modelcontextprotocol/server@2.0.0-alpha.2(@cfworker/json-schema@4.1.1))(hono@4.12.26)':
     dependencies:
       '@modelcontextprotocol/server': 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
       hono: 4.12.26
