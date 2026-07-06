@@ -13,7 +13,7 @@
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.9",
     "esbuild": "^0.28.1",
-    "turbo": "^2.9.18",
+    "turbo": "^2.10.3",
     "vitest": "^4.1.9"
   },
   "pnpm": {
