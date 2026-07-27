@@ -19,7 +19,7 @@
     "mongoose": "^9"
   },
   "devDependencies": {
-    "@types/node": "^25",
+    "@types/node": "^26",
     "tsx": "^4.23.1",
     "typescript": "6.0.3",
     "vitest": "^4.1.10"
