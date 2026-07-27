@@ -23,7 +23,7 @@
     "@langchain/core": "^1.2.3",
     "@langchain/openai": "^1.5.5",
     "@modelcontextprotocol/hono": "2.0.0-alpha.2",
-    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-beta.5",
     "better-auth": "^1.6.23",
     "deepagents": "^1.11.1",
     "dotenv": "^17.4.2",
